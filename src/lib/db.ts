@@ -1,18 +1,19 @@
-import Dexie, { type Table } from 'dexie'
+import Dexie from 'dexie'
 import type { EventRecord } from './types'
 
 export class CoolingDB extends Dexie {
-  events!: Table<EventRecord, number>
+  events!: Dexie.Table<EventRecord, number>
 
   constructor() {
     super('CoolingSolutionDB')
-
+    
     this.version(1).stores({
-      // ++id = autoincrement
-      events: '++id,timestamp,type,status,category,amount,vendor,payment_method,client,note,raw_text',
+      events: '++id,timestamp,type,status,category,amount,vendor,payment_method,client'
     })
-
-    this.events = this.table('events')
+    
+    this.version(2).stores({
+      events: '++id,timestamp,type,status,subtype,category,amount,vendor,payment_method,client'
+    })
   }
 }
 
