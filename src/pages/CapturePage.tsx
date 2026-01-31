@@ -81,39 +81,64 @@ export default function CapturePage() {
     setVoiceParsing(true)
 
     try {
-      const response = await fetch('/api/parse-voice', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: voiceInput }),
-      })
+     const response = await fetch('https://api.anthropic.com/v1/messages', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+    'anthropic-version': '2023-06-01',
+  },
+  body: JSON.stringify({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    system: `
+Eres un asistente que ayuda a registrar actividades diarias de un técnico HVAC.
+Extrae información estructurada como:
+- tipo (gasto, ingreso, trabajo)
+- monto
+- descripción
+- cliente (si existe)
+`,
+    messages: [
+      {
+        role: 'user',
+        content: voiceInput, // 👈 usa la variable que ya tienes del input/voz
+      },
+    ],
+  }),
+})
 
-      if (!response.ok) {
-        throw new Error('Error parsing voice input')
-      }
 
-      const parsed = await response.json()
+const data = await response.json();
+console.log("Claude raw:", data);
 
-      await db.events.add({
-        timestamp: Date.now(),
-        type:
-          parsed.amount > 0
-            ? parsed.subtype === 'service'
-              ? 'income'
-              : 'expense'
-            : 'expense',
-        status: 'completed',
-        subtype: parsed.subtype,
-        category: parsed.category,
-        amount: Math.abs(parsed.amount),
-        payment_method: parsed.payment_method,
-        vendor: parsed.vendor,
-        client: parsed.client,
-        note: parsed.note,
-        metadata: parsed.metadata,
-        raw_text: voiceInput,
-      })
+if (!response.ok) {
+  console.error("Claude error:", data);
+  throw new Error("Claude API error");
+}
 
-      alert('✅ Guardado: ' + parsed.category + ' $' + parsed.amount)
+const claudeText =
+  data?.content?.[0]?.text ??
+  data?.content?.map((c: any) => c?.text).filter(Boolean).join("\n") ??
+  "";
+
+console.log("Claude text:", claudeText);
+
+await db.events.add({
+  timestamp: Date.now(),
+  type: "expense",
+  status: "completed",
+  category: "Claude",
+  amount: 0,
+  payment_method: "",
+  vendor: "",
+  client: "",
+  note: claudeText,
+  raw_text: voiceInput,
+});
+
+
+    alert("✅ Guardado (Claude)");
       setVoiceInput('')
     } catch (error) {
       console.error(error)
