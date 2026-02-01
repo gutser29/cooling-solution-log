@@ -73,6 +73,14 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   setMessages(prev => [...prev, { role: 'assistant', content: `✅ Generé el reporte PDF de ${category} (${period})` }])
   return
 }
+if (data?.type === 'TEXT') {
+  setMessages(prev => [
+    ...prev,
+    { role: 'assistant', content: data.text || '' }
+  ])
+  return
+}
+
 
       const assistantMessage = data.message
 
