@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { db } from '@/lib/db'
+import PhotoUpload from './PhotoUpload'
+import { generateMonthlyReport } from '@/lib/pdfGenerator'
+
 
 interface Message {
   role: 'user' | 'assistant'
@@ -19,6 +22,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
+  const [showPhotoUpload, setShowPhotoUpload] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -123,18 +127,27 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             >
               📊 Historial
             </button>
-            <button 
-              onClick={() => { setShowMenu(false); alert('Próximamente: subir fotos') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b"
-            >
-              📷 Subir Recibo
-            </button>
-            <button 
-              onClick={() => { setShowMenu(false); alert('Próximamente: reportes PDF') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10"
-            >
-              📄 Generar Reporte
-            </button>
+<button
+  onClick={() => { setShowMenu(false); setShowPhotoUpload(true) }}
+  className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/10"
+>
+  📷 Subir Recibo
+</button>
+
+
+<button
+  onClick={async () => {
+    setShowMenu(false)
+    const events = await db.events.toArray()
+    const now = new Date()
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    generateMonthlyReport(events, month)
+  }}
+  className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10"
+>
+  📄 Generar Reporte
+</button>
+
           </div>
         </>
       )}
