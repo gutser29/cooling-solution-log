@@ -13,21 +13,46 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {currentPage === 'chat' && <ChatCapture />}
-      {currentPage === 'capture' && <CapturePage />}
-      {currentPage === 'ask' && <AskPage />}
-      {currentPage === 'history' && <HistoryPage />}
+      {currentPage === 'chat' && (
+        <ChatCapture onNavigate={(page: string) => setCurrentPage(page as Page)} />
+      )}
 
-      {currentPage !== 'chat' && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t">
-          <div className="flex max-w-2xl mx-auto">
-            <button onClick={() => setCurrentPage('chat')} className="flex-1 py-3">💬</button>
-            <button onClick={() => setCurrentPage('capture')} className="flex-1 py-3">📝</button>
-            <button onClick={() => setCurrentPage('ask')} className="flex-1 py-3">🔍</button>
-            <button onClick={() => setCurrentPage('history')} className="flex-1 py-3">📊</button>
-          </div>
-        </nav>
+      {currentPage === 'capture' && (
+        <div className="relative">
+          <button
+            onClick={() => setCurrentPage('chat')}
+            className="absolute top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-full z-10"
+          >
+            ← Chat
+          </button>
+          <CapturePage />
+        </div>
+      )}
+
+      {currentPage === 'ask' && (
+        <div className="relative">
+          <button
+            onClick={() => setCurrentPage('chat')}
+            className="absolute top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-full z-10"
+          >
+            ← Chat
+          </button>
+          <AskPage />
+        </div>
+      )}
+
+      {currentPage === 'history' && (
+        <div className="relative">
+          <button
+            onClick={() => setCurrentPage('chat')}
+            className="absolute top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-full z-10"
+          >
+            ← Chat
+          </button>
+          <HistoryPage />
+        </div>
       )}
     </div>
   )
 }
+
