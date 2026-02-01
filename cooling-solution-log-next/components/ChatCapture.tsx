@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { db } from '@/lib/db'
 import PhotoUpload from './PhotoUpload'
-import { generateMonthlyReport } from '@/lib/pdfGenerator'
+import { generateCategoryReport } from '@/lib/pdfGenerator'
+
 
 
 interface Message {
@@ -48,6 +49,30 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       if (!response.ok) throw new Error('Error')
 
       const data = await response.json()
+      if (data?.type === 'GENERATE_PDF') {
+  const { category, period } = data.payload || {}
+  const events = await db.events.toArray()
+
+  const now = new Date()
+  let startDate = 0
+  let endDate = now.getTime()
+
+  if (period === 'week') {
+    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).getTime()
+  } else if (period === 'month') {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+  } else if (period === 'year') {
+    startDate = new Date(now.getFullYear(), 0, 1).getTime()
+  } else {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+  }
+
+  generateCategoryReport(events, category || 'general', startDate, endDate)
+
+  setMessages(prev => [...prev, { role: 'assistant', content: `✅ Generé el reporte PDF de ${category} (${period})` }])
+  return
+}
+
       const assistantMessage = data.message
 
       if (assistantMessage.includes('SAVE_EVENT:')) {
@@ -137,20 +162,23 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
 <button
   onClick={async () => {
-    setShowMenu(false)
-    const events = await db.events.toArray()
     const now = new Date()
-    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-    generateMonthlyReport(events, month)
+    const category = 'gasolina'
+    const startDate = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+    const endDate = now.getTime()
+
+    const events = await db.events.toArray()
+    generateCategoryReport(events, category, startDate, endDate)
   }}
   className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10"
 >
-  📄 Generar Reporte
+  Generar Reporte
 </button>
 
           </div>
         </>
-      )}
+  )}
+  
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 pb-24">

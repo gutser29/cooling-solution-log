@@ -185,6 +185,8 @@ Ahora conversa:`
     } else if ('messages' in body && body.messages) {
       messages = body.messages
     } else {
+
+
       return NextResponse.json({ error: 'Missing message or messages' }, { status: 400 })
     }
 
@@ -207,6 +209,15 @@ Ahora conversa:`
   })
   .filter(Boolean)
   .join('\n')
+const m = text.match(/GENERATE_PDF:\s*(\{[\s\S]*\})/)
+
+if (m) {
+  let payload: any = {}
+  try { payload = JSON.parse(m[1]) } catch {}
+  return NextResponse.json({ type: 'GENERATE_PDF', payload })
+}
+
+return NextResponse.json({ type: 'TEXT', text })
 
 
     return NextResponse.json({ 
