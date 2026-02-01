@@ -104,6 +104,10 @@ export default function HistoryPage() {
               {e.payment_method && <div className="text-sm">Pago: {e.payment_method}</div>}
               {e.client && <div className="text-sm">Cliente: {e.client}</div>}
               {e.note && <div className="text-sm">Nota: {e.note}</div>}
+              <div className="text-xs text-gray-500 mt-1">
+  DEBUG: payment_method = "{e.payment_method || 'VACÍO'}"
+</div>
+
             </div>
 
             <button
