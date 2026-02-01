@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { db } from '@/lib/db'
 import PhotoUpload from './PhotoUpload'
-import { generateCategoryReport } from '@/lib/pdfGenerator'
+import { generateCategoryReport } from '../lib/pdfGenerator'
+
 
 
 
