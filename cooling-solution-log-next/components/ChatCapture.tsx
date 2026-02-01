@@ -50,6 +50,37 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       if (!response.ok) throw new Error('Error')
 
       const data = await response.json()
+      if (data?.type === 'TEXT') {
+  const match = (data.text || '').match(/SAVE_EVENT:\s*({[\s\S]*})/)
+
+  if (match) {
+    try {
+      const obj = JSON.parse(match[1])
+
+      await db.events.add({
+        timestamp: obj.timestamp || Date.now(),
+        type: obj.type || 'expense',
+        status: 'completed',
+        category: obj.category || '',
+        amount: Number(obj.amount || 0),
+        vendor: obj.vendor || '',
+        payment_method: obj.payment_method || '',
+        client: obj.client || '',
+        note: obj.note || obj.description || '',
+        raw_text: JSON.stringify(obj)
+      })
+
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: '✅ Guardado en la base de datos' }
+      ])
+      return
+    } catch (e) {
+      // si falla el JSON, sigue normal
+    }
+  }
+}
+
       if (data?.type === 'GENERATE_PDF') {
   const { category, period } = data.payload || {}
   const events = await db.events.toArray()
