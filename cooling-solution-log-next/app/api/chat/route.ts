@@ -1,4 +1,23 @@
-const systemPrompt = `Eres un asistente conversacional inteligente para un técnico HVAC en Puerto Rico.
+import { NextResponse } from 'next/server'
+import Anthropic from '@anthropic-ai/sdk'
+
+export const runtime = 'nodejs'
+
+type Incoming = 
+  | { message: string; system?: string }
+  | { messages: Array<{ role: 'user' | 'assistant'; content: string }>; system?: string }
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json()) as Partial<Incoming>
+
+    const client = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    })
+
+    const usedModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929'
+
+    const systemPrompt = `Eres un asistente conversacional inteligente para un técnico HVAC en Puerto Rico.
 
 # TU MISIÓN
 Ayudar a registrar gastos, ingresos, trabajos, empleados, clientes, vehículos y generar reportes. Conversas en español de forma natural, breve y directa.
@@ -158,3 +177,48 @@ Tú: [Buscar último mantenimiento de Transit tipo "aceite"]
 - Sé proactivo: "¿Quieres que te recuerde cobrarle a José?"
 
 Ahora conversa:`
+
+    let messages: Array<{ role: 'user' | 'assistant'; content: string }>
+
+    if ('message' in body && body.message) {
+      messages = [{ role: 'user', content: body.message }]
+    } else if ('messages' in body && body.messages) {
+      messages = body.messages
+    } else {
+      return NextResponse.json({ error: 'Missing message or messages' }, { status: 400 })
+    }
+
+    const response = await client.messages.create({
+      model: usedModel,
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }))
+    })
+
+    const text = response.content
+  .map(block => {
+    if (block.type === 'text') {
+      return block.text
+    }
+    return ''
+  })
+  .filter(Boolean)
+  .join('\n')
+
+
+    return NextResponse.json({ 
+      message: text,
+      usedModel 
+    })
+
+  } catch (error: any) {
+    console.error('Error in /api/chat:', error)
+    return NextResponse.json(
+      { error: error.message || 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
