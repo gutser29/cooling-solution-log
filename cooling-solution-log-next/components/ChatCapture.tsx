@@ -84,6 +84,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       if (data?.type === 'GENERATE_PDF') {
   const { category, period } = data.payload || {}
   const events = await db.events.toArray()
+alert('Eventos en DB: ' + events.length)
+
+if (events.length > 0) {
+  const e0 = events[events.length - 1]
+  alert('Último evento:\n' + JSON.stringify({
+    timestamp: e0.timestamp,
+    category: e0.category,
+    amount: e0.amount
+  }, null, 2))
+}
 
   const now = new Date()
   let startDate = 0
