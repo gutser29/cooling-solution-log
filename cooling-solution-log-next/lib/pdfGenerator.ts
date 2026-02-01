@@ -2,55 +2,54 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { EventRecord } from './types'
 
-export function generateMonthlyReport(events: EventRecord[], month: string) {
+export function generateCategoryReport(
+  events: EventRecord[], 
+  category: string,
+  startDate: number,
+  endDate: number
+) {
   const doc = new jsPDF()
   
-  // Header
+const filtered = events.filter(e =>
+  (e.category || '').toLowerCase().includes((category || '').toLowerCase()) &&
+  e.timestamp >= startDate &&
+  e.timestamp <= endDate
+)
+
+  
   doc.setFontSize(18)
-  doc.text('Reporte Mensual - Cooling Solution', 14, 20)
-  doc.setFontSize(12)
-  doc.text(month, 14, 28)
+  doc.text(`Reporte: ${category}`, 14, 20)
+  doc.setFontSize(10)
+  doc.text(`${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`, 14, 28)
   
-  // Gastos
-  const expenses = events.filter(e => e.type === 'expense')
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
-  
-  doc.text('GASTOS', 14, 40)
-  autoTable(doc, {
-    startY: 45,
-    head: [['Fecha', 'Categoría', 'Monto', 'Método']],
-    body: expenses.map(e => [
-      new Date(e.timestamp).toLocaleDateString(),
-      e.category,
-      `$${e.amount.toFixed(2)}`,
-      e.payment_method || 'N/A'
-    ]),
-    foot: [['', 'TOTAL', `$${totalExpenses.toFixed(2)}`, '']]
+  const paymentSummary: Record<string, number> = {}
+  filtered.forEach(e => {
+    const method = e.payment_method || 'Desconocido'
+    paymentSummary[method] = (paymentSummary[method] || 0) + e.amount
   })
   
-  // Ingresos
-  const income = events.filter(e => e.type === 'income')
-  const totalIncome = income.reduce((sum, e) => sum + e.amount, 0)
+  autoTable(doc, {
+    startY: 35,
+    head: [['Fecha', 'Monto', 'Método Pago', 'Vendor/Nota']],
+    body: filtered.map(e => [
+      new Date(e.timestamp).toLocaleDateString(),
+      `$${e.amount.toFixed(2)}`,
+      e.payment_method || 'N/A',
+      e.vendor || e.note || 'N/A'
+    ]),
+    foot: [['TOTAL', `$${filtered.reduce((s, e) => s + e.amount, 0).toFixed(2)}`, '', '']]
+  })
   
   const finalY = (doc as any).lastAutoTable.finalY + 10
-  doc.text('INGRESOS', 14, finalY)
-  autoTable(doc, {
-    startY: finalY + 5,
-    head: [['Fecha', 'Cliente', 'Monto', 'Status']],
-    body: income.map(e => [
-      new Date(e.timestamp).toLocaleDateString(),
-      e.client || e.category,
-      `$${e.amount.toFixed(2)}`,
-      e.status
-    ]),
-    foot: [['', 'TOTAL', `$${totalIncome.toFixed(2)}`, '']]
+  doc.setFontSize(12)
+  doc.text('Desglose por método de pago:', 14, finalY)
+  
+  let y = finalY + 7
+  Object.entries(paymentSummary).forEach(([method, total]) => {
+    doc.setFontSize(10)
+    doc.text(`${method}: $${total.toFixed(2)}`, 20, y)
+    y += 6
   })
   
-  // Balance
-  const balance = totalIncome - totalExpenses
-  const finalY2 = (doc as any).lastAutoTable.finalY + 15
-  doc.setFontSize(14)
-  doc.text(`BALANCE: $${balance.toFixed(2)}`, 14, finalY2)
-  
-  doc.save(`reporte-${month}.pdf`)
+  doc.save(`${category}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
