@@ -89,6 +89,25 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       if (saveMatch) {
         try {
           const eventData = JSON.parse(saveMatch[1])
+          // Normalizar payment_method (acepta variantes por si el modelo se desvía)
+const normalizePaymentMethod = (v: any) => {
+  const s = String(v ?? '').trim().toLowerCase()
+
+  if (!s) return ''
+
+  if (s === 'cash' || s.includes('efectivo')) return 'cash'
+  if (s === 'ath_movil' || s.includes('ath')) return 'ath_movil'
+  if (s === 'business_card' || s.includes('negocio')) return 'business_card'
+  if (s === 'sams_card' || s.includes("sam")) return 'sams_card'
+  if (s === 'paypal' || s.includes('paypal')) return 'paypal'
+  if (s === 'personal_card' || s.includes('personal') || s.includes('mi tarjeta')) return 'personal_card'
+  if (s === 'other') return 'other'
+
+  return 'other'
+}
+
+eventData.payment_method = normalizePaymentMethod(eventData.payment_method)
+
 
           await db.events.add({
             timestamp: eventData.timestamp || Date.now(),
