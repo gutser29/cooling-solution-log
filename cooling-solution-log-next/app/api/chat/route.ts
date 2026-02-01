@@ -3,13 +3,60 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export const runtime = 'nodejs'
 
-type Incoming = 
+type Incoming =
   | { message: string; system?: string }
   | { messages: Array<{ role: 'user' | 'assistant'; content: string }>; system?: string }
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Partial<Incoming>
+
+    // ====== 0) Obtener el mensaje del usuario (para detección de reporte) ======
+    const userMessage =
+      'message' in body && body.message
+        ? body.message
+        : 'messages' in body && body.messages && body.messages.length
+          ? body.messages[body.messages.length - 1].content
+          : ''
+
+    if (!userMessage) {
+      return NextResponse.json({ error: 'Missing message or messages' }, { status: 400 })
+    }
+
+    // ====== 1) FORZAR REPORTES PDF (sin depender de Claude) ======
+    const msg = (userMessage || '').toLowerCase()
+
+    const wantsReport =
+      msg.includes('reporte') ||
+      msg.includes('report') ||
+      (msg.includes('genera') && msg.includes('reporte'))
+
+    if (wantsReport) {
+      // categoría
+      let category = 'general'
+      if (msg.includes('gasolina')) category = 'gasolina'
+      else if (msg.includes('comida')) category = 'comida'
+      else if (msg.includes('material')) category = 'materiales'
+      else if (msg.includes('herramient')) category = 'herramientas'
+      else if (msg.includes('peaje')) category = 'peajes'
+
+      // periodo
+      let period: 'week' | 'month' | 'year' = 'month'
+      if (msg.includes('semana') || msg.includes('week')) period = 'week'
+      else if (msg.includes('mes') || msg.includes('month')) period = 'month'
+      else if (msg.includes('año') || msg.includes('ano') || msg.includes('year')) period = 'year'
+
+      return NextResponse.json({ type: 'GENERATE_PDF', payload: { category, period } })
+    }
+
+    // ====== 2) Fecha real para que no invente ======
+    const now = new Date()
+    const todayStr = now.toLocaleDateString('es-PR', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
 
     const client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
@@ -18,6 +65,7 @@ export async function POST(request: Request) {
     const usedModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929'
 
     const systemPrompt = `Eres un asistente conversacional inteligente para un técnico HVAC en Puerto Rico.
+FECHA REAL AHORA: ${todayStr}
 
 # TU MISIÓN
 Ayudar a registrar gastos, ingresos, trabajos, empleados, clientes, vehículos y generar reportes. Conversas en español de forma natural, breve y directa.
@@ -159,23 +207,11 @@ SAVE_JOB:
   "balance_due": 140
 }
 
-## CONSULTAS/REPORTES
-
-Usuario: "¿Cuánto gasté en gasolina este mes?"
-Tú: [Pedir al frontend que consulte DB y devolver resumen]
-
-Usuario: "¿Quién me debe dinero?"
-Tú: [Listar trabajos con balance_due > 0]
-
-Usuario: "¿Cuándo le cambié aceite a la Transit?"
-Tú: [Buscar último mantenimiento de Transit tipo "aceite"]
-
 # IMPORTANTE
 - Nunca inventes datos
 - Si falta info, pregunta
 - Confirma cálculos con el usuario
-- Sé proactivo: "¿Quieres que te recuerde cobrarle a José?"
-
+- Si preguntan "¿qué día es hoy?" usa la FECHA REAL.
 Ahora conversa:`
 
     let messages: Array<{ role: 'user' | 'assistant'; content: string }>
@@ -185,8 +221,6 @@ Ahora conversa:`
     } else if ('messages' in body && body.messages) {
       messages = body.messages
     } else {
-
-
       return NextResponse.json({ error: 'Missing message or messages' }, { status: 400 })
     }
 
@@ -200,35 +234,28 @@ Ahora conversa:`
       }))
     })
 
-    const text = response.content
-  .map(block => {
-    if (block.type === 'text') {
-      return block.text
+    const text = (response.content as any[])
+      .map(block => (block.type === 'text' ? block.text : ''))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+
+    // ====== 3) Si el modelo devuelve GENERATE_PDF, lo detectamos ======
+    const m = text.match(/GENERATE_PDF:\s*(\{[\s\S]*\})/)
+
+    if (m) {
+      let payload: any = {}
+      try {
+        payload = JSON.parse(m[1])
+      } catch {}
+      return NextResponse.json({ type: 'GENERATE_PDF', payload })
     }
-    return ''
-  })
-  .filter(Boolean)
-  .join('\n')
-const m = text.match(/GENERATE_PDF:\s*(\{[\s\S]*\})/)
 
-if (m) {
-  let payload: any = {}
-  try { payload = JSON.parse(m[1]) } catch {}
-  return NextResponse.json({ type: 'GENERATE_PDF', payload })
-}
-
-return NextResponse.json({ type: 'TEXT', text })
-
-
-    return NextResponse.json({ 
-      message: text,
-      usedModel 
-    })
-
+    return NextResponse.json({ type: 'TEXT', text })
   } catch (error: any) {
     console.error('Error in /api/chat:', error)
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: error?.message || 'Internal server error' },
       { status: 500 }
     )
   }
