@@ -104,34 +104,34 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             className="fixed inset-0 bg-black bg-opacity-50 z-40"
             onClick={() => setShowMenu(false)}
           />
-          <div className="absolute top-16 right-4 bg-white rounded-lg shadow-2xl z-50 w-56 overflow-hidden">
+          <div className="absolute top-16 right-4 bg-white dark:bg-[#111a2e] rounded-lg shadow-2xl z-50 w-56 overflow-hidden border border-black/10 dark:border-white/10">
             <button 
               onClick={() => { setShowMenu(false); onNavigate('capture') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100 border-b"
+              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b"
             >
               📝 Captura Rápida
             </button>
             <button 
               onClick={() => { setShowMenu(false); onNavigate('ask') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100 border-b"
+              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b"
             >
               🔍 Consultas
             </button>
             <button 
               onClick={() => { setShowMenu(false); onNavigate('history') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100 border-b"
+              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b"
             >
               📊 Historial
             </button>
             <button 
               onClick={() => { setShowMenu(false); alert('Próximamente: subir fotos') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100 border-b"
+              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b"
             >
               📷 Subir Recibo
             </button>
             <button 
               onClick={() => { setShowMenu(false); alert('Próximamente: reportes PDF') }} 
-              className="block w-full text-left px-4 py-3 hover:bg-gray-100"
+              className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10"
             >
               📄 Generar Reporte
             </button>
