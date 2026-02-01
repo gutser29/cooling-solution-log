@@ -84,7 +84,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100 relative">
+    <div className="flex flex-col h-screen bg-gray-100 text-gray-900 relative dark:bg-[#0b1220] dark:text-gray-100">
+
       {/* Header con menú */}
       <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
         <h1 className="text-xl font-bold">💬 Chat con Claude</h1>
@@ -144,7 +145,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           {messages.map((msg, idx) => (
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[80%] rounded-2xl px-4 py-3 shadow ${
-                msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white text-gray-800'
+                msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white text-gray-800 dark:bg-[#111a2e] dark:text-gray-100'
+
               }`}>
                 <div className="whitespace-pre-wrap">{msg.content}</div>
               </div>
@@ -166,7 +168,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       </div>
 
       {/* Input */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 shadow-lg">
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 shadow-lg dark:bg-[#0f172a] dark:border-white/10">
+
         <div className="max-w-2xl mx-auto flex gap-2">
           <input
             type="text"
