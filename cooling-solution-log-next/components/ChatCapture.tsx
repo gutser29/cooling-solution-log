@@ -200,6 +200,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           >
             {loading ? '⏳' : '📤'}
           </button>
+          {showPhotoUpload && <PhotoUpload onClose={() => setShowPhotoUpload(false)} />}
         </div>
       </div>
     </div>
