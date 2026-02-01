@@ -15,10 +15,10 @@ export function generateCategoryReport(
   startDate: number,
   endDate: number
 ) {
-  console.log('=== PDF DEBUG ===')
-  console.log('Total eventos:', events.length)
-  console.log('Buscando categoría:', category)
-  console.log('Rango:', new Date(startDate), 'a', new Date(endDate))
+  console.log('=== PDF DEBUG START ===')
+  console.log('📊 Total eventos recibidos:', events.length)
+  console.log('🔍 Buscando categoría:', category)
+  console.log('📅 Rango:', new Date(startDate).toLocaleDateString(), 'a', new Date(endDate).toLocaleDateString())
   
   const searchTerm = normalizeText(category)
   
@@ -32,8 +32,22 @@ export function generateCategoryReport(
     return inCategory && inDateRange
   })
   
-  console.log('Eventos filtrados:', filtered.length)
-  console.log('Primeros 3:', filtered.slice(0, 3))
+  console.log('✅ Eventos filtrados:', filtered.length)
+  
+  // DEBUG DETALLADO DE PAYMENT_METHOD
+  console.log('--- PAYMENT_METHOD DEBUG ---')
+  filtered.slice(0, 5).forEach((e, idx) => {
+    console.log(`Evento ${idx + 1}:`, {
+      fecha: new Date(e.timestamp).toLocaleDateString(),
+      categoria: e.category,
+      monto: e.amount,
+      payment_method: e.payment_method,
+      payment_method_type: typeof e.payment_method,
+      tiene_pm: !!e.payment_method,
+      vendor: e.vendor
+    })
+  })
+  console.log('----------------------------')
   
   if (filtered.length === 0) {
     alert(`No se encontraron eventos de "${category}" en el período seleccionado`)
@@ -49,19 +63,29 @@ export function generateCategoryReport(
   
   const paymentSummary: Record<string, number> = {}
   filtered.forEach(e => {
-    const method = e.payment_method || 'Desconocido'
+    const method = e.payment_method || 'Sin método registrado'
     paymentSummary[method] = (paymentSummary[method] || 0) + e.amount
+    
+    // LOG cada método encontrado
+    console.log(`💳 Método: "${method}" → $${e.amount}`)
   })
+  
+  console.log('📋 Resumen por método:', paymentSummary)
   
   autoTable(doc, {
     startY: 35,
     head: [['Fecha', 'Monto', 'Método Pago', 'Detalle']],
-    body: filtered.map(e => [
-      new Date(e.timestamp).toLocaleDateString(),
-      `$${e.amount.toFixed(2)}`,
-      e.payment_method || 'N/A',
-      e.vendor || e.note || e.category || 'N/A'
-    ]),
+    body: filtered.map(e => {
+      const paymentMethod = e.payment_method || 'N/A'
+      console.log(`📄 PDF Row - payment_method: "${paymentMethod}"`) // LOG CADA FILA
+      
+      return [
+        new Date(e.timestamp).toLocaleDateString(),
+        `$${e.amount.toFixed(2)}`,
+        paymentMethod,
+        e.vendor || e.note || e.category || 'N/A'
+      ]
+    }),
     foot: [['TOTAL', `$${filtered.reduce((s, e) => s + e.amount, 0).toFixed(2)}`, '', '']]
   })
   
@@ -81,5 +105,6 @@ export function generateCategoryReport(
   const filename = `${category}-${new Date().toISOString().split('T')[0]}.pdf`
   doc.save(filename)
   
-  console.log('PDF generado:', filename)
+  console.log('✅ PDF generado:', filename)
+  console.log('=== PDF DEBUG END ===')
 }
