@@ -1,5 +1,4 @@
 // lib/googleDrive.ts
-// Server-side Google Drive helpers - NO npm packages needed, uses fetch
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const DRIVE_API = 'https://www.googleapis.com/drive/v3'
@@ -10,6 +9,11 @@ const BACKUP_FILE = 'cooling-solution-backup.json'
 // ============ TOKEN ============
 
 export async function getAccessToken(refreshToken: string): Promise<string> {
+  console.log('🔑 Requesting access token...')
+  console.log('🔑 Client ID present:', !!process.env.GOOGLE_CLIENT_ID)
+  console.log('🔑 Client Secret present:', !!process.env.GOOGLE_CLIENT_SECRET)
+  console.log('🔑 Refresh token length:', refreshToken?.length)
+
   const res = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -20,12 +24,36 @@ export async function getAccessToken(refreshToken: string): Promise<string> {
       grant_type: 'refresh_token',
     }),
   })
+
   const data = await res.json()
+
   if (!data.access_token) {
-    console.error('Token refresh failed:', data)
-    throw new Error('Failed to refresh Google token')
+    console.error('❌ Token refresh failed:', JSON.stringify(data))
+    throw new Error(`Token refresh failed: ${data.error || 'no access_token'} - ${data.error_description || ''}`)
   }
+
+  console.log('✅ Got access token, scope:', data.scope)
   return data.access_token
+}
+
+// ============ TEST TOKEN ============
+
+export async function testDriveAccess(accessToken: string): Promise<{ ok: boolean; error?: string; info?: any }> {
+  try {
+    // Simple test: list files (limit 1)
+    const res = await fetch(`${DRIVE_API}/files?pageSize=1&fields=files(id,name)`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    const data = await res.json()
+
+    if (!res.ok) {
+      return { ok: false, error: `${res.status}: ${JSON.stringify(data)}` }
+    }
+
+    return { ok: true, info: { status: res.status, fileCount: data.files?.length } }
+  } catch (e: any) {
+    return { ok: false, error: e.message }
+  }
 }
 
 // ============ FOLDER ============
@@ -36,13 +64,23 @@ export async function getOrCreateFolder(accessToken: string): Promise<string> {
   const searchRes = await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name)`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
+
+  if (!searchRes.ok) {
+    const errBody = await searchRes.text()
+    console.error('❌ Folder search failed:', searchRes.status, errBody)
+    throw new Error(`Folder search failed: ${searchRes.status}`)
+  }
+
   const searchData = await searchRes.json()
+  console.log('📁 Folder search result:', JSON.stringify(searchData))
 
   if (searchData.files && searchData.files.length > 0) {
+    console.log('📁 Found existing folder:', searchData.files[0].id)
     return searchData.files[0].id
   }
 
   // Create folder
+  console.log('📁 Creating new folder...')
   const createRes = await fetch(`${DRIVE_API}/files`, {
     method: 'POST',
     headers: {
@@ -54,9 +92,16 @@ export async function getOrCreateFolder(accessToken: string): Promise<string> {
       mimeType: 'application/vnd.google-apps.folder',
     }),
   })
-  const folder = await createRes.json()
-  console.log('📁 Created Drive folder:', folder.id)
-  return folder.id
+
+  const createBody = await createRes.json()
+
+  if (!createRes.ok) {
+    console.error('❌ Folder create failed:', createRes.status, JSON.stringify(createBody))
+    throw new Error(`Folder create failed: ${createRes.status} - ${createBody.error?.message || JSON.stringify(createBody)}`)
+  }
+
+  console.log('📁 Created folder:', createBody.id)
+  return createBody.id
 }
 
 // ============ FIND BACKUP FILE ============
@@ -66,6 +111,13 @@ async function findBackupFile(accessToken: string, folderId: string): Promise<st
   const res = await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,modifiedTime)`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
+
+  if (!res.ok) {
+    const errBody = await res.text()
+    console.error('❌ File search failed:', res.status, errBody)
+    return null
+  }
+
   const data = await res.json()
   return data.files?.[0]?.id || null
 }
@@ -75,9 +127,9 @@ async function findBackupFile(accessToken: string, folderId: string): Promise<st
 export async function uploadBackup(accessToken: string, folderId: string, backupData: any): Promise<void> {
   const existingId = await findBackupFile(accessToken, folderId)
   const content = JSON.stringify(backupData)
+  console.log('☁️ Uploading backup, size:', content.length, 'bytes, existing file:', existingId)
 
   if (existingId) {
-    // Update existing file (simple media upload)
     const res = await fetch(`${DRIVE_UPLOAD}/files/${existingId}?uploadType=media`, {
       method: 'PATCH',
       headers: {
@@ -86,10 +138,15 @@ export async function uploadBackup(accessToken: string, folderId: string, backup
       },
       body: content,
     })
-    if (!res.ok) throw new Error(`Drive upload failed: ${res.status}`)
-    console.log('☁️ Backup updated in Drive')
+
+    if (!res.ok) {
+      const errBody = await res.text()
+      console.error('❌ File update failed:', res.status, errBody)
+      throw new Error(`File update failed: ${res.status}`)
+    }
+    console.log('☁️ Backup updated')
   } else {
-    // Create new file (multipart: metadata + content)
+    // Multipart upload
     const boundary = '===CoolingSolution==='
     const metadata = JSON.stringify({
       name: BACKUP_FILE,
@@ -117,8 +174,15 @@ export async function uploadBackup(accessToken: string, folderId: string, backup
       },
       body,
     })
-    if (!res.ok) throw new Error(`Drive create failed: ${res.status}`)
-    console.log('☁️ Backup created in Drive')
+
+    if (!res.ok) {
+      const errBody = await res.text()
+      console.error('❌ File create failed:', res.status, errBody)
+      throw new Error(`File create failed: ${res.status}`)
+    }
+
+    const result = await res.json()
+    console.log('☁️ Backup created:', result.id)
   }
 }
 
@@ -126,12 +190,19 @@ export async function uploadBackup(accessToken: string, folderId: string, backup
 
 export async function downloadBackup(accessToken: string, folderId: string): Promise<any | null> {
   const fileId = await findBackupFile(accessToken, folderId)
-  if (!fileId) return null
+  if (!fileId) {
+    console.log('📥 No backup file found')
+    return null
+  }
 
   const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
 
-  if (!res.ok) return null
+  if (!res.ok) {
+    console.error('❌ Download failed:', res.status)
+    return null
+  }
+
   return await res.json()
 }

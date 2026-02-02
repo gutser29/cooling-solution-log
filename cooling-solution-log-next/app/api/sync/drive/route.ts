@@ -11,13 +11,20 @@ export async function POST(request: Request) {
     const cookieStore = await cookies()
     const refreshToken = cookieStore.get('google_refresh_token')?.value
 
+    console.log('☁️ Sync POST - has refresh token:', !!refreshToken)
+
     if (!refreshToken) {
-      return NextResponse.json({ error: 'not_connected' }, { status: 401 })
+      return NextResponse.json({ error: 'not_connected', message: 'No refresh token. Reconnect Google Drive.' }, { status: 401 })
     }
 
     const data = await request.json()
+    console.log('☁️ Data to sync - events:', data.events?.length, 'clients:', data.clients?.length, 'jobs:', data.jobs?.length)
+
     const accessToken = await getAccessToken(refreshToken)
+    console.log('☁️ Got access token')
+
     const folderId = await getOrCreateFolder(accessToken)
+    console.log('☁️ Got folder:', folderId)
 
     await uploadBackup(accessToken, folderId, {
       ...data,
@@ -25,9 +32,10 @@ export async function POST(request: Request) {
       appVersion: '2.0',
     })
 
+    console.log('☁️ Sync complete!')
     return NextResponse.json({ success: true, timestamp: Date.now() })
   } catch (err: any) {
-    console.error('Drive push error:', err)
+    console.error('❌ Drive push error:', err.message)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
@@ -52,7 +60,7 @@ export async function GET() {
 
     return NextResponse.json({ success: true, data: backup })
   } catch (err: any) {
-    console.error('Drive pull error:', err)
+    console.error('❌ Drive pull error:', err.message)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
