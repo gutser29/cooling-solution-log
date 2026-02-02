@@ -8,6 +8,7 @@ import HistoryPage from '@/components/HistoryPage'
 import ClientsPage from '@/components/ClientsPage'
 import NotesPage from '@/components/NotesPage'
 import CalendarPage from '@/components/CalendarPage'
+import InvoicesPage from '@/components/InvoicesPage'
 
 export default function Home() {
   const [currentPage, setCurrentPage] = useState('dashboard')
@@ -33,6 +34,8 @@ export default function Home() {
       return <NotesPage onNavigate={navigate} />
     case 'calendar':
       return <CalendarPage onNavigate={navigate} />
+    case 'invoices':
+      return <InvoicesPage onNavigate={navigate} />
     default:
       return <Dashboard onNavigate={navigate} />
   }

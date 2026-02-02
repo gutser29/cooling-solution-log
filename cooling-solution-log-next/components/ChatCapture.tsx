@@ -6,7 +6,8 @@ import {
   generateCategoryReport,
   generatePLReport,
   generateARReport,
-  generatePaymentMethodReport
+  generatePaymentMethodReport,
+  generateInvoiceNumber
 } from '@/lib/pdfGenerator'
 
 interface ChatMessage {
@@ -33,6 +34,8 @@ const compressImage = (base64: string, maxWidth = 1024): Promise<string> => {
     img.src = base64
   })
 }
+
+function formatCurrency(n: number): string { return `$${n.toFixed(2)}` }
 
 function getDateRange(period: string, periodLabel?: string): { startDate: number; endDate: number } {
   const now = Date.now()
@@ -144,11 +147,12 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const notes = await db.notes.toArray()
       const appointments = await db.appointments.toArray()
       const reminders = await db.reminders.toArray()
+      const invoices = await db.invoices.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices })
       })
 
       if (res.ok) {
@@ -208,11 +212,12 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const notes = await db.notes.toArray()
       const appointments = await db.appointments.toArray()
       const reminders = await db.reminders.toArray()
+      const invoices = await db.invoices.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices })
       })
 
       if (res.ok) {
@@ -271,6 +276,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const localIds = new Set((await db.reminders.toArray()).map(r => r.id))
         const newItems = data.reminders.filter((r: any) => !localIds.has(r.id))
         if (newItems.length) await db.reminders.bulkAdd(newItems)
+      }
+      if (data.invoices?.length) {
+        const localIds = new Set((await db.invoices.toArray()).map(i => i.id))
+        const newItems = data.invoices.filter((i: any) => !localIds.has(i.id))
+        if (newItems.length) await db.invoices.bulkAdd(newItems)
       }
 
       setLastSync(new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' }))
@@ -566,6 +576,78 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         } catch (e) { console.error('SAVE_REMINDER error:', e) }
       }
 
+      // ====== SAVE_INVOICE ======
+      const invoiceMatch = assistantText.match(/SAVE_INVOICE:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
+      if (invoiceMatch) {
+        try {
+          const id = JSON.parse(invoiceMatch[1])
+          const now = Date.now()
+          const items = (id.items || []).map((i: any) => ({ description: i.description, quantity: i.quantity || 1, unit_price: i.unit_price || 0, total: i.total || (i.quantity || 1) * (i.unit_price || 0) }))
+          const subtotal = items.reduce((s: number, i: any) => s + i.total, 0)
+          const taxRate = id.tax_rate || 0
+          const taxAmount = subtotal * (taxRate / 100)
+          await db.invoices.add({
+            invoice_number: generateInvoiceNumber('invoice'),
+            type: 'invoice',
+            client_name: id.client_name || '',
+            client_phone: id.client_phone || undefined,
+            client_email: id.client_email || undefined,
+            client_address: id.client_address || undefined,
+            items,
+            subtotal,
+            tax_rate: taxRate,
+            tax_amount: taxAmount,
+            total: subtotal + taxAmount,
+            notes: id.notes || undefined,
+            status: 'draft',
+            issue_date: now,
+            due_date: now + (id.due_days || 30) * 86400000,
+            created_at: now,
+            updated_at: now
+          })
+          const clean = assistantText.replace(/SAVE_INVOICE:\s*\{[\s\S]*?\}\s*/i, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Factura creada para ${id.client_name} — ${formatCurrency(subtotal + taxAmount)}. Ve a 🧾 Facturas para preview y enviar.` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_INVOICE error:', e) }
+      }
+
+      // ====== SAVE_QUOTE ======
+      const quoteMatch = assistantText.match(/SAVE_QUOTE:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
+      if (quoteMatch) {
+        try {
+          const qd = JSON.parse(quoteMatch[1])
+          const now = Date.now()
+          const items = (qd.items || []).map((i: any) => ({ description: i.description, quantity: i.quantity || 1, unit_price: i.unit_price || 0, total: i.total || (i.quantity || 1) * (i.unit_price || 0) }))
+          const subtotal = items.reduce((s: number, i: any) => s + i.total, 0)
+          const taxRate = qd.tax_rate || 0
+          const taxAmount = subtotal * (taxRate / 100)
+          await db.invoices.add({
+            invoice_number: generateInvoiceNumber('quote'),
+            type: 'quote',
+            client_name: qd.client_name || '',
+            client_phone: qd.client_phone || undefined,
+            client_email: qd.client_email || undefined,
+            client_address: qd.client_address || undefined,
+            items,
+            subtotal,
+            tax_rate: taxRate,
+            tax_amount: taxAmount,
+            total: subtotal + taxAmount,
+            notes: qd.notes || undefined,
+            status: 'draft',
+            issue_date: now,
+            expiration_date: now + (qd.valid_days || 15) * 86400000,
+            created_at: now,
+            updated_at: now
+          })
+          const clean = assistantText.replace(/SAVE_QUOTE:\s*\{[\s\S]*?\}\s*/i, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Cotización creada para ${qd.client_name} — ${formatCurrency(subtotal + taxAmount)}. Ve a 🧾 Facturas > Cotizaciones para preview.` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_QUOTE error:', e) }
+      }
+
       // ====== SAVE_EVENT ======
       const saveMatch = assistantText.match(/SAVE_EVENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
       if (saveMatch) {
@@ -710,6 +792,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 overflow-hidden border border-white/10">
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Facturas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
             <button onClick={() => { setShowMenu(false); onNavigate('notes') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📝 Notas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>

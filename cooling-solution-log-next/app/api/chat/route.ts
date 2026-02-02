@@ -233,6 +233,38 @@ SAVE_REMINDER:
 }
 Priority: "high" si dice urgente/importante, "low" si dice cuando pueda, "normal" default
 
+# FACTURAS
+Cuando diga "factura", "invoice", "hazme una factura":
+- Recoge: cliente, items (descripción, cantidad, precio), notas
+- Si falta info, PREGUNTA
+SAVE_INVOICE:
+{
+  "client_name": "Farmacias Caridad",
+  "client_phone": "787-555-1234",
+  "client_address": "Bayamón, PR",
+  "items": [
+    {"description": "Limpieza de unidades", "quantity": 5, "unit_price": 85, "total": 425},
+    {"description": "Filtro reemplazo", "quantity": 5, "unit_price": 15, "total": 75}
+  ],
+  "tax_rate": 0,
+  "notes": "Servicio mensual febrero 2026",
+  "due_days": 30
+}
+
+# COTIZACIONES
+Cuando diga "cotización", "quote", "cotiza", "cotizame":
+SAVE_QUOTE:
+{
+  "client_name": "Hotel Plaza",
+  "items": [
+    {"description": "Instalación mini split 12K BTU", "quantity": 2, "unit_price": 1200, "total": 2400},
+    {"description": "Tubería y materiales", "quantity": 1, "unit_price": 350, "total": 350}
+  ],
+  "tax_rate": 0,
+  "notes": "Incluye garantía 1 año en mano de obra",
+  "valid_days": 15
+}
+
 # REPORTES - EL USUARIO PUEDE PEDIR:
 - "dame el P&L de enero" → P&L con ingresos, gastos, profit
 - "¿quién me debe?" → Cuentas por cobrar con aging
@@ -246,6 +278,8 @@ Priority: "high" si dice urgente/importante, "low" si dice cuando pueda, "normal
 - "¿cuánto gasté en la F150?" → filtra por vehicle_id
 - "¿qué tengo mañana?" → revisa citas en contexto
 - "¿qué me falta?" → revisa recordatorios pendientes
+- "¿cuántas facturas pendientes tengo?" → revisa facturas enviadas no pagadas
+- "hazme factura para X" → crea factura con datos del cliente
 
 # FORMATO SAVE_EVENT
 SAVE_EVENT:

@@ -163,3 +163,38 @@ export interface Reminder {
   priority: 'low' | 'normal' | 'high'
   created_at: number
 }
+
+// ========== BATCH 3: INVOICING ==========
+
+export interface InvoiceItem {
+  description: string
+  quantity: number
+  unit_price: number
+  total: number
+}
+
+export interface Invoice {
+  id?: number
+  invoice_number: string
+  type: 'invoice' | 'quote'
+  client_id?: number
+  client_name: string
+  client_phone?: string
+  client_email?: string
+  client_address?: string
+  job_id?: number
+  items: InvoiceItem[]
+  subtotal: number
+  tax_rate: number
+  tax_amount: number
+  total: number
+  notes?: string
+  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled'
+  issue_date: number
+  due_date?: number
+  expiration_date?: number  // for quotes
+  paid_date?: number
+  paid_method?: string
+  created_at: number
+  updated_at: number
+}
