@@ -270,17 +270,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   // ============ FOTOS ============
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
- for (const f of files) {
-  const b64 = await new Promise<string>((res) => {
-    const r = new FileReader()
-    r.onload = () => res(r.result as string)
-    r.readAsDataURL(f)
-  })
-
-  const compressed = await compressImage(b64)
-  setPendingPhotos((prev) => [...prev, compressed])
-}
-
+    for (const f of files) {
+      const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f) })
+      const compressed = await compressImage(b64)
+      setPendingPhotos(prev => [...prev, compressed])
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
 
   // ============ ENVIAR ============
   const handleSend = async () => {
@@ -577,5 +573,5 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         </div>
       </div>
     </div>
-  )}
+  )
 }
