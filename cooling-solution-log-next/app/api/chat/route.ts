@@ -21,7 +21,46 @@ export async function POST(request: Request) {
     const lastMsg = messages[messages.length - 1]
     const userText = (lastMsg.content || '').toLowerCase()
 
-    // ====== 1) DETECCIÓN DE REPORTES (bypass Claude) ======
+    // ====== 1) DETECCIÓN DE REPORTES (bypass Claude - rápido) ======
+
+    // P&L
+    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') || userText.includes('perdida') || userText.includes('ganancia')) {
+      let period: 'week' | 'month' | 'year' = 'month'
+      let periodLabel = 'este mes'
+      if (userText.includes('semana') || userText.includes('week')) { period = 'week'; periodLabel = 'esta semana' }
+      else if (userText.includes('año') || userText.includes('ano') || userText.includes('year') || userText.includes('anual')) { period = 'year'; periodLabel = 'este año' }
+      else if (userText.includes('enero')) { period = 'month'; periodLabel = 'enero' }
+      else if (userText.includes('febrero')) { period = 'month'; periodLabel = 'febrero' }
+      else if (userText.includes('marzo')) { period = 'month'; periodLabel = 'marzo' }
+      else if (userText.includes('abril')) { period = 'month'; periodLabel = 'abril' }
+      else if (userText.includes('mayo')) { period = 'month'; periodLabel = 'mayo' }
+      else if (userText.includes('junio')) { period = 'month'; periodLabel = 'junio' }
+      else if (userText.includes('julio')) { period = 'month'; periodLabel = 'julio' }
+      else if (userText.includes('agosto')) { period = 'month'; periodLabel = 'agosto' }
+      else if (userText.includes('septiembre') || userText.includes('sept')) { period = 'month'; periodLabel = 'septiembre' }
+      else if (userText.includes('octubre')) { period = 'month'; periodLabel = 'octubre' }
+      else if (userText.includes('noviembre') || userText.includes('nov')) { period = 'month'; periodLabel = 'noviembre' }
+      else if (userText.includes('diciembre') || userText.includes('dic')) { period = 'month'; periodLabel = 'diciembre' }
+
+      return NextResponse.json({ type: 'GENERATE_PL', payload: { period, periodLabel } })
+    }
+
+    // Cuentas por cobrar
+    if (userText.includes('quien me debe') || userText.includes('cuentas por cobrar') || userText.includes('pendiente de pago') || userText.includes('me deben')) {
+      return NextResponse.json({ type: 'GENERATE_AR' })
+    }
+
+    // Reporte por tarjeta/método de pago
+    const cardReportMatch = userText.match(/(?:reporte|cuanto|cuánto|gast[eé]).*(?:con la|con el|en la|en el)\s+(.+?)(?:\s+(?:este|esta|del|de)\s+(?:mes|semana|año|ano))?$/i)
+    if (cardReportMatch && !userText.includes('gasolina') && !userText.includes('comida')) {
+      const cardName = cardReportMatch[1].trim().replace(/\s+/g, '_').toLowerCase()
+      let period: 'week' | 'month' | 'year' = 'month'
+      if (userText.includes('semana')) period = 'week'
+      else if (userText.includes('año') || userText.includes('ano')) period = 'year'
+      return NextResponse.json({ type: 'GENERATE_PAYMENT_REPORT', payload: { paymentMethod: cardName, period } })
+    }
+
+    // Reporte por categoría
     const wantsReport =
       userText.includes('reporte') ||
       userText.includes('report') ||
@@ -34,8 +73,9 @@ export async function POST(request: Request) {
       else if (userText.includes('material')) category = 'materiales'
       else if (userText.includes('herramient')) category = 'herramientas'
       else if (userText.includes('peaje')) category = 'peajes'
-      else if (userText.includes('seguro') || userText.includes('insurance')) category = 'seguros'
+      else if (userText.includes('seguro')) category = 'seguros'
       else if (userText.includes('mantenimiento')) category = 'mantenimiento'
+      else if (userText.includes('nomina') || userText.includes('nómina')) category = 'nómina'
 
       let period: 'week' | 'month' | 'year' = 'month'
       if (userText.includes('semana') || userText.includes('week')) period = 'week'
@@ -54,146 +94,157 @@ export async function POST(request: Request) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const usedModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929'
 
-    const systemPrompt = `Eres el asistente inteligente de Cooling Solution Log, app de un técnico HVAC en Puerto Rico.
-FECHA REAL: ${todayStr}
-TIMESTAMP ACTUAL: ${epochNow}
+    const systemPrompt = `Eres el asistente de Cooling Solution Log, app HVAC en Puerto Rico.
+FECHA: ${todayStr} | TIMESTAMP: ${epochNow}
 
 # MISIÓN
-Registrar CADA centavo que entra y sale del negocio. Gastos, ingresos, trabajos, empleados, clientes, vehículos.
+Registrar CADA centavo. Gastos, ingresos, trabajos, empleados, clientes, vehículos.
+Respuestas BREVES. El usuario está en la calle.
 
 # MEMORIA
-- El primer mensaje puede ser "CONTEXTO_DB" con registros anteriores
-- USA ese contexto para consultas: "¿cuándo fue la última gasolina?", "¿cuánto gasté esta semana?"
-- NUNCA muestres el contexto raw. Solo responde con la info relevante.
-- Si no encuentras algo: "No tengo ese registro en los datos cargados"
+- "CONTEXTO_DB" tiene registros anteriores. USA para consultas.
+- NUNCA muestres contexto raw.
 
-# CUANDO RECIBES FOTOS
-- Analiza la imagen: lee texto, montos, vendor, items, fecha
-- DESCRIBE lo que ves al usuario
-- PREGUNTA para confirmar ANTES de guardar:
-  • "Veo un recibo de [vendor] por $[monto]. ¿Es correcto?"
-  • "¿En qué categoría va? (materiales, comida, gasolina, etc.)"
-  • "¿Cómo pagaste?"
-  • "¿Es para algún cliente o trabajo específico?"
-- NUNCA guardes automáticamente sin confirmación
-- Si no puedes leer algo, pregunta al usuario
+# FOTOS
+- Analiza → Describe → PREGUNTA antes de guardar
+- "Veo recibo de [vendor] por $[monto]. ¿Correcto?"
+- NUNCA guardes sin confirmación
 
-# REGLAS ABSOLUTAS
-1. SIEMPRE incluye payment_method en SAVE_EVENT
-2. Si falta payment_method → pregunta "¿Cómo pagaste?"
-3. NUNCA emitas SAVE_EVENT sin payment_method
-4. Pregunta UNA cosa a la vez
-5. Info completa → emite comando inmediato
-6. SIEMPRE usa timestamp ${epochNow} en SAVE_EVENT
+# MÉTODO DE PAGO - NOMBRE EXACTO
+"Capital One" → capital_one | "Chase Visa" → chase_visa | "Sam's MC" → sams_mastercard
+"ATH Móvil" → ath_movil | "efectivo" → cash | "PayPal" → paypal
+Si dice "tarjeta" genérico → PREGUNTA "¿Cuál tarjeta?"
 
-# MÉTODOS DE PAGO (valores exactos)
-cash, ath_movil, business_card, sams_card, paypal, personal_card, other
+# TIPOS DE EVENTO
 
-# MAPEO
-"tarjeta del negocio" / "business" → business_card
-"tarjeta Sam's" / "sams" → sams_card
-"efectivo" / "cash" → cash
-"ATH" / "ath movil" → ath_movil
-"PayPal" → paypal
-"tarjeta personal" / "mi tarjeta" / "capital one" → personal_card
+## GASTO (type: expense)
+Categorías: Gasolina, Comida, Materiales, Herramientas, Seguros, Peajes, Mantenimiento, Nómina
 
-# TIPOS DE REGISTRO
+## INGRESO (type: income)
+Categorías: Servicio, Instalación, Reparación, Mantenimiento, Emergencia, Contrato
+SIEMPRE vincular a cliente cuando aplique
 
-## GASTOS (type: "expense")
-Categorías: Gasolina, Comida, Materiales, Herramientas, Seguros, Peajes, Mantenimiento, Nómina, Otro
-Subtipos: gas, food, materials, tools, insurance, maintenance, payroll, other
+# TRABAJOS (JOBS) - SISTEMA COMPLETO
 
-## INGRESOS (type: "income")
-Categorías: Servicio, Instalación, Reparación, Mantenimiento, Emergencia
-Siempre vincular a cliente si es posible
+## Crear trabajo:
+Cuando mencione un trabajo para un cliente:
+SAVE_JOB:
+{
+  "client_name": "José Rivera",
+  "type": "maintenance",
+  "services": [{"description": "Limpieza mini split", "quantity": 4, "unit_price": 85, "total": 340}],
+  "materials": [{"item": "Filtro", "quantity": 4, "unit_cost": 5, "unit_price": 10}],
+  "total_charged": 380,
+  "deposit": 0,
+  "payment_status": "pending",
+  "payments": [],
+  "balance_due": 380,
+  "notes": ""
+}
 
-## EMPLEADOS
-- Cobran por día. SIEMPRE retención 10%
-- Cálculo: días × rate × 0.9
+## Materiales con markup:
+- SIEMPRE pregunta costo Y precio de venta
+- Si dice "lo cobré a 150 y me costó 100" → unit_cost: 100, unit_price: 150
+- Si no especifica markup, PREGUNTA: "¿A cuánto lo cobraste?"
 
-## VEHÍCULOS
-- Transit, F150, BMW
-- Vincular gasolina/mantenimiento al vehículo
+## Pagos parciales:
+"José me pagó 200 de los 380" →
+SAVE_PAYMENT:
+{
+  "client_name": "José Rivera",
+  "amount": 200,
+  "method": "cash",
+  "job_reference": "Limpieza mini splits",
+  "remaining": 180
+}
 
-# FLUJOS
+## Cobro completado:
+"José pagó el balance" →
+SAVE_PAYMENT con remaining: 0
 
-## Gasto simple:
-"Gasté 40 en gasolina" → preguntar vehículo → preguntar método pago → preguntar dónde → SAVE_EVENT
+# EMPLEADOS
+- Cobran por día. SIEMPRE 10% retención.
+- 3 días × $300 = $900 → 10% = $810 neto
+SAVE_EMPLOYEE_PAYMENT:
+{
+  "employee_name": "Miguel Santos",
+  "days": 3,
+  "daily_rate": 300,
+  "gross": 900,
+  "retention": 90,
+  "net": 810,
+  "payment_method": "cash",
+  "job_reference": "Instalación Casa Rivera"
+}
 
-## Foto de recibo:
-[foto] → analizar → describir → confirmar con usuario → preguntar categoría/pago → SAVE_EVENT
+# CONTRATOS RECURRENTES (Farmacias Caridad, etc.)
+SAVE_CONTRACT:
+{
+  "client_name": "Farmacias Caridad",
+  "service": "Limpieza paquete 5 unidades",
+  "frequency": "monthly",
+  "amount": 500,
+  "locations": ["Bayamón", "Toa Baja", "Carolina", "Caguas", "Ponce"]
+}
 
-## Ingreso/cobro:
-"José me pagó 500" → preguntar por qué servicio → preguntar método pago → SAVE_EVENT con type:"income"
+# REPORTES - EL USUARIO PUEDE PEDIR:
+- "dame el P&L de enero" → P&L con ingresos, gastos, profit
+- "¿quién me debe?" → Cuentas por cobrar con aging
+- "reporte de gasolina del mes" → reporte por categoría
+- "¿cuánto gasté con la Capital One este mes?" → reporte por tarjeta
+- "reporte anual" → P&L del año
 
-## Consulta:
-"¿Cuánto gasté en gasolina esta semana?" → revisar CONTEXTO_DB → responder con datos
+# CONSULTAS INTELIGENTES
+- "¿tuve profit este mes?" → calcula con CONTEXTO_DB
+- "¿cuánto me deben?" → revisa jobs pendientes en contexto
+- "¿cuánto gasté en la F150?" → filtra por vehicle_id
 
-# COMANDOS DE SALIDA
-
-## Para guardar evento:
+# FORMATO SAVE_EVENT
 SAVE_EVENT:
 {
-  "type": "expense",
-  "subtype": "gas",
-  "category": "Gasolina",
-  "amount": 40,
-  "payment_method": "business_card",
-  "vendor": "Shell",
-  "vehicle_id": "transit",
-  "client": "",
+  "type": "expense|income",
+  "subtype": "gas|food|materials|service|...",
+  "category": "Gasolina|Comida|Servicio|...",
+  "amount": 80,
+  "payment_method": "capital_one",
+  "vendor": "Shell Toa Baja",
+  "vehicle_id": "transit|f150|bmw",
+  "client": "José Rivera",
   "note": "",
   "timestamp": ${epochNow}
 }
 
-✅ Registrado: Gasolina $40 en Shell (Tarjeta Negocio) - Transit
+# REGLAS FINALES
+- BREVE y directo
+- NUNCA inventes datos
+- Si falta info → pregunta UNA cosa
+- payment_method ESPECÍFICO siempre
+- El usuario puede dictar por voz - interpreta errores inteligentemente
+- "cápital wan" = Capital One, "eitiach" = ATH, etc.`
 
-## Para reportes:
-GENERATE_PDF:
-{
-  "category": "Gasolina",
-  "period": "week"
-}
-
-# IMPORTANTE
-- Respuestas BREVES y directas
-- Nunca inventes datos
-- Confirma cálculos
-- Si falta info, pregunta UNA cosa
-- SIEMPRE usa los valores exactos de payment_method
-- Para fotos: SIEMPRE confirmar antes de guardar`
-
-    // ====== 3) CONSTRUIR MENSAJES PARA ANTHROPIC (multimodal) ======
+    // ====== 3) MENSAJES MULTIMODAL ======
     const anthropicMessages = messages.map((m, idx) => {
       const isLast = idx === messages.length - 1
-
-      // Último mensaje con fotos → multimodal
       if (isLast && m.role === 'user' && m.photos && m.photos.length > 0) {
         const content: any[] = []
         m.photos.forEach(photo => {
           const base64Data = photo.replace(/^data:image\/\w+;base64,/, '')
-          content.push({
-            type: 'image',
-            source: { type: 'base64', media_type: 'image/jpeg', data: base64Data }
-          })
+          content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Data } })
         })
         content.push({ type: 'text', text: m.content || 'Analiza esta imagen.' })
         return { role: m.role as 'user' | 'assistant', content }
       }
-
-      // Mensaje histórico que TUVO fotos → nota de texto
       let text = m.content
       if (m.role === 'user' && m.photos && m.photos.length > 0) {
-        text = `[📷 ${m.photos.length} foto(s) adjunta(s) - ya analizadas] ${text}`
+        text = `[📷 ${m.photos.length} foto(s) - ya analizadas] ${text}`
       }
-
       return { role: m.role as 'user' | 'assistant', content: text }
     })
 
-    // ====== 4) LLAMAR A ANTHROPIC ======
+    // ====== 4) ANTHROPIC ======
     const response = await client.messages.create({
       model: usedModel,
-      max_tokens: 1024,
+      max_tokens: 1500,
       system: systemPrompt,
       messages: anthropicMessages
     })
@@ -204,17 +255,15 @@ GENERATE_PDF:
       .join('\n')
       .trim()
 
-    // ====== 5) DETECTAR GENERATE_PDF EN RESPUESTA DE CLAUDE ======
+    // ====== 5) DETECTAR COMANDOS EN RESPUESTA ======
     const pdfMatch = text.match(/GENERATE_PDF:\s*(\{[\s\S]*?\})/)
     if (pdfMatch) {
-      let payload: any = {}
-      try { payload = JSON.parse(pdfMatch[1]) } catch {}
-      return NextResponse.json({ type: 'GENERATE_PDF', payload })
+      try { return NextResponse.json({ type: 'GENERATE_PDF', payload: JSON.parse(pdfMatch[1]) }) } catch {}
     }
 
     return NextResponse.json({ type: 'TEXT', text })
   } catch (error: any) {
     console.error('Error /api/chat:', error)
-    return NextResponse.json({ error: error?.message || 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 })
   }
 }
