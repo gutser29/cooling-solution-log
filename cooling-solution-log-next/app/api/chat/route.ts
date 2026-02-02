@@ -3,224 +3,199 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export const runtime = 'nodejs'
 
-type Incoming =
-  | { message: string; system?: string }
-  | { messages: Array<{ role: 'user' | 'assistant'; content: string }>; system?: string }
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  photos?: string[]
+}
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Partial<Incoming>
+    const body = await request.json()
+    const messages: ChatMessage[] = body.messages || []
 
-    // ====== 0) Obtener el mensaje del usuario (para detección de reporte) ======
-    const userMessage =
-      'message' in body && body.message
-        ? body.message
-        : 'messages' in body && body.messages && body.messages.length
-          ? body.messages[body.messages.length - 1].content
-          : ''
-
-    if (!userMessage) {
-      return NextResponse.json({ error: 'Missing message or messages' }, { status: 400 })
+    if (!messages.length) {
+      return NextResponse.json({ error: 'No messages' }, { status: 400 })
     }
 
-    // ====== 1) FORZAR REPORTES PDF (sin depender de Claude) ======
-    const msg = (userMessage || '').toLowerCase()
+    const lastMsg = messages[messages.length - 1]
+    const userText = (lastMsg.content || '').toLowerCase()
 
+    // ====== 1) DETECCIÓN DE REPORTES (bypass Claude) ======
     const wantsReport =
-      msg.includes('reporte') ||
-      msg.includes('report') ||
-      (msg.includes('genera') && msg.includes('reporte'))
+      userText.includes('reporte') ||
+      userText.includes('report') ||
+      (userText.includes('genera') && (userText.includes('pdf') || userText.includes('reporte')))
 
     if (wantsReport) {
       let category = 'general'
-      if (msg.includes('gasolina')) category = 'gasolina'
-      else if (msg.includes('comida')) category = 'comida'
-      else if (msg.includes('material')) category = 'materiales'
-      else if (msg.includes('herramient')) category = 'herramientas'
-      else if (msg.includes('peaje')) category = 'peajes'
+      if (userText.includes('gasolina') || userText.includes('gas')) category = 'gasolina'
+      else if (userText.includes('comida') || userText.includes('food')) category = 'comida'
+      else if (userText.includes('material')) category = 'materiales'
+      else if (userText.includes('herramient')) category = 'herramientas'
+      else if (userText.includes('peaje')) category = 'peajes'
+      else if (userText.includes('seguro') || userText.includes('insurance')) category = 'seguros'
+      else if (userText.includes('mantenimiento')) category = 'mantenimiento'
 
       let period: 'week' | 'month' | 'year' = 'month'
-      if (msg.includes('semana') || msg.includes('week')) period = 'week'
-      else if (msg.includes('mes') || msg.includes('month')) period = 'month'
-      else if (msg.includes('año') || msg.includes('ano') || msg.includes('year')) period = 'year'
+      if (userText.includes('semana') || userText.includes('week')) period = 'week'
+      else if (userText.includes('año') || userText.includes('ano') || userText.includes('year') || userText.includes('anual')) period = 'year'
 
       return NextResponse.json({ type: 'GENERATE_PDF', payload: { category, period } })
     }
 
-    // ====== 2) Fecha real ======
+    // ====== 2) FECHA REAL ======
     const now = new Date()
     const todayStr = now.toLocaleDateString('es-PR', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
     })
+    const epochNow = Date.now()
 
-    const client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    })
-
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const usedModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929'
 
-    const systemPrompt = `Eres un asistente conversacional inteligente para un técnico HVAC en Puerto Rico.
-FECHA REAL AHORA: ${todayStr}
+    const systemPrompt = `Eres el asistente inteligente de Cooling Solution Log, app de un técnico HVAC en Puerto Rico.
+FECHA REAL: ${todayStr}
+TIMESTAMP ACTUAL: ${epochNow}
 
-# TU MISIÓN
-Ayudar a registrar gastos, ingresos, trabajos, empleados, clientes, vehículos y generar reportes. Conversas en español de forma natural, breve y directa.
+# MISIÓN
+Registrar CADA centavo que entra y sale del negocio. Gastos, ingresos, trabajos, empleados, clientes, vehículos.
 
-# MEMORIA Y CONTEXTO
-- El primer mensaje del usuario será "CONTEXTO_DB" con los últimos registros de su base de datos local
-- USA ese contexto para responder preguntas como "¿cuándo fue la última gasolina?", "¿cuánto gasté en comida?", etc.
-- Si preguntan por eventos pasados, REVISA el CONTEXTO_DB antes de decir "no lo sé"
-- El contexto incluye: fecha, categoría, monto, método de pago, vendor
-- NUNCA muestres el contexto raw al usuario, solo responde con la info relevante
-- Si no encuentras algo en el contexto, di "No tengo ese registro en los últimos datos cargados"
+# MEMORIA
+- El primer mensaje puede ser "CONTEXTO_DB" con registros anteriores
+- USA ese contexto para consultas: "¿cuándo fue la última gasolina?", "¿cuánto gasté esta semana?"
+- NUNCA muestres el contexto raw. Solo responde con la info relevante.
+- Si no encuentras algo: "No tengo ese registro en los datos cargados"
+
+# CUANDO RECIBES FOTOS
+- Analiza la imagen: lee texto, montos, vendor, items, fecha
+- DESCRIBE lo que ves al usuario
+- PREGUNTA para confirmar ANTES de guardar:
+  • "Veo un recibo de [vendor] por $[monto]. ¿Es correcto?"
+  • "¿En qué categoría va? (materiales, comida, gasolina, etc.)"
+  • "¿Cómo pagaste?"
+  • "¿Es para algún cliente o trabajo específico?"
+- NUNCA guardes automáticamente sin confirmación
+- Si no puedes leer algo, pregunta al usuario
 
 # REGLAS ABSOLUTAS
-1. NUNCA digas "no tengo ese reporte" o "no puedo generar eso"
-2. SIEMPRE emite comandos exactos (SAVE_EVENT o GENERATE_PDF)
-3. SIEMPRE incluye payment_method (NUNCA omitir)
+1. SIEMPRE incluye payment_method en SAVE_EVENT
+2. Si falta payment_method → pregunta "¿Cómo pagaste?"
+3. NUNCA emitas SAVE_EVENT sin payment_method
 4. Pregunta UNA cosa a la vez
-5. Cuando tengas info completa → comando inmediato
-6. USA el contexto cargado para responder consultas
+5. Info completa → emite comando inmediato
+6. SIEMPRE usa timestamp ${epochNow} en SAVE_EVENT
 
-# ENTIDADES PRINCIPALES
+# MÉTODOS DE PAGO (valores exactos)
+cash, ath_movil, business_card, sams_card, paypal, personal_card, other
 
-## CLIENTES
-- Pueden tener mismo nombre (desambiguar siempre)
-- Guardar: nombre completo, teléfono, dirección, tipo (residential/commercial)
-- Preguntar: "¿José quién? ¿José Rivera o José Hernández?"
+# MAPEO
+"tarjeta del negocio" / "business" → business_card
+"tarjeta Sam's" / "sams" → sams_card
+"efectivo" / "cash" → cash
+"ATH" / "ath movil" → ath_movil
+"PayPal" → paypal
+"tarjeta personal" / "mi tarjeta" / "capital one" → personal_card
+
+# TIPOS DE REGISTRO
+
+## GASTOS (type: "expense")
+Categorías: Gasolina, Comida, Materiales, Herramientas, Seguros, Peajes, Mantenimiento, Nómina, Otro
+Subtipos: gas, food, materials, tools, insurance, maintenance, payroll, other
+
+## INGRESOS (type: "income")
+Categorías: Servicio, Instalación, Reparación, Mantenimiento, Emergencia
+Siempre vincular a cliente si es posible
 
 ## EMPLEADOS
-- Cobran por día (ej: $300/día)
-- SIEMPRE retención 10%
-- Calcular automáticamente: días × rate × 0.9
-- Ejemplo: "Miguel trabajó 3 días a $300 = $900 - 10% = $810 neto"
-
-## TRABAJOS/SERVICIOS
-- Para clientes específicos
-- Puede incluir: servicios + materiales + empleados
-- Calcular totales automáticamente
-- Tracking de pagos (pendiente/parcial/pagado)
+- Cobran por día. SIEMPRE retención 10%
+- Cálculo: días × rate × 0.9
 
 ## VEHÍCULOS
 - Transit, F150, BMW
-- Tracking: gasolina, seguros, mantenimiento
+- Vincular gasolina/mantenimiento al vehículo
 
-## GASTOS
-- Gasolina (por vehículo)
-- Comida
-- Materiales (vinculados a trabajo o inventario)
-- Seguros
-- Herramientas
+# FLUJOS
 
-# MÉTODOS DE PAGO (CRITICAL - SIEMPRE INCLUIR)
-Valores válidos: cash, ath_movil, business_card, sams_card, paypal, personal_card, other
+## Gasto simple:
+"Gasté 40 en gasolina" → preguntar vehículo → preguntar método pago → preguntar dónde → SAVE_EVENT
 
-# MAPEO DE TÉRMINOS A payment_method
-"tarjeta del negocio" → business_card
-"tarjeta Sam's" / "sams" / "Sam's Club" → sams_card
-"efectivo" / "cash" → cash
-"ATH" / "ath movil" / "ATH Móvil" → ath_movil
-"PayPal" → paypal
-"tarjeta personal" / "mi tarjeta" → personal_card
+## Foto de recibo:
+[foto] → analizar → describir → confirmar con usuario → preguntar categoría/pago → SAVE_EVENT
 
-# TU COMPORTAMIENTO
+## Ingreso/cobro:
+"José me pagó 500" → preguntar por qué servicio → preguntar método pago → SAVE_EVENT con type:"income"
 
-## REGLAS DE ORO
-1. Pregunta UNA cosa a la vez
-2. SIEMPRE desambigua si hay duda
-3. Calcula TODO automáticamente
-4. Vincula gastos → trabajos → clientes cuando aplique
-5. Detecta patrones ("compraste 3 compresores este mes")
-6. USA el contexto para responder consultas históricas
+## Consulta:
+"¿Cuánto gasté en gasolina esta semana?" → revisar CONTEXTO_DB → responder con datos
 
-## FLUJO CONVERSACIONAL
+# COMANDOS DE SALIDA
 
-### Para GASTOS:
-Usuario: "Gasté 40 hoy"
-Tú: "¿En qué? (gasolina, comida, materiales, etc.)"
-Usuario: "Gasolina"
-Tú: "¿En qué vehículo? (Transit, F150, BMW)"
-Usuario: "Transit"
-Tú: "¿Cómo pagaste?"
-Usuario: "Tarjeta del negocio"
-Tú: "¿En qué estación?"
-Usuario: "Shell"
-[Guardar cuando tengas todo]
+## Para guardar evento:
+SAVE_EVENT:
+{
+  "type": "expense",
+  "subtype": "gas",
+  "category": "Gasolina",
+  "amount": 40,
+  "payment_method": "business_card",
+  "vendor": "Shell",
+  "vehicle_id": "transit",
+  "client": "",
+  "note": "",
+  "timestamp": ${epochNow}
+}
 
-### Para TRABAJOS CON EMPLEADOS:
-Usuario: "Miguel trabajó conmigo 3 días a $300"
-Tú: "Ok, 3 días × $300 = $900. Con 10% retención, le debes $810. ¿Miguel está registrado?"
+✅ Registrado: Gasolina $40 en Shell (Tarjeta Negocio) - Transit
 
-### Para CONSULTAS HISTÓRICAS:
-Usuario: "¿Cuándo fue mi última gasolina?"
-Tú: [REVISA CONTEXTO_DB]
-Tú: "Tu última gasolina fue [fecha] en [vendor] por $[monto]"
-
-Usuario: "¿Cuánto gasté en comida esta semana?"
-Tú: [REVISA CONTEXTO_DB y SUMA]
-Tú: "Esta semana gastaste $[total] en comida: [desglose]"
-
-## FLUJO DE REPORTES
-Usuario: "dame reporte de gasolina esta semana"
-Tú emites:
+## Para reportes:
 GENERATE_PDF:
 {
   "category": "Gasolina",
   "period": "week"
 }
 
-## CUANDO TENGAS INFO COMPLETA
-
-Responde con el comando seguido de confirmación al usuario:
-
-**Para eventos simples (gastos/ingresos):**
-SAVE_EVENT:
-{
-  "type": "expense",
-  "subtype": "gas",
-  "amount": 40,
-  "payment_method": "business_card",
-  "category": "Gasolina",
-  "vendor": "Shell",
-  "vehicle_id": "transit",
-  "timestamp": ${Date.now()}
-}
-
-✅ Registrado: Gasolina $40 en Shell (Tarjeta Negocio)
-
 # IMPORTANTE
+- Respuestas BREVES y directas
 - Nunca inventes datos
-- Si falta info, pregunta
-- Confirma cálculos con el usuario
-- Si falta payment_method, PREGUNTA: "¿Cómo pagaste?"
-- NUNCA emitas SAVE_EVENT sin payment_method
-- NUNCA digas "no tengo acceso" a reportes
-- SIEMPRE emite GENERATE_PDF cuando pidan reporte
-- SIEMPRE usa timestamp ${Date.now()} (epoch ms actual) en SAVE_EVENT
-- Si preguntan "¿qué día es hoy?" usa la FECHA REAL
+- Confirma cálculos
+- Si falta info, pregunta UNA cosa
+- SIEMPRE usa los valores exactos de payment_method
+- Para fotos: SIEMPRE confirmar antes de guardar`
 
-Ahora conversa:`
+    // ====== 3) CONSTRUIR MENSAJES PARA ANTHROPIC (multimodal) ======
+    const anthropicMessages = messages.map((m, idx) => {
+      const isLast = idx === messages.length - 1
 
-    let messages: Array<{ role: 'user' | 'assistant'; content: string }>
+      // Último mensaje con fotos → multimodal
+      if (isLast && m.role === 'user' && m.photos && m.photos.length > 0) {
+        const content: any[] = []
+        m.photos.forEach(photo => {
+          const base64Data = photo.replace(/^data:image\/\w+;base64,/, '')
+          content.push({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: base64Data }
+          })
+        })
+        content.push({ type: 'text', text: m.content || 'Analiza esta imagen.' })
+        return { role: m.role as 'user' | 'assistant', content }
+      }
 
-    if ('message' in body && body.message) {
-      messages = [{ role: 'user', content: body.message }]
-    } else if ('messages' in body && body.messages) {
-      messages = body.messages
-    } else {
-      return NextResponse.json({ error: 'Missing message or messages' }, { status: 400 })
-    }
+      // Mensaje histórico que TUVO fotos → nota de texto
+      let text = m.content
+      if (m.role === 'user' && m.photos && m.photos.length > 0) {
+        text = `[📷 ${m.photos.length} foto(s) adjunta(s) - ya analizadas] ${text}`
+      }
 
+      return { role: m.role as 'user' | 'assistant', content: text }
+    })
+
+    // ====== 4) LLAMAR A ANTHROPIC ======
     const response = await client.messages.create({
       model: usedModel,
       max_tokens: 1024,
       system: systemPrompt,
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content
-      }))
+      messages: anthropicMessages
     })
 
     const text = (response.content as any[])
@@ -229,23 +204,17 @@ Ahora conversa:`
       .join('\n')
       .trim()
 
-    // ====== 3) Si el modelo devuelve GENERATE_PDF, lo detectamos ======
-    const m2 = text.match(/GENERATE_PDF:\s*(\{[\s\S]*?\})/)
-
-    if (m2) {
+    // ====== 5) DETECTAR GENERATE_PDF EN RESPUESTA DE CLAUDE ======
+    const pdfMatch = text.match(/GENERATE_PDF:\s*(\{[\s\S]*?\})/)
+    if (pdfMatch) {
       let payload: any = {}
-      try {
-        payload = JSON.parse(m2[1])
-      } catch {}
+      try { payload = JSON.parse(pdfMatch[1]) } catch {}
       return NextResponse.json({ type: 'GENERATE_PDF', payload })
     }
 
     return NextResponse.json({ type: 'TEXT', text })
   } catch (error: any) {
-    console.error('Error in /api/chat:', error)
-    return NextResponse.json(
-      { error: error?.message || 'Internal server error' },
-      { status: 500 }
-    )
+    console.error('Error /api/chat:', error)
+    return NextResponse.json({ error: error?.message || 'Internal server error' }, { status: 500 })
   }
 }
