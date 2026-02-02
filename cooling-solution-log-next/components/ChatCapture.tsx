@@ -66,26 +66,119 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const [driveConnected, setDriveConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string>('')
+  const [isOnline, setIsOnline] = useState(true)
+  const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const recognitionRef = useRef<any>(null)
   const dbContextRef = useRef<string>('')
   const contextLoadedRef = useRef(false)
   const driveConnectedRef = useRef(false)
   const syncingRef = useRef(false)
 
-  // Keep ref in sync with state
   useEffect(() => { driveConnectedRef.current = driveConnected }, [driveConnected])
 
-  // ============ GOOGLE DRIVE SYNC FUNCTIONS ============
+  // ============ AUTO-RESIZE TEXTAREA ============
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+    }
+  }, [])
 
+  useEffect(() => { autoResize() }, [input, autoResize])
+
+  // ============ ONLINE/OFFLINE DETECTION ============
+  useEffect(() => {
+    setIsOnline(navigator.onLine)
+    const goOnline = () => {
+      setIsOnline(true)
+      console.log('🌐 Online — processing sync queue')
+      processSyncQueue()
+    }
+    const goOffline = () => {
+      setIsOnline(false)
+      console.log('📴 Offline')
+    }
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
+
+  // Check pending sync count
+  const updatePendingCount = useCallback(async () => {
+    try {
+      const count = await db.sync_queue.where('status').equals('pending').count()
+      setPendingSyncCount(count)
+    } catch { setPendingSyncCount(0) }
+  }, [])
+
+  useEffect(() => {
+    updatePendingCount()
+    const interval = setInterval(updatePendingCount, 30000)
+    return () => clearInterval(interval)
+  }, [updatePendingCount])
+
+  // ============ SYNC QUEUE PROCESSING ============
+  const processSyncQueue = useCallback(async () => {
+    if (!driveConnectedRef.current || syncingRef.current || !navigator.onLine) return
+    const pending = await db.sync_queue.where('status').equals('pending').toArray()
+    if (pending.length === 0) return
+
+    console.log(`☁️ Processing ${pending.length} pending syncs`)
+    syncingRef.current = true
+    setSyncing(true)
+
+    try {
+      const events = await db.events.toArray()
+      const clients = await db.clients.toArray()
+      const jobs = await db.jobs.toArray()
+      const employees = await db.employees.toArray()
+      const vehicles = await db.vehicles.toArray()
+      const contracts = await db.contracts.toArray()
+
+      const res = await fetch('/api/sync/drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts })
+      })
+
+      if (res.ok) {
+        // Mark all pending as synced
+        await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
+        // Clean old synced items
+        const synced = await db.sync_queue.where('status').equals('synced').toArray()
+        if (synced.length > 10) {
+          const toDelete = synced.slice(0, synced.length - 5).map(s => s.id!)
+          await db.sync_queue.bulkDelete(toDelete)
+        }
+        const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
+        setLastSync(time)
+        setPendingSyncCount(0)
+        console.log('☁️ Queue processed, synced at', time)
+      } else {
+        console.error('☁️ Queue sync failed')
+      }
+    } catch (e) {
+      console.error('☁️ Queue sync error:', e)
+    } finally {
+      syncingRef.current = false
+      setSyncing(false)
+    }
+  }, [])
+
+  // ============ GOOGLE DRIVE SYNC ============
   const checkDriveConnection = useCallback(async () => {
     try {
       const res = await fetch('/api/sync/status')
       const data = await res.json()
       setDriveConnected(data.connected)
       driveConnectedRef.current = data.connected
-      console.log('☁️ Drive connected:', data.connected)
     } catch {
       setDriveConnected(false)
       driveConnectedRef.current = false
@@ -93,8 +186,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   }, [])
 
   const syncToDrive = useCallback(async () => {
-    console.log('☁️ syncToDrive called, connected:', driveConnectedRef.current, 'syncing:', syncingRef.current)
+    // Add to sync queue first
+    await db.sync_queue.add({ timestamp: Date.now(), status: 'pending', retries: 0 })
+    updatePendingCount()
+
     if (!driveConnectedRef.current || syncingRef.current) return
+    if (!navigator.onLine) {
+      console.log('📴 Offline — queued for later')
+      return
+    }
+
     syncingRef.current = true
     setSyncing(true)
     try {
@@ -112,9 +213,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       })
 
       if (res.ok) {
+        // Mark all pending as synced
+        const pending = await db.sync_queue.where('status').equals('pending').toArray()
+        await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
         const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
         setLastSync(time)
-        console.log('☁️ Synced to Drive at', time)
+        setPendingSyncCount(0)
+        console.log('☁️ Synced at', time)
       } else {
         const err = await res.json()
         console.error('Sync failed:', err)
@@ -125,41 +230,30 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       syncingRef.current = false
       setSyncing(false)
     }
-  }, [])
+  }, [updatePendingCount])
 
   const restoreFromDrive = useCallback(async () => {
-    if (!driveConnected) return
+    if (!driveConnectedRef.current) return
     setSyncing(true)
     try {
       const res = await fetch('/api/sync/drive')
       const { data } = await res.json()
+      if (!data) { alert('No hay backup en Google Drive'); return }
 
-      if (!data) {
-        alert('No hay backup en Google Drive')
-        return
-      }
-
-      // Merge: add records that don't exist locally
       if (data.events?.length) {
         const localIds = new Set((await db.events.toArray()).map(e => e.id))
-        const newEvents = data.events.filter((e: any) => !localIds.has(e.id))
-        if (newEvents.length) await db.events.bulkAdd(newEvents)
-        console.log(`📥 Restored ${newEvents.length} new events`)
+        const newItems = data.events.filter((e: any) => !localIds.has(e.id))
+        if (newItems.length) await db.events.bulkAdd(newItems)
       }
       if (data.clients?.length) {
         const localIds = new Set((await db.clients.toArray()).map(c => c.id))
-        const newClients = data.clients.filter((c: any) => !localIds.has(c.id))
-        if (newClients.length) await db.clients.bulkAdd(newClients)
+        const newItems = data.clients.filter((c: any) => !localIds.has(c.id))
+        if (newItems.length) await db.clients.bulkAdd(newItems)
       }
       if (data.jobs?.length) {
         const localIds = new Set((await db.jobs.toArray()).map(j => j.id))
-        const newJobs = data.jobs.filter((j: any) => !localIds.has(j.id))
-        if (newJobs.length) await db.jobs.bulkAdd(newJobs)
-      }
-      if (data.employees?.length) {
-        const localIds = new Set((await db.employees.toArray()).map(e => e.id))
-        const newEmps = data.employees.filter((e: any) => !localIds.has(e.id))
-        if (newEmps.length) await db.employees.bulkAdd(newEmps)
+        const newItems = data.jobs.filter((j: any) => !localIds.has(j.id))
+        if (newItems.length) await db.jobs.bulkAdd(newItems)
       }
 
       setLastSync(new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' }))
@@ -170,55 +264,64 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     } finally {
       setSyncing(false)
     }
-  }, [driveConnected])
+  }, [])
 
-  // Check Drive connection on mount + check URL params
+  // On mount: check Drive + URL params
   useEffect(() => {
     checkDriveConnection()
-
-    // Check if just connected
     const params = new URLSearchParams(window.location.search)
-    const googleStatus = params.get('google')
-    if (googleStatus === 'connected') {
+    const gs = params.get('google')
+    if (gs === 'connected') {
       setDriveConnected(true)
-      setMessages(prev => [...prev, { role: 'assistant', content: '✅ Google Drive conectado. Tus datos se respaldarán automáticamente.' }])
-      // Clean URL
+      driveConnectedRef.current = true
+      setMessages(prev => [...prev, { role: 'assistant', content: '✅ Google Drive conectado. Respaldo automático activado.' }])
       window.history.replaceState({}, '', window.location.pathname)
-    } else if (googleStatus?.startsWith('error')) {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error conectando Google Drive. Intenta de nuevo desde el menú.' }])
+    } else if (gs?.startsWith('error')) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error conectando Google Drive. Intenta de nuevo.' }])
       window.history.replaceState({}, '', window.location.pathname)
     }
   }, [checkDriveConnection])
 
-  // ============ SPEECH ============
+  // ============ SPEECH - FIXED (no duplicates) ============
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) return
     const recognition = new SR()
     recognition.lang = 'es-PR'
-    recognition.continuous = false    // Un resultado a la vez
-    recognition.interimResults = false // Solo resultados finales (evita duplicados)
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
 
     recognition.onresult = (event: any) => {
       const transcript = event.results[0]?.[0]?.transcript || ''
-      if (transcript) {
-        setInput(prev => (prev.trim() ? prev.trim() + ' ' : '') + transcript)
+      if (transcript.trim()) {
+        setInput(prev => {
+          const existing = prev.trim()
+          return existing ? existing + ' ' + transcript.trim() : transcript.trim()
+        })
       }
     }
+
     recognition.onerror = (e: any) => {
       if (e.error !== 'no-speech' && e.error !== 'aborted') {
         console.error('Speech error:', e.error)
+        setIsListening(false)
       }
-      setIsListening(false)
     }
+
     recognition.onend = () => {
-      // En modo no-continuous, reiniciar si aún está "listening"
       if (recognitionRef.current?._active) {
-        try { recognition.start() } catch {}
+        // Small delay before restarting to avoid rapid fire
+        setTimeout(() => {
+          if (recognitionRef.current?._active) {
+            try { recognition.start() } catch {}
+          }
+        }, 100)
       } else {
         setIsListening(false)
       }
     }
+
     recognitionRef.current = recognition
   }, [])
 
@@ -227,7 +330,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     if (!r) { alert('Tu navegador no soporta dictado. Usa Chrome.'); return }
     if (isListening) {
       r._active = false
-      r.stop()
+      try { r.stop() } catch {}
       setIsListening(false)
     } else {
       r._active = true
@@ -236,12 +339,12 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   }, [isListening])
 
   const stopListening = useCallback(() => {
-    if (recognitionRef.current && isListening) {
+    if (recognitionRef.current) {
       recognitionRef.current._active = false
-      recognitionRef.current.stop()
+      try { recognitionRef.current.stop() } catch {}
       setIsListening(false)
     }
-  }, [isListening])
+  }, [])
 
   // ============ CONTEXTO ============
   useEffect(() => {
@@ -261,7 +364,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         if (jobs.length > 0) {
           ctx += '\n\nTRABAJOS:\n' + jobs.map(j => {
             const d = new Date(j.date).toLocaleDateString('es-PR')
-            const paid = j.payments.reduce((s: number, p: any) => s + p.amount, 0)
+            const paid = j.payments?.reduce((s: number, p: any) => s + p.amount, 0) || 0
             return `[${d}] ${j.type} Cliente#${j.client_id} Total:$${j.total_charged} Pagado:$${paid} Status:${j.payment_status}`
           }).join('\n')
         }
@@ -301,6 +404,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     setMessages(updatedMessages)
     setInput('')
     setPendingPhotos([])
+    // Reset textarea height
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
     setLoading(true)
 
     try {
@@ -366,18 +471,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }
           await db.events.add(saved)
           dbContextRef.current = `[${new Date().toLocaleDateString('es-PR')}] ${saved.type} ${saved.category} $${saved.amount} (${pm}) ${saved.vendor || saved.client}\n` + dbContextRef.current
-
           const clean = assistantText.replace(/SAVE_EVENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
           setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ ${saved.type === 'income' ? 'Ingreso' : 'Gasto'}: ${saved.category} $${saved.amount}` }])
-
-          // AUTO-SYNC TO DRIVE
           syncToDrive()
           return
-        } catch (e) {
-          console.error('SAVE_EVENT error:', e)
-          setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error guardando.' }])
-          return
-        }
+        } catch (e) { console.error('SAVE_EVENT error:', e); setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error guardando.' }]); return }
       }
 
       // ====== SAVE_JOB ======
@@ -396,7 +494,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             client_id: clientId, date: Date.now(), type: jd.type || 'maintenance', status: 'completed',
             services: jd.services || [], materials: jd.materials || [], employees: jd.employees || [],
             subtotal_services: (jd.services || []).reduce((s: number, sv: any) => s + (sv.total || 0), 0),
-            subtotal_materials: (jd.materials || []).reduce((s: number, m: any) => s + (m.unit_price * m.quantity), 0),
+            subtotal_materials: (jd.materials || []).reduce((s: number, m: any) => s + ((m.unit_price || 0) * (m.quantity || 0)), 0),
             total_charged: jd.total_charged || 0, payment_status: jd.payment_status || 'pending',
             payments: jd.payments || [], balance_due: jd.balance_due || jd.total_charged || 0, created_at: Date.now()
           })
@@ -434,7 +532,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Cobro: $${pd.amount} de ${pd.client_name}` }])
           syncToDrive()
           return
-        } catch (e) { console.error('SAVE_PAYMENT error:', e); setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error registrando pago.' }]); return }
+        } catch (e) { console.error('SAVE_PAYMENT error:', e); return }
       }
 
       // ====== SAVE_EMPLOYEE_PAYMENT ======
@@ -461,62 +559,71 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
   // ============ RENDER ============
   return (
-    <div className="flex flex-col h-screen bg-gray-100 text-gray-900 relative dark:bg-[#0b1220] dark:text-gray-100">
-      {/* HEADER - FIXED */}
-      <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
+    <div className="flex flex-col h-screen bg-[#0b1220] text-gray-100">
+      {/* HEADER - STICKY */}
+      <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center flex-shrink-0">
         <div>
           <h1 className="text-xl font-bold">💬 Cooling Solution</h1>
-          {/* SYNC STATUS */}
           <div className="flex items-center gap-2 text-xs mt-0.5 opacity-80">
-            {driveConnected ? (
-              <>
-                <span className="w-2 h-2 bg-green-400 rounded-full inline-block"></span>
-                <span>Drive {syncing ? 'sincronizando...' : lastSync ? `sync ${lastSync}` : 'conectado'}</span>
-              </>
-            ) : (
-              <>
-                <span className="w-2 h-2 bg-yellow-400 rounded-full inline-block"></span>
-                <span>Drive no conectado</span>
-              </>
+            {/* Online/Offline */}
+            {!isOnline && (
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 bg-red-400 rounded-full"></span>
+                Sin conexión
+                {pendingSyncCount > 0 && <span className="bg-red-500/30 px-1.5 rounded text-red-200">{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span>}
+              </span>
+            )}
+            {isOnline && driveConnected && (
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                {syncing ? 'Sincronizando...' : lastSync ? `Sync ${lastSync}` : 'Drive conectado'}
+                {pendingSyncCount > 0 && <span className="bg-yellow-500/30 px-1.5 rounded text-yellow-200">{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span>}
+              </span>
+            )}
+            {isOnline && !driveConnected && (
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
+                Drive no conectado
+              </span>
             )}
           </div>
         </div>
         <button onClick={() => setShowMenu(!showMenu)} className="text-3xl w-10 h-10 flex items-center justify-center">☰</button>
       </div>
 
-      {/* MENU */}
+      {/* MENU - FIXED position, dark theme */}
       {showMenu && (
         <>
-          <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setShowMenu(false)} />
-          <div className="fixed top-16 right-4 bg-white dark:bg-[#111a2e] rounded-lg shadow-2xl z-50 w-60 overflow-hidden border border-black/10 dark:border-white/10">
-            <button onClick={() => { setShowMenu(false); onNavigate('capture') }} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/5">📝 Captura Rápida</button>
-            <button onClick={() => { setShowMenu(false); onNavigate('ask') }} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/5">🔍 Consultas</button>
-            <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/5">📊 Historial</button>
+          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowMenu(false)} />
+          <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 overflow-hidden border border-white/10">
+            <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Historial</button>
             <button onClick={async () => {
               setShowMenu(false)
               const d = new Date()
               generatePLReport(await db.events.toArray(), await db.jobs.toArray(), new Date(d.getFullYear(), d.getMonth(), 1).getTime(), Date.now(), 'este mes')
               setMessages(prev => [...prev, { role: 'assistant', content: '✅ P&L del mes' }])
-            }} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/5">📈 P&L del Mes</button>
+            }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📈 P&L del Mes</button>
             <button onClick={async () => {
               setShowMenu(false)
               generateARReport(await db.jobs.toArray(), await db.clients.toArray())
               setMessages(prev => [...prev, { role: 'assistant', content: '✅ Cuentas por Cobrar' }])
-            }} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/5">💰 ¿Quién me Debe?</button>
+            }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💰 ¿Quién me Debe?</button>
 
-            {/* GOOGLE DRIVE SECTION */}
-            <div className="border-t-2 dark:border-white/10">
+            {/* Drive Section */}
+            <div className="border-t border-white/10">
               {driveConnected ? (
                 <>
-                  <button onClick={() => { setShowMenu(false); syncToDrive() }} disabled={syncing} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 border-b dark:border-white/5">
+                  <button onClick={() => { setShowMenu(false); syncToDrive() }} disabled={syncing} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5 disabled:opacity-50">
                     {syncing ? '⏳ Sincronizando...' : '☁️ Sync Ahora'}
                   </button>
-                  <button onClick={() => { setShowMenu(false); restoreFromDrive() }} disabled={syncing} className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10">
+                  <button onClick={() => { setShowMenu(false); restoreFromDrive() }} disabled={syncing} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 disabled:opacity-50">
                     📥 Restaurar de Drive
                   </button>
                 </>
               ) : (
-                <a href="/api/auth/google" className="block w-full text-left px-4 py-3 hover:bg-gray-100 dark:hover:bg-white/10 text-blue-500 font-medium">
+                <a href="/api/auth/google" className="block w-full text-left px-4 py-3 text-blue-400 hover:bg-white/10 font-medium">
                   ☁️ Conectar Google Drive
                 </a>
               )}
@@ -526,23 +633,27 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       )}
 
       {/* MENSAJES */}
-      <div className="flex-1 overflow-y-auto p-4 pb-40">
+      <div className="flex-1 overflow-y-auto p-4 pb-44">
         <div className="max-w-2xl mx-auto space-y-3">
           {messages.map((msg, idx) => (
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] rounded-2xl px-4 py-3 shadow ${msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white text-gray-800 dark:bg-[#111a2e] dark:text-gray-100'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-4 py-3 shadow ${
+                msg.role === 'user'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[#111a2e] text-gray-100 border border-white/5'
+              }`}>
                 {msg.photos?.length ? (
                   <div className="flex gap-1 mb-2 flex-wrap">
                     {msg.photos.map((p, i) => <img key={i} src={p} alt="" className="w-24 h-24 object-cover rounded-lg" />)}
                   </div>
                 ) : null}
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+                <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
               </div>
             </div>
           ))}
           {loading && (
             <div className="flex justify-start">
-              <div className="bg-white dark:bg-[#111a2e] rounded-2xl px-4 py-3 shadow">
+              <div className="bg-[#111a2e] rounded-2xl px-4 py-3 shadow border border-white/5">
                 <div className="flex space-x-2">
                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
@@ -555,10 +666,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         </div>
       </div>
 
-      {/* INPUT */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg dark:bg-[#0f172a] dark:border-white/10">
+      {/* INPUT AREA */}
+      <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] border-t border-white/10 z-20">
+        {/* Pending Photos */}
         {pendingPhotos.length > 0 && (
-          <div className="flex gap-2 p-3 bg-gray-50 dark:bg-[#1a2332] border-b dark:border-white/10 overflow-x-auto">
+          <div className="flex gap-2 p-3 bg-[#1a2332] border-b border-white/10 overflow-x-auto">
             {pendingPhotos.map((p, i) => (
               <div key={i} className="relative flex-shrink-0">
                 <img src={p} alt="" className="w-16 h-16 object-cover rounded-lg border-2 border-blue-400" />
@@ -567,19 +679,41 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             ))}
           </div>
         )}
+
+        {/* Dictation Indicator */}
         {isListening && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-900/20 border-b dark:border-white/10">
+          <div className="flex items-center gap-2 px-4 py-2 bg-red-900/20 border-b border-white/10">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-sm text-red-600 dark:text-red-400 font-medium">Dictando...</span>
+            <span className="text-sm text-red-400 font-medium">Dictando...</span>
             <span className="text-xs text-gray-500 ml-auto">Toca 🎤 para parar</span>
           </div>
         )}
-        <div className="max-w-2xl mx-auto flex gap-1.5 p-3">
+
+        {/* Input Row */}
+        <div className="max-w-2xl mx-auto flex items-end gap-1.5 p-3">
           <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handlePhotoSelect} className="hidden" />
-          <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="bg-gray-200 dark:bg-[#1a2332] rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:opacity-50 flex-shrink-0">📷</button>
-          <button onClick={toggleListening} disabled={loading} className={`rounded-full w-11 h-11 flex items-center justify-center text-lg flex-shrink-0 transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50' : 'bg-gray-200 dark:bg-[#1a2332] disabled:opacity-50'}`}>🎤</button>
-          <input type="text" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSend()} placeholder={isListening ? 'Dictando...' : 'Escribe aquí...'} className="flex-1 border rounded-full px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-[#0b1220] dark:border-white/10 text-sm" disabled={loading} />
-          <button onClick={handleSend} disabled={loading || (!input.trim() && !pendingPhotos.length)} className="bg-blue-500 text-white rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:bg-gray-300 flex-shrink-0">{loading ? '⏳' : '📤'}</button>
+          <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="bg-[#1a2332] hover:bg-[#222d3e] rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:opacity-50 flex-shrink-0 transition-colors">📷</button>
+          <button onClick={toggleListening} disabled={loading} className={`rounded-full w-11 h-11 flex items-center justify-center text-lg flex-shrink-0 transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50' : 'bg-[#1a2332] hover:bg-[#222d3e] disabled:opacity-50'}`}>🎤</button>
+
+          {/* TEXTAREA - expandable */}
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder={isListening ? 'Dictando... habla ahora' : 'Escribe aquí...'}
+            rows={1}
+            className="flex-1 border border-white/10 rounded-2xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-[#0b1220] text-gray-100 text-sm resize-none overflow-hidden placeholder-gray-500"
+            disabled={loading}
+            style={{ minHeight: '44px', maxHeight: '120px' }}
+          />
+
+          <button onClick={handleSend} disabled={loading || (!input.trim() && !pendingPhotos.length)} className="bg-blue-600 hover:bg-blue-700 text-white rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:bg-gray-600 disabled:opacity-50 flex-shrink-0 transition-colors">{loading ? '⏳' : '📤'}</button>
         </div>
       </div>
     </div>

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { db } from '@/lib/db'
 import type { EventRecord, EventType, EventStatus } from '@/lib/types'
 
-export default function HistoryPage() {
+export default function HistoryPage({ onNavigate }: { onNavigate: (page: string) => void }) {
+
   const [events, setEvents] = useState<EventRecord[]>([])
   const [filterType, setFilterType] = useState<EventType | 'all'>('all')
   const [filterStatus, setFilterStatus] = useState<EventStatus | 'all'>('all')
