@@ -17,6 +17,9 @@ interface Stats {
   pendingClients: { name: string; amount: number; days: number }[]
   recentEvents: { date: string; type: string; category: string; amount: number; vendor: string }[]
   topCategories: { category: string; total: number }[]
+  upcomingAppts: { title: string; date: number; clientName?: string; location?: string }[]
+  activeReminders: { text: string; dueDate: number; priority: string; overdue: boolean }[]
+  contractAlerts: { clientName: string; service: string; daysUntil: number }[]
 }
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
@@ -98,6 +101,43 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           vendor: e.vendor || e.client || e.note || ''
         }))
 
+      // Upcoming appointments (next 7 days)
+      let upcomingAppts: Stats['upcomingAppts'] = []
+      try {
+        const sevenDays = now + 7 * 86400000
+        const appts = await db.appointments.where('date').between(now - 3600000, sevenDays).toArray()
+        upcomingAppts = appts
+          .filter(a => a.status === 'scheduled')
+          .sort((a, b) => a.date - b.date)
+          .slice(0, 5)
+          .map(a => ({ title: a.title, date: a.date, clientName: a.client_name, location: a.location }))
+      } catch {}
+
+      // Active reminders (top 5 by due date)
+      let activeReminders: Stats['activeReminders'] = []
+      try {
+        const allReminders = await db.reminders.toArray()
+        activeReminders = allReminders
+          .filter(r => !r.completed)
+          .sort((a, b) => a.due_date - b.due_date)
+          .slice(0, 5)
+          .map(r => ({ text: r.text, dueDate: r.due_date, priority: r.priority, overdue: r.due_date < now }))
+      } catch {}
+
+      // Contract alerts (within 3 days)
+      let contractAlerts: Stats['contractAlerts'] = []
+      try {
+        const contracts = await db.contracts.where('status').equals('active').toArray()
+        contractAlerts = contracts
+          .filter(c => c.next_service_due - now <= 3 * 86400000 && c.next_service_due >= now - 86400000)
+          .map(c => ({
+            clientName: clientMap.get(c.client_id) || `Cliente #${c.client_id}`,
+            service: c.service_type,
+            daysUntil: Math.ceil((c.next_service_due - now) / 86400000)
+          }))
+          .sort((a, b) => a.daysUntil - b.daysUntil)
+      } catch {}
+
       setStats({
         monthIncome: totalMonthIncome,
         monthExpenses,
@@ -107,7 +147,10 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         pendingAR: totalAR,
         pendingClients,
         recentEvents,
-        topCategories
+        topCategories,
+        upcomingAppts,
+        activeReminders,
+        contractAlerts
       })
     } catch (e) {
       console.error('Dashboard error:', e)
@@ -117,6 +160,26 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   }
 
   const fmt = (n: number) => `$${n.toFixed(2)}`
+
+  const fmtApptDate = (ts: number) => {
+    const d = new Date(ts)
+    const today = new Date()
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const time = d.toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
+    if (d.toDateString() === today.toDateString()) return `Hoy ${time}`
+    if (d.toDateString() === tomorrow.toDateString()) return `Mañana ${time}`
+    return `${d.toLocaleDateString('es-PR', { weekday: 'short', day: 'numeric' })} ${time}`
+  }
+
+  const fmtReminderDate = (ts: number) => {
+    const d = new Date(ts)
+    const today = new Date()
+    if (d.toDateString() === today.toDateString()) return 'Hoy'
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    if (d.toDateString() === tomorrow.toDateString()) return 'Mañana'
+    if (ts < Date.now()) return 'Vencido'
+    return d.toLocaleDateString('es-PR', { weekday: 'short', day: 'numeric' })
+  }
 
   if (loading) {
     return (
@@ -161,6 +224,56 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <p className="text-xl font-bold text-green-400">{fmt(stats.todayIncome)}</p>
           </div>
         </div>
+
+        {/* Contract Alerts */}
+        {stats.contractAlerts.length > 0 && (
+          <div className="bg-yellow-900/20 rounded-xl p-4 border border-yellow-700/30" onClick={() => onNavigate('calendar')}>
+            <p className="text-sm font-semibold text-yellow-400 mb-2">⚠️ Contratos por Vencer</p>
+            {stats.contractAlerts.map((a, i) => (
+              <div key={i} className="flex justify-between items-center text-sm py-1">
+                <span className="text-gray-300">{a.clientName}</span>
+                <span className={`text-xs px-2 py-0.5 rounded ${a.daysUntil <= 0 ? 'bg-red-900/50 text-red-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                  {a.daysUntil <= 0 ? '¡Vencido!' : `${a.daysUntil}d`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Upcoming Appointments */}
+        {stats.upcomingAppts.length > 0 && (
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5" onClick={() => onNavigate('calendar')}>
+            <p className="text-sm font-semibold text-gray-300 mb-3">📅 Próximas Citas</p>
+            <div className="space-y-2">
+              {stats.upcomingAppts.map((a, i) => (
+                <div key={i} className="flex justify-between items-center text-sm py-1 border-b border-white/5 last:border-0">
+                  <div>
+                    <p className="text-gray-200">{a.title}</p>
+                    {a.clientName && <p className="text-xs text-gray-500">👤 {a.clientName}</p>}
+                  </div>
+                  <span className="text-xs text-blue-400">{fmtApptDate(a.date)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Active Reminders */}
+        {stats.activeReminders.length > 0 && (
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5" onClick={() => onNavigate('calendar')}>
+            <p className="text-sm font-semibold text-gray-300 mb-3">🔔 Recordatorios</p>
+            <div className="space-y-2">
+              {stats.activeReminders.map((r, i) => (
+                <div key={i} className="flex justify-between items-center text-sm py-1 border-b border-white/5 last:border-0">
+                  <span className={`text-gray-300 ${r.overdue ? 'text-red-400' : ''}`}>
+                    {r.priority === 'high' ? '🔴 ' : ''}{r.text}
+                  </span>
+                  <span className={`text-xs ${r.overdue ? 'text-red-400' : 'text-gray-500'}`}>{fmtReminderDate(r.dueDate)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Cuentas por Cobrar */}
         <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
@@ -232,15 +345,31 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-2 gap-3 pb-6">
+        {/* Quick Actions - expanded */}
+        <div className="grid grid-cols-3 gap-3 pb-6">
           <button onClick={() => onNavigate('chat')} className="bg-blue-600 hover:bg-blue-700 rounded-xl p-4 text-center transition-colors">
             <span className="text-2xl">💬</span>
-            <p className="text-sm mt-1 font-medium">Registrar</p>
+            <p className="text-xs mt-1 font-medium">Registrar</p>
+          </button>
+          <button onClick={() => onNavigate('clients')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-4 text-center transition-colors">
+            <span className="text-2xl">👥</span>
+            <p className="text-xs mt-1 font-medium">Clientes</p>
+          </button>
+          <button onClick={() => onNavigate('calendar')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-4 text-center transition-colors">
+            <span className="text-2xl">📅</span>
+            <p className="text-xs mt-1 font-medium">Calendario</p>
+          </button>
+          <button onClick={() => onNavigate('notes')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-4 text-center transition-colors">
+            <span className="text-2xl">📝</span>
+            <p className="text-xs mt-1 font-medium">Notas</p>
           </button>
           <button onClick={() => onNavigate('search')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-4 text-center transition-colors">
             <span className="text-2xl">🔍</span>
-            <p className="text-sm mt-1 font-medium">Buscar</p>
+            <p className="text-xs mt-1 font-medium">Buscar</p>
+          </button>
+          <button onClick={() => onNavigate('history')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-4 text-center transition-colors">
+            <span className="text-2xl">📋</span>
+            <p className="text-xs mt-1 font-medium">Historial</p>
           </button>
         </div>
       </div>

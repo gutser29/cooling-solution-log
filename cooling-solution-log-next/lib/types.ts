@@ -22,6 +22,7 @@ export interface EventRecord {
   raw_text?: string
   photo?: string
   metadata?: any
+  expense_type?: 'personal' | 'business'
 }
 
 export interface Client {
@@ -126,5 +127,39 @@ export interface RecurringContract {
   next_service_due: number
   auto_reminder_days: number
   status: 'active' | 'cancelled'
+  created_at: number
+}
+
+export interface Note {
+  id?: number
+  timestamp: number
+  title?: string
+  content: string
+  tags?: string[]
+  updated_at: number
+}
+
+export interface Appointment {
+  id?: number
+  timestamp: number
+  date: number
+  end_date?: number
+  client_id?: number
+  client_name?: string
+  title: string
+  location?: string
+  notes?: string
+  status: 'scheduled' | 'completed' | 'cancelled'
+  reminder_minutes?: number
+  created_at: number
+}
+
+export interface Reminder {
+  id?: number
+  timestamp: number
+  text: string
+  due_date: number
+  completed: boolean
+  priority: 'low' | 'normal' | 'high'
   created_at: number
 }

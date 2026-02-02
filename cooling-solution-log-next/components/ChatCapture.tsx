@@ -141,17 +141,18 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const employees = await db.employees.toArray()
       const vehicles = await db.vehicles.toArray()
       const contracts = await db.contracts.toArray()
+      const notes = await db.notes.toArray()
+      const appointments = await db.appointments.toArray()
+      const reminders = await db.reminders.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders })
       })
 
       if (res.ok) {
-        // Mark all pending as synced
         await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
-        // Clean old synced items
         const synced = await db.sync_queue.where('status').equals('synced').toArray()
         if (synced.length > 10) {
           const toDelete = synced.slice(0, synced.length - 5).map(s => s.id!)
@@ -186,7 +187,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   }, [])
 
   const syncToDrive = useCallback(async () => {
-    // Add to sync queue first
     await db.sync_queue.add({ timestamp: Date.now(), status: 'pending', retries: 0 })
     updatePendingCount()
 
@@ -205,15 +205,17 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const employees = await db.employees.toArray()
       const vehicles = await db.vehicles.toArray()
       const contracts = await db.contracts.toArray()
+      const notes = await db.notes.toArray()
+      const appointments = await db.appointments.toArray()
+      const reminders = await db.reminders.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders })
       })
 
       if (res.ok) {
-        // Mark all pending as synced
         const pending = await db.sync_queue.where('status').equals('pending').toArray()
         await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
         const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
@@ -254,6 +256,21 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const localIds = new Set((await db.jobs.toArray()).map(j => j.id))
         const newItems = data.jobs.filter((j: any) => !localIds.has(j.id))
         if (newItems.length) await db.jobs.bulkAdd(newItems)
+      }
+      if (data.notes?.length) {
+        const localIds = new Set((await db.notes.toArray()).map(n => n.id))
+        const newItems = data.notes.filter((n: any) => !localIds.has(n.id))
+        if (newItems.length) await db.notes.bulkAdd(newItems)
+      }
+      if (data.appointments?.length) {
+        const localIds = new Set((await db.appointments.toArray()).map(a => a.id))
+        const newItems = data.appointments.filter((a: any) => !localIds.has(a.id))
+        if (newItems.length) await db.appointments.bulkAdd(newItems)
+      }
+      if (data.reminders?.length) {
+        const localIds = new Set((await db.reminders.toArray()).map(r => r.id))
+        const newItems = data.reminders.filter((r: any) => !localIds.has(r.id))
+        if (newItems.length) await db.reminders.bulkAdd(newItems)
       }
 
       setLastSync(new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' }))
@@ -311,7 +328,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
     recognition.onend = () => {
       if (recognitionRef.current?._active) {
-        // Small delay before restarting to avoid rapid fire
         setTimeout(() => {
           if (recognitionRef.current?._active) {
             try { recognition.start() } catch {}
@@ -358,7 +374,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         if (events.length > 0) {
           ctx += 'EVENTOS:\n' + events.map(e => {
             const d = new Date(e.timestamp).toLocaleDateString('es-PR')
-            return `[${d}] ${e.type} ${e.category || e.subtype} $${e.amount} (${e.payment_method || 'N/A'}) ${e.vendor || e.client || e.note || ''}`
+            return `[${d}] ${e.type} ${e.category || e.subtype} $${e.amount} (${e.payment_method || 'N/A'}) ${e.vendor || e.client || e.note || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}`
           }).join('\n')
         }
         if (jobs.length > 0) {
@@ -368,6 +384,29 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             return `[${d}] ${j.type} Cliente#${j.client_id} Total:$${j.total_charged} Pagado:$${paid} Status:${j.payment_status}`
           }).join('\n')
         }
+
+        // Add appointments context
+        try {
+          const appts = await db.appointments.where('status').equals('scheduled').toArray()
+          if (appts.length > 0) {
+            ctx += '\n\nCITAS PROGRAMADAS:\n' + appts.map(a => {
+              const d = new Date(a.date)
+              return `[${d.toLocaleDateString('es-PR')} ${d.toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })}] ${a.title} ${a.client_name ? '- ' + a.client_name : ''} ${a.location ? '@ ' + a.location : ''}`
+            }).join('\n')
+          }
+        } catch {}
+
+        // Add reminders context
+        try {
+          const rems = await db.reminders.where('completed').equals(0).toArray()
+          if (rems.length > 0) {
+            ctx += '\n\nRECORDATORIOS PENDIENTES:\n' + rems.map(r => {
+              const d = new Date(r.due_date)
+              return `[${d.toLocaleDateString('es-PR')}] ${r.text} (${r.priority})`
+            }).join('\n')
+          }
+        } catch {}
+
         dbContextRef.current = ctx
         const total = events.length + jobs.length
         if (total > 0) {
@@ -404,15 +443,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     setMessages(updatedMessages)
     setInput('')
     setPendingPhotos([])
-    // Reset textarea height
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
     setLoading(true)
-        if (!navigator.onLine) {
+    if (!navigator.onLine) {
       await db.sync_queue.add({ timestamp: Date.now(), status: 'pending' } as any)
       setLoading(false)
       return
     }
-
 
     try {
       const apiMessages = [...updatedMessages]
@@ -461,6 +498,74 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
       const assistantText = (data?.type === 'TEXT' ? (data.text || '') : '') || ''
 
+      // ====== SAVE_NOTE ======
+      const noteMatch = assistantText.match(/SAVE_NOTE:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
+      if (noteMatch) {
+        try {
+          const nd = JSON.parse(noteMatch[1])
+          const now = Date.now()
+          await db.notes.add({
+            timestamp: now,
+            title: nd.title || undefined,
+            content: nd.content || '',
+            updated_at: now
+          })
+          const clean = assistantText.replace(/SAVE_NOTE:\s*\{[\s\S]*?\}\s*/i, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Nota guardada: ${nd.title || nd.content.substring(0, 40)}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_NOTE error:', e) }
+      }
+
+      // ====== SAVE_APPOINTMENT ======
+      const apptMatch = assistantText.match(/SAVE_APPOINTMENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
+      if (apptMatch) {
+        try {
+          const ad = JSON.parse(apptMatch[1])
+          const apptDate = new Date(ad.date).getTime()
+          const now = Date.now()
+          await db.appointments.add({
+            timestamp: now,
+            date: apptDate,
+            title: ad.title || 'Cita',
+            client_name: ad.client_name || undefined,
+            location: ad.location || undefined,
+            notes: ad.notes || undefined,
+            status: 'scheduled',
+            reminder_minutes: ad.reminder_minutes || 60,
+            created_at: now
+          })
+          // Update context with new appointment
+          dbContextRef.current += `\n[CITA] ${new Date(apptDate).toLocaleDateString('es-PR')} ${new Date(apptDate).toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })} ${ad.title} ${ad.client_name || ''}`
+          const clean = assistantText.replace(/SAVE_APPOINTMENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Cita: ${ad.title} - ${new Date(apptDate).toLocaleDateString('es-PR')}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_APPOINTMENT error:', e) }
+      }
+
+      // ====== SAVE_REMINDER ======
+      const remMatch = assistantText.match(/SAVE_REMINDER:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
+      if (remMatch) {
+        try {
+          const rd = JSON.parse(remMatch[1])
+          const dueDate = new Date(rd.due_date).getTime()
+          const now = Date.now()
+          await db.reminders.add({
+            timestamp: now,
+            text: rd.text || '',
+            due_date: dueDate,
+            completed: false,
+            priority: rd.priority || 'normal',
+            created_at: now
+          })
+          const clean = assistantText.replace(/SAVE_REMINDER:\s*\{[\s\S]*?\}\s*/i, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Recordatorio: ${rd.text}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_REMINDER error:', e) }
+      }
+
       // ====== SAVE_EVENT ======
       const saveMatch = assistantText.match(/SAVE_EVENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
       if (saveMatch) {
@@ -473,12 +578,14 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             amount: Number(ed.amount || 0), payment_method: pm, vendor: ed.vendor || '',
             vehicle_id: ed.vehicle_id || '', client: ed.client || '',
             note: ed.note || ed.description || '', raw_text: assistantText,
-            photo: userMessage.photos?.[0]
+            photo: userMessage.photos?.[0],
+            expense_type: (ed.expense_type || 'business') as 'personal' | 'business'
           }
           await db.events.add(saved)
-          dbContextRef.current = `[${new Date().toLocaleDateString('es-PR')}] ${saved.type} ${saved.category} $${saved.amount} (${pm}) ${saved.vendor || saved.client}\n` + dbContextRef.current
+          dbContextRef.current = `[${new Date().toLocaleDateString('es-PR')}] ${saved.type} ${saved.category} $${saved.amount} (${pm}) ${saved.vendor || saved.client} ${saved.expense_type === 'personal' ? '[PERSONAL]' : ''}\n` + dbContextRef.current
           const clean = assistantText.replace(/SAVE_EVENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ ${saved.type === 'income' ? 'Ingreso' : 'Gasto'}: ${saved.category} $${saved.amount}` }])
+          const personalTag = saved.expense_type === 'personal' ? ' [Personal]' : ''
+          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ ${saved.type === 'income' ? 'Ingreso' : 'Gasto'}: ${saved.category} $${saved.amount}${personalTag}` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_EVENT error:', e); setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error guardando.' }]); return }
@@ -571,7 +678,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         <div>
           <h1 className="text-xl font-bold">💬 Cooling Solution</h1>
           <div className="flex items-center gap-2 text-xs mt-0.5 opacity-80">
-            {/* Online/Offline */}
             {!isOnline && (
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 bg-red-400 rounded-full"></span>
@@ -603,6 +709,9 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowMenu(false)} />
           <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 overflow-hidden border border-white/10">
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('notes') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📝 Notas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
             <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Historial</button>
             <button onClick={async () => {
@@ -674,7 +783,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
       {/* INPUT AREA */}
       <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] border-t border-white/10 z-20">
-        {/* Pending Photos */}
         {pendingPhotos.length > 0 && (
           <div className="flex gap-2 p-3 bg-[#1a2332] border-b border-white/10 overflow-x-auto">
             {pendingPhotos.map((p, i) => (
@@ -686,7 +794,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           </div>
         )}
 
-        {/* Dictation Indicator */}
         {isListening && (
           <div className="flex items-center gap-2 px-4 py-2 bg-red-900/20 border-b border-white/10">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
@@ -695,13 +802,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           </div>
         )}
 
-        {/* Input Row */}
         <div className="max-w-2xl mx-auto flex items-end gap-1.5 p-3">
           <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handlePhotoSelect} className="hidden" />
           <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="bg-[#1a2332] hover:bg-[#222d3e] rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:opacity-50 flex-shrink-0 transition-colors">📷</button>
           <button onClick={toggleListening} disabled={loading} className={`rounded-full w-11 h-11 flex items-center justify-center text-lg flex-shrink-0 transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50' : 'bg-[#1a2332] hover:bg-[#222d3e] disabled:opacity-50'}`}>🎤</button>
 
-          {/* TEXTAREA - expandable */}
           <textarea
             ref={textareaRef}
             value={input}
