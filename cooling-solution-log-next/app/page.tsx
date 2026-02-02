@@ -2,57 +2,30 @@
 
 import { useState } from 'react'
 import ChatCapture from '@/components/ChatCapture'
-import CapturePage from '@/components/CapturePage'
-import AskPage from '@/components/AskPage'
+import Dashboard from '@/components/Dashboard'
+import SearchPage from '@/components/SearchPage'
 import HistoryPage from '@/components/HistoryPage'
 
-type Page = 'chat' | 'capture' | 'ask' | 'history'
-
 export default function Home() {
-  const [currentPage, setCurrentPage] = useState<Page>('chat')
+  const [currentPage, setCurrentPage] = useState('dashboard')
 
-  return (
-    <div className="min-h-screen bg-gray-100">
-      {currentPage === 'chat' && (
-        <ChatCapture onNavigate={(page: string) => setCurrentPage(page as Page)} />
-      )}
+  const navigate = (page: string) => {
+    setCurrentPage(page)
+  }
 
-      {currentPage === 'capture' && (
-        <div className="relative">
-          <button
-            onClick={() => setCurrentPage('chat')}
-            className="absolute top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-full z-10"
-          >
-            ← Chat
-          </button>
-          <CapturePage />
-        </div>
-      )}
+  switch (currentPage) {
+    case 'dashboard':
+      return <Dashboard onNavigate={navigate} />
+    case 'chat':
+    case 'capture':
+      return <ChatCapture onNavigate={navigate} />
+    case 'search':
+    case 'ask':
+      return <SearchPage onNavigate={navigate} />
+    case 'history':
+      return <HistoryPage onNavigate={navigate} />
 
-      {currentPage === 'ask' && (
-        <div className="relative">
-          <button
-            onClick={() => setCurrentPage('chat')}
-            className="absolute top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-full z-10"
-          >
-            ← Chat
-          </button>
-          <AskPage />
-        </div>
-      )}
-
-      {currentPage === 'history' && (
-        <div className="relative">
-          <button
-            onClick={() => setCurrentPage('chat')}
-            className="absolute top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-full z-10"
-          >
-            ← Chat
-          </button>
-          <HistoryPage />
-        </div>
-      )}
-    </div>
-  )
+    default:
+      return <Dashboard onNavigate={navigate} />
+  }
 }
-
