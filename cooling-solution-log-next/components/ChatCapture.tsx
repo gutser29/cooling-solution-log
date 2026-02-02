@@ -407,6 +407,12 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     // Reset textarea height
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
     setLoading(true)
+        if (!navigator.onLine) {
+      await db.sync_queue.add({ timestamp: Date.now(), status: 'pending' } as any)
+      setLoading(false)
+      return
+    }
+
 
     try {
       const apiMessages = [...updatedMessages]
