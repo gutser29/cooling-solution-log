@@ -71,6 +71,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const recognitionRef = useRef<any>(null)
   const dbContextRef = useRef<string>('')
   const contextLoadedRef = useRef(false)
+  const driveConnectedRef = useRef(false)
+  const syncingRef = useRef(false)
+
+  // Keep ref in sync with state
+  useEffect(() => { driveConnectedRef.current = driveConnected }, [driveConnected])
 
   // ============ GOOGLE DRIVE SYNC FUNCTIONS ============
 
@@ -79,14 +84,18 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const res = await fetch('/api/sync/status')
       const data = await res.json()
       setDriveConnected(data.connected)
+      driveConnectedRef.current = data.connected
       console.log('☁️ Drive connected:', data.connected)
     } catch {
       setDriveConnected(false)
+      driveConnectedRef.current = false
     }
   }, [])
 
   const syncToDrive = useCallback(async () => {
-    if (!driveConnected || syncing) return
+    console.log('☁️ syncToDrive called, connected:', driveConnectedRef.current, 'syncing:', syncingRef.current)
+    if (!driveConnectedRef.current || syncingRef.current) return
+    syncingRef.current = true
     setSyncing(true)
     try {
       const events = await db.events.toArray()
@@ -113,9 +122,10 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     } catch (e) {
       console.error('Sync error:', e)
     } finally {
+      syncingRef.current = false
       setSyncing(false)
     }
-  }, [driveConnected, syncing])
+  }, [])
 
   const restoreFromDrive = useCallback(async () => {
     if (!driveConnected) return
