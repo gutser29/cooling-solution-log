@@ -329,6 +329,10 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <span className="text-xl">🧾</span>
             <p className="text-[10px] mt-1 font-medium">Facturas</p>
           </button>
+          <button onClick={() => onNavigate('templates')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
+            <span className="text-xl">📋</span>
+            <p className="text-[10px] mt-1 font-medium">Templates</p>
+          </button>
           <button onClick={() => onNavigate('clients')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
             <span className="text-xl">👥</span>
             <p className="text-[10px] mt-1 font-medium">Clientes</p>
@@ -346,7 +350,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <p className="text-[10px] mt-1 font-medium">Buscar</p>
           </button>
           <button onClick={() => onNavigate('history')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">📋</span>
+            <span className="text-xl">📜</span>
             <p className="text-[10px] mt-1 font-medium">Historial</p>
           </button>
         </div>

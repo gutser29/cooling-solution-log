@@ -41,6 +41,22 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const cls = await db.clients.where('active').equals(1).toArray()
     setClients(cls)
     setLoading(false)
+    
+    // Check for template data
+    try {
+      const templateData = localStorage.getItem('invoiceFromTemplate')
+      if (templateData) {
+        localStorage.removeItem('invoiceFromTemplate')
+        const t = JSON.parse(templateData)
+        setFormType('invoice')
+        setFormClientName(t.client_name || '')
+        setFormItems(t.items.map((i: any) => ({ description: i.description, quantity: i.quantity, unit_price: i.unit_price, total: i.quantity * i.unit_price })))
+        setFormTaxRate(t.default_tax_rate || 0)
+        setFormNotes(t.notes || '')
+        setFormDueDays(30)
+        setViewMode('create')
+      }
+    } catch {}
   }, [])
 
   useEffect(() => { loadAll() }, [loadAll])

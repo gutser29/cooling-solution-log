@@ -61,10 +61,14 @@ export async function POST(request: Request) {
     }
 
     // Reporte por categoría
-    const wantsReport =
+    // Reporte por categoría - EXCLUIR facturas/cotizaciones
+    const isInvoiceRequest = userText.includes('factura') || userText.includes('invoice') || 
+                             userText.includes('cotiza') || userText.includes('quote')
+    const wantsReport = !isInvoiceRequest && (
       userText.includes('reporte') ||
       userText.includes('report') ||
       (userText.includes('genera') && (userText.includes('pdf') || userText.includes('reporte')))
+    )
 
     if (wantsReport) {
       let category = 'general'
@@ -264,6 +268,11 @@ SAVE_QUOTE:
   "notes": "Incluye garantía 1 año en mano de obra",
   "valid_days": 15
 }
+
+# TEMPLATES
+- Si dice "usa el template de X" o "factura de mantenimiento para X", busca en CONTEXTO_DB.templates
+- Si encuentra el template, usa sus items para generar la factura
+- Ejemplo: "hazme la factura mensual de Farmacia Caridad" → busca template, genera SAVE_INVOICE
 
 # REPORTES - EL USUARIO PUEDE PEDIR:
 - "dame el P&L de enero" → P&L con ingresos, gastos, profit

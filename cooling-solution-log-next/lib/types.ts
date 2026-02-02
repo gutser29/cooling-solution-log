@@ -198,3 +198,24 @@ export interface Invoice {
   created_at: number
   updated_at: number
 }
+
+// ========== JOB TEMPLATES ==========
+
+export interface JobTemplateItem {
+  description: string
+  quantity: number
+  unit_price: number
+}
+
+export interface JobTemplate {
+  id?: number
+  name: string
+  client_id?: number
+  client_name?: string
+  items: JobTemplateItem[]
+  notes?: string
+  default_tax_rate: number
+  active: boolean
+  created_at: number
+  updated_at: number
+}
