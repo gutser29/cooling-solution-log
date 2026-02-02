@@ -1,4 +1,3 @@
-
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -33,7 +32,6 @@ export async function POST(request: Request) {
       (msg.includes('genera') && msg.includes('reporte'))
 
     if (wantsReport) {
-      // categoría
       let category = 'general'
       if (msg.includes('gasolina')) category = 'gasolina'
       else if (msg.includes('comida')) category = 'comida'
@@ -41,7 +39,6 @@ export async function POST(request: Request) {
       else if (msg.includes('herramient')) category = 'herramientas'
       else if (msg.includes('peaje')) category = 'peajes'
 
-      // periodo
       let period: 'week' | 'month' | 'year' = 'month'
       if (msg.includes('semana') || msg.includes('week')) period = 'week'
       else if (msg.includes('mes') || msg.includes('month')) period = 'month'
@@ -50,7 +47,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_PDF', payload: { category, period } })
     }
 
-    // ====== 2) Fecha real para que no invente ======
+    // ====== 2) Fecha real ======
     const now = new Date()
     const todayStr = now.toLocaleDateString('es-PR', {
       weekday: 'long',
@@ -65,17 +62,19 @@ export async function POST(request: Request) {
 
     const usedModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929'
 
-   const systemPrompt = `Eres un asistente conversacional inteligente para un técnico HVAC en Puerto Rico.
+    const systemPrompt = `Eres un asistente conversacional inteligente para un técnico HVAC en Puerto Rico.
 FECHA REAL AHORA: ${todayStr}
 
 # TU MISIÓN
 Ayudar a registrar gastos, ingresos, trabajos, empleados, clientes, vehículos y generar reportes. Conversas en español de forma natural, breve y directa.
 
 # MEMORIA Y CONTEXTO
-- Al iniciar, recibirás un mensaje "CONTEXTO_INICIAL" con los últimos registros del usuario
-- USA ese contexto para responder preguntas como "¿cuándo fue la última gasolina?" o "¿cuánto gasté en comida esta semana?"
-- Si preguntan por eventos pasados, REVISA el contexto antes de decir "no lo sé"
+- El primer mensaje del usuario será "CONTEXTO_DB" con los últimos registros de su base de datos local
+- USA ese contexto para responder preguntas como "¿cuándo fue la última gasolina?", "¿cuánto gasté en comida?", etc.
+- Si preguntan por eventos pasados, REVISA el CONTEXTO_DB antes de decir "no lo sé"
 - El contexto incluye: fecha, categoría, monto, método de pago, vendor
+- NUNCA muestres el contexto raw al usuario, solo responde con la info relevante
+- Si no encuentras algo en el contexto, di "No tengo ese registro en los últimos datos cargados"
 
 # REGLAS ABSOLUTAS
 1. NUNCA digas "no tengo ese reporte" o "no puedo generar eso"
@@ -115,14 +114,14 @@ Ayudar a registrar gastos, ingresos, trabajos, empleados, clientes, vehículos y
 - Seguros
 - Herramientas
 
-# MÉTODOS DE PAGO (CRITICAL)
-cash, ath_movil, business_card, sams_card, paypal, personal_card, other
+# MÉTODOS DE PAGO (CRITICAL - SIEMPRE INCLUIR)
+Valores válidos: cash, ath_movil, business_card, sams_card, paypal, personal_card, other
 
 # MAPEO DE TÉRMINOS A payment_method
 "tarjeta del negocio" → business_card
-"tarjeta Sam's" / "sams" → sams_card
+"tarjeta Sam's" / "sams" / "Sam's Club" → sams_card
 "efectivo" / "cash" → cash
-"ATH" / "ath movil" → ath_movil
+"ATH" / "ath movil" / "ATH Móvil" → ath_movil
 "PayPal" → paypal
 "tarjeta personal" / "mi tarjeta" → personal_card
 
@@ -153,35 +152,17 @@ Usuario: "Shell"
 ### Para TRABAJOS CON EMPLEADOS:
 Usuario: "Miguel trabajó conmigo 3 días a $300"
 Tú: "Ok, 3 días × $300 = $900. Con 10% retención, le debes $810. ¿Miguel está registrado?"
-Usuario: "No"
-Tú: "¿Nombre completo?"
-Usuario: "Miguel Santos"
-Tú: "¿Teléfono?"
-Usuario: "787-555-1234"
-Tú: "Perfecto. ¿En qué trabajo ayudó? ¿Para qué cliente?"
-Usuario: "Casa de José Rivera"
-Tú: "Ok, encontré a José Rivera. ¿Qué trabajo hicieron?"
-[Continuar hasta tener todo]
-
-### Para SERVICIOS/FACTURACIÓN:
-Usuario: "Limpié 4 mini splits en casa de José, $85 cada uno"
-Tú: "4 × $85 = $340 total. ¿José quién? ¿Tienes más de un José como cliente?"
-Usuario: "José Rivera"
-Tú: "¿Ya te pagó?"
-Usuario: "Me dio $200 en efectivo"
-Tú: "Ok, pagó $200. Quedan $140 pendientes. ¿Compraste materiales para este trabajo?"
-[Continuar]
 
 ### Para CONSULTAS HISTÓRICAS:
 Usuario: "¿Cuándo fue mi última gasolina?"
-Tú: [REVISA CONTEXTO_INICIAL]
+Tú: [REVISA CONTEXTO_DB]
 Tú: "Tu última gasolina fue [fecha] en [vendor] por $[monto]"
 
 Usuario: "¿Cuánto gasté en comida esta semana?"
-Tú: [REVISA CONTEXTO_INICIAL y SUMA]
+Tú: [REVISA CONTEXTO_DB y SUMA]
 Tú: "Esta semana gastaste $[total] en comida: [desglose]"
 
-## FLUJO DE REPORTES (SI piden reporte → SIEMPRE GENERATE_PDF, sin preguntas ni comentario)
+## FLUJO DE REPORTES
 Usuario: "dame reporte de gasolina esta semana"
 Tú emites:
 GENERATE_PDF:
@@ -190,25 +171,9 @@ GENERATE_PDF:
   "period": "week"
 }
 
-Usuario: "reporte de comida del mes"
-Tú emites:
-GENERATE_PDF:
-{
-  "category": "Comida",
-  "period": "month"
-}
-
-Usuario: "reporte anual de gasolina"
-Tú emites:
-GENERATE_PDF:
-{
-  "category": "Gasolina",
-  "period": "year"
-}
-
 ## CUANDO TENGAS INFO COMPLETA
 
-Responde con prefijo especial:
+Responde con el comando seguido de confirmación al usuario:
 
 **Para eventos simples (gastos/ingresos):**
 SAVE_EVENT:
@@ -220,50 +185,10 @@ SAVE_EVENT:
   "category": "Gasolina",
   "vendor": "Shell",
   "vehicle_id": "transit",
-  "timestamp": <epoch_ms>
+  "timestamp": ${Date.now()}
 }
 
-**Para clientes nuevos:**
-SAVE_CLIENT:
-{
-  "first_name": "José",
-  "last_name": "Rivera",
-  "phone": "787-555-1234",
-  "address": "123 Main St",
-  "type": "residential"
-}
-
-**Para empleados nuevos:**
-SAVE_EMPLOYEE:
-{
-  "first_name": "Miguel",
-  "last_name": "Santos",
-  "phone": "787-555-1234",
-  "default_daily_rate": 300,
-  "retention_percent": 10
-}
-
-**Para trabajos completos:**
-SAVE_JOB:
-{
-  "client_id": <id>,
-  "type": "maintenance",
-  "services": [
-    {"description": "Limpieza mini split", "quantity": 4, "unit_price": 85, "total": 340}
-  ],
-  "materials": [
-    {"item": "Filtro", "quantity": 4, "unit_cost": 5, "unit_price": 10}
-  ],
-  "employees": [
-    {"employee_id": <id>, "days_worked": 3, "daily_rate": 300, "retention_percent": 10, "total_gross": 900, "total_net": 810}
-  ],
-  "total_charged": 340,
-  "payment_status": "partial",
-  "payments": [
-    {"date": <epoch>, "amount": 200, "method": "cash"}
-  ],
-  "balance_due": 140
-}
+✅ Registrado: Gasolina $40 en Shell (Tarjeta Negocio)
 
 # IMPORTANTE
 - Nunca inventes datos
@@ -273,11 +198,10 @@ SAVE_JOB:
 - NUNCA emitas SAVE_EVENT sin payment_method
 - NUNCA digas "no tengo acceso" a reportes
 - SIEMPRE emite GENERATE_PDF cuando pidan reporte
+- SIEMPRE usa timestamp ${Date.now()} (epoch ms actual) en SAVE_EVENT
 - Si preguntan "¿qué día es hoy?" usa la FECHA REAL
-- USA el CONTEXTO_INICIAL para responder consultas históricas
 
 Ahora conversa:`
-
 
     let messages: Array<{ role: 'user' | 'assistant'; content: string }>
 
@@ -306,12 +230,12 @@ Ahora conversa:`
       .trim()
 
     // ====== 3) Si el modelo devuelve GENERATE_PDF, lo detectamos ======
-    const m = text.match(/GENERATE_PDF:\s*(\{[\s\S]*\})/)
+    const m2 = text.match(/GENERATE_PDF:\s*(\{[\s\S]*?\})/)
 
-    if (m) {
+    if (m2) {
       let payload: any = {}
       try {
-        payload = JSON.parse(m[1])
+        payload = JSON.parse(m2[1])
       } catch {}
       return NextResponse.json({ type: 'GENERATE_PDF', payload })
     }
