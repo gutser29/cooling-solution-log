@@ -235,3 +235,20 @@ export interface ClientPhoto {
   timestamp: number
   created_at: number
 }
+
+// ========== CLIENT DOCUMENTS ==========
+
+export interface ClientDocument {
+  id?: number
+  client_id?: number
+  client_name?: string
+  job_id?: number
+  invoice_id?: number
+  doc_type: 'contract' | 'permit' | 'warranty' | 'manual' | 'receipt' | 'other'
+  file_name: string
+  file_type: string  // pdf, doc, jpg, etc.
+  file_data: string  // base64
+  description?: string
+  timestamp: number
+  created_at: number
+}
