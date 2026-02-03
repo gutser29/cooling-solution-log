@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { generatePhotoReport } from '@/lib/pdfGenerator'
-import type { Client, Job, EventRecord, ClientPhoto } from '@/lib/types'
+import type { Client, Job, EventRecord, ClientPhoto, ClientDocument } from '@/lib/types'
 
 interface ClientsPageProps {
   onNavigate: (page: string) => void
@@ -11,17 +11,45 @@ interface ClientsPageProps {
 
 type ViewMode = 'list' | 'detail' | 'edit' | 'new'
 
+const compressImage = (base64: string, maxWidth = 1024): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      let { width, height } = img
+      if (width > maxWidth) { height = (height * maxWidth) / width; width = maxWidth }
+      canvas.width = width; canvas.height = height
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/jpeg', 0.8))
+    }
+    img.src = base64
+  })
+}
+
 export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [clients, setClients] = useState<Client[]>([])
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [clientJobs, setClientJobs] = useState<Job[]>([])
   const [clientEvents, setClientEvents] = useState<EventRecord[]>([])
   const [clientPhotos, setClientPhotos] = useState<ClientPhoto[]>([])
+  const [clientDocs, setClientDocs] = useState<ClientDocument[]>([])
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [editForm, setEditForm] = useState<Partial<Client>>({})
   const [filter, setFilter] = useState<'all' | 'residential' | 'commercial'>('all')
+  
+  // Upload states
+  const [showPhotoUpload, setShowPhotoUpload] = useState(false)
+  const [showDocUpload, setShowDocUpload] = useState(false)
+  const [photoCategory, setPhotoCategory] = useState<'before' | 'after' | 'diagnostic' | 'other'>('other')
+  const [photoDesc, setPhotoDesc] = useState('')
+  const [docType, setDocType] = useState<'contract' | 'permit' | 'warranty' | 'manual' | 'receipt' | 'other'>('other')
+  const [docDesc, setDocDesc] = useState('')
+  const [docName, setDocName] = useState('')
+  
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const docInputRef = useRef<HTMLInputElement>(null)
 
   const loadClients = useCallback(async () => {
     const all = await db.clients.where('active').equals(1).toArray()
@@ -51,6 +79,14 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       p.client_name?.toLowerCase().includes(clientName)
     )
     setClientPhotos(clientPhotosFiltered)
+    
+    // Load documents
+    const docs = await db.client_documents.toArray()
+    const clientDocsFiltered = docs.filter(d => 
+      d.client_id === client.id || 
+      d.client_name?.toLowerCase().includes(clientName)
+    )
+    setClientDocs(clientDocsFiltered)
   }
 
   const startEdit = () => {
@@ -131,6 +167,85 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     generatePhotoReport(clientPhotos, clientName)
   }
 
+  // ========== UPLOAD PHOTO ==========
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedClient || !e.target.files?.length) return
+    const file = e.target.files[0]
+    const b64 = await new Promise<string>(res => {
+      const r = new FileReader()
+      r.onload = () => res(r.result as string)
+      r.readAsDataURL(file)
+    })
+    const compressed = await compressImage(b64)
+    const now = Date.now()
+    
+    await db.client_photos.add({
+      client_id: selectedClient.id,
+      client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+      category: photoCategory,
+      description: photoDesc,
+      photo_data: compressed,
+      timestamp: now,
+      created_at: now
+    })
+    
+    // Reload photos
+    const photos = await db.client_photos.toArray()
+    const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
+    setClientPhotos(photos.filter(p => p.client_id === selectedClient.id || p.client_name?.toLowerCase().includes(clientName)))
+    
+    setShowPhotoUpload(false)
+    setPhotoDesc('')
+    setPhotoCategory('other')
+    if (photoInputRef.current) photoInputRef.current.value = ''
+    alert('✅ Foto guardada')
+  }
+
+  // ========== UPLOAD DOCUMENT ==========
+  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedClient || !e.target.files?.length) return
+    const file = e.target.files[0]
+    const fileType = file.name.split('.').pop() || 'unknown'
+    const b64 = await new Promise<string>(res => {
+      const r = new FileReader()
+      r.onload = () => res(r.result as string)
+      r.readAsDataURL(file)
+    })
+    const now = Date.now()
+    
+    await db.client_documents.add({
+      client_id: selectedClient.id,
+      client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+      doc_type: docType,
+      file_name: docName || file.name,
+      file_type: fileType,
+      file_data: b64,
+      description: docDesc,
+      timestamp: now,
+      created_at: now
+    })
+    
+    // Reload docs
+    const docs = await db.client_documents.toArray()
+    const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
+    setClientDocs(docs.filter(d => d.client_id === selectedClient.id || d.client_name?.toLowerCase().includes(clientName)))
+    
+    setShowDocUpload(false)
+    setDocDesc('')
+    setDocName('')
+    setDocType('other')
+    if (docInputRef.current) docInputRef.current.value = ''
+    alert('✅ Documento guardado')
+  }
+
+  // ========== VIEW DOCUMENT ==========
+  const viewDocument = (doc: ClientDocument) => {
+    const link = document.createElement('a')
+    link.href = doc.file_data
+    link.download = doc.file_name
+    link.click()
+  }
+
   const fmt = (n: number) => `$${n.toFixed(2)}`
   const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { month: 'short', day: 'numeric', year: 'numeric' })
 
@@ -157,7 +272,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-3">
-          {/* Search */}
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -165,7 +279,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             className="w-full bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
           />
 
-          {/* Filter */}
           <div className="flex gap-2">
             {(['all', 'residential', 'commercial'] as const).map(f => (
               <button
@@ -179,7 +292,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <span className="ml-auto text-xs text-gray-500 self-center">{filtered.length} cliente{filtered.length !== 1 ? 's' : ''}</span>
           </div>
 
-          {/* Client List */}
           {loading ? (
             <div className="text-center py-8 text-gray-500">Cargando...</div>
           ) : filtered.length === 0 ? (
@@ -188,29 +300,26 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           ) : (
             <div className="space-y-2">
-              {filtered.map(c => {
-                const name = `${c.first_name} ${c.last_name}`
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => selectClient(c)}
-                    className="w-full bg-[#111a2e] rounded-xl p-4 border border-white/5 text-left hover:bg-[#1a2332] transition-colors"
-                  >
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="font-medium text-gray-200">{name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className={`text-xs px-2 py-0.5 rounded ${c.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
-                            {c.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
-                          </span>
-                          {c.phone && <span className="text-xs text-gray-500">📞 {c.phone}</span>}
-                        </div>
+              {filtered.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => selectClient(c)}
+                  className="w-full bg-[#111a2e] rounded-xl p-4 border border-white/5 text-left hover:bg-[#1a2332] transition-colors"
+                >
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="font-medium text-gray-200">{c.first_name} {c.last_name}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`text-xs px-2 py-0.5 rounded ${c.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
+                          {c.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
+                        </span>
+                        {c.phone && <span className="text-xs text-gray-500">📞 {c.phone}</span>}
                       </div>
-                      <span className="text-gray-500 text-lg">›</span>
                     </div>
-                  </button>
-                )
-              })}
+                    <span className="text-gray-500 text-lg">›</span>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -218,16 +327,17 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
   }
 
-  // ========== NEW CLIENT VIEW ==========
-  if (viewMode === 'new') {
+  // ========== NEW/EDIT VIEW ==========
+  if (viewMode === 'new' || viewMode === 'edit') {
+    const isNew = viewMode === 'new'
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100">
         <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <button onClick={() => setViewMode('list')} className="text-lg">←</button>
-            <h1 className="text-xl font-bold">➕ Nuevo Cliente</h1>
+            <button onClick={() => setViewMode(isNew ? 'list' : 'detail')} className="text-lg">←</button>
+            <h1 className="text-xl font-bold">{isNew ? '➕ Nuevo' : '✏️ Editar'} Cliente</h1>
           </div>
-          <button onClick={saveNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
+          <button onClick={isNew ? saveNew : saveEdit} className="bg-green-500 hover:bg-green-600 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
@@ -235,178 +345,43 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">Nombre *</label>
-                <input
-                  value={editForm.first_name || ''}
-                  onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))}
-                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                  placeholder="José"
-                />
+                <input value={editForm.first_name || ''} onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="José" />
               </div>
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">Apellido</label>
-                <input
-                  value={editForm.last_name || ''}
-                  onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))}
-                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                  placeholder="Rivera"
-                />
+                <input value={editForm.last_name || ''} onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Rivera" />
               </div>
             </div>
-
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Teléfono</label>
-              <input
-                value={editForm.phone || ''}
-                onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                placeholder="787-555-1234"
-              />
+              <input value={editForm.phone || ''} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="787-555-1234" />
             </div>
-
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Email</label>
-              <input
-                value={editForm.email || ''}
-                onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                placeholder="jose@email.com"
-              />
+              <input value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="jose@email.com" />
             </div>
-
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Dirección</label>
-              <input
-                value={editForm.address || ''}
-                onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                placeholder="Bayamón, PR"
-              />
+              <input value={editForm.address || ''} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Bayamón, PR" />
             </div>
-
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
               <div className="flex gap-2">
-                <button
-                  onClick={() => setEditForm(f => ({ ...f, type: 'residential' }))}
-                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'residential' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
-                >
-                  🏠 Residencial
-                </button>
-                <button
-                  onClick={() => setEditForm(f => ({ ...f, type: 'commercial' }))}
-                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'commercial' ? 'bg-purple-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
-                >
-                  🏢 Comercial
-                </button>
+                <button onClick={() => setEditForm(f => ({ ...f, type: 'residential' }))} className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'residential' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}>🏠 Residencial</button>
+                <button onClick={() => setEditForm(f => ({ ...f, type: 'commercial' }))} className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'commercial' ? 'bg-purple-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}>🏢 Comercial</button>
               </div>
             </div>
-
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Notas</label>
-              <textarea
-                value={editForm.notes || ''}
-                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20"
-                placeholder="Notas adicionales..."
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // ========== EDIT VIEW ==========
-  if (viewMode === 'edit' && selectedClient) {
-    return (
-      <div className="min-h-screen bg-[#0b1220] text-gray-100">
-        <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setViewMode('detail')} className="text-lg">←</button>
-            <h1 className="text-xl font-bold">✏️ Editar Cliente</h1>
-          </div>
-          <button onClick={saveEdit} className="bg-green-500 hover:bg-green-600 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
-        </div>
-
-        <div className="p-4 max-w-2xl mx-auto space-y-4">
-          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Nombre</label>
-                <input
-                  value={editForm.first_name || ''}
-                  onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))}
-                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Apellido</label>
-                <input
-                  value={editForm.last_name || ''}
-                  onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))}
-                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Teléfono</label>
-              <input
-                value={editForm.phone || ''}
-                onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Email</label>
-              <input
-                value={editForm.email || ''}
-                onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Dirección</label>
-              <input
-                value={editForm.address || ''}
-                onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setEditForm(f => ({ ...f, type: 'residential' }))}
-                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'residential' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
-                >
-                  🏠 Residencial
-                </button>
-                <button
-                  onClick={() => setEditForm(f => ({ ...f, type: 'commercial' }))}
-                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'commercial' ? 'bg-purple-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
-                >
-                  🏢 Comercial
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Notas</label>
-              <textarea
-                value={editForm.notes || ''}
-                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
-                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20"
-              />
+              <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20" placeholder="Notas adicionales..." />
             </div>
           </div>
 
-          <button onClick={toggleActive} className="w-full bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
-            {selectedClient.active ? '🗑️ Desactivar Cliente' : '✅ Reactivar Cliente'}
-          </button>
+          {!isNew && selectedClient && (
+            <button onClick={toggleActive} className="w-full bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
+              {selectedClient.active ? '🗑️ Desactivar Cliente' : '✅ Reactivar Cliente'}
+            </button>
+          )}
         </div>
       </div>
     )
@@ -420,7 +395,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     const totalPending = totalCharged - totalPaid
 
     return (
-      <div className="min-h-screen bg-[#0b1220] text-gray-100">
+      <div className="min-h-screen bg-[#0b1220] text-gray-100 pb-20">
         <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => { setViewMode('list'); setSelectedClient(null) }} className="text-lg">←</button>
@@ -458,20 +433,29 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           </div>
 
+          {/* Action Buttons */}
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setShowPhotoUpload(true)} className="bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-3 border border-white/5 text-center transition-colors">
+              <span className="text-2xl">📷</span>
+              <p className="text-xs text-gray-400 mt-1">Añadir Foto</p>
+            </button>
+            <button onClick={() => setShowDocUpload(true)} className="bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-3 border border-white/5 text-center transition-colors">
+              <span className="text-2xl">📄</span>
+              <p className="text-xs text-gray-400 mt-1">Añadir Documento</p>
+            </button>
+          </div>
+
           {/* Photo Report Button */}
           {clientPhotos.length > 0 && (
-            <button 
-              onClick={handleGeneratePhotoReport}
-              className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors"
-            >
+            <button onClick={handleGeneratePhotoReport} className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors">
               <div className="flex items-center gap-3">
                 <span className="text-2xl">📸</span>
                 <div className="text-left">
                   <p className="text-sm font-medium text-gray-200">Reporte de Fotos</p>
-                  <p className="text-xs text-gray-500">{clientPhotos.length} foto(s) guardadas</p>
+                  <p className="text-xs text-gray-500">{clientPhotos.length} foto(s)</p>
                 </div>
               </div>
-              <span className="text-blue-400 text-sm font-medium">Generar PDF →</span>
+              <span className="text-blue-400 text-sm font-medium">PDF →</span>
             </button>
           )}
 
@@ -482,11 +466,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
               <div className="flex gap-2 overflow-x-auto pb-2">
                 {clientPhotos.slice(0, 6).map((photo, i) => (
                   <div key={i} className="flex-shrink-0">
-                    <img 
-                      src={photo.photo_data} 
-                      alt={photo.description || 'Foto'} 
-                      className="w-20 h-20 object-cover rounded-lg"
-                    />
+                    <img src={photo.photo_data} alt={photo.description || 'Foto'} className="w-20 h-20 object-cover rounded-lg" />
                     <p className="text-[10px] text-gray-500 mt-1 text-center capitalize">{photo.category}</p>
                   </div>
                 ))}
@@ -499,10 +479,29 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           )}
 
+          {/* Documents */}
+          {clientDocs.length > 0 && (
+            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">📄 Documentos ({clientDocs.length})</h3>
+              <div className="space-y-2">
+                {clientDocs.map((doc, i) => (
+                  <button key={i} onClick={() => viewDocument(doc)} className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#0b1220] transition-colors text-left">
+                    <span className="text-xl">{doc.file_type === 'pdf' ? '📕' : '📄'}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-200 truncate">{doc.file_name}</p>
+                      <p className="text-xs text-gray-500 capitalize">{doc.doc_type} • {fmtDate(doc.timestamp)}</p>
+                    </div>
+                    <span className="text-blue-400 text-xs">Descargar</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Jobs */}
           {clientJobs.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">🔧 Historial de Trabajos</h3>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">🔧 Trabajos</h3>
               <div className="space-y-2">
                 {clientJobs.map((j, i) => {
                   const paid = j.payments?.reduce((s, p) => s + p.amount, 0) || 0
@@ -527,7 +526,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
           {/* Events */}
           {clientEvents.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">📋 Eventos Relacionados</h3>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">📋 Eventos</h3>
               <div className="space-y-2">
                 {clientEvents.slice(0, 10).map((e, i) => (
                   <div key={i} className="flex justify-between items-center text-sm py-1 border-b border-white/5 last:border-0">
@@ -544,6 +543,68 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           )}
         </div>
+
+        {/* Photo Upload Modal */}
+        {showPhotoUpload && (
+          <>
+            <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowPhotoUpload(false)} />
+            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4">
+              <h3 className="text-lg font-bold text-gray-200">📷 Añadir Foto</h3>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Categoría</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['before', 'after', 'diagnostic', 'other'] as const).map(cat => (
+                    <button key={cat} onClick={() => setPhotoCategory(cat)} className={`py-2 rounded-lg text-xs ${photoCategory === cat ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
+                      {cat === 'before' ? 'Antes' : cat === 'after' ? 'Después' : cat === 'diagnostic' ? 'Diagnóstico' : 'Otro'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Descripción</label>
+                <input value={photoDesc} onChange={e => setPhotoDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Ej: Compresor antes de reparación" />
+              </div>
+              <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+              <div className="flex gap-2">
+                <button onClick={() => setShowPhotoUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
+                <button onClick={() => photoInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📷 Seleccionar</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Document Upload Modal */}
+        {showDocUpload && (
+          <>
+            <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowDocUpload(false)} />
+            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4">
+              <h3 className="text-lg font-bold text-gray-200">📄 Añadir Documento</h3>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['contract', 'permit', 'warranty', 'manual', 'receipt', 'other'] as const).map(t => (
+                    <button key={t} onClick={() => setDocType(t)} className={`py-2 rounded-lg text-xs ${docType === t ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
+                      {t === 'contract' ? 'Contrato' : t === 'permit' ? 'Permiso' : t === 'warranty' ? 'Garantía' : t === 'manual' ? 'Manual' : t === 'receipt' ? 'Recibo' : 'Otro'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Nombre</label>
+                <input value={docName} onChange={e => setDocName(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Contrato mantenimiento 2025" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Descripción</label>
+                <input value={docDesc} onChange={e => setDocDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Notas..." />
+              </div>
+              <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt" onChange={handleDocUpload} className="hidden" />
+              <div className="flex gap-2">
+                <button onClick={() => setShowDocUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
+                <button onClick={() => docInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📄 Seleccionar</button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     )
   }

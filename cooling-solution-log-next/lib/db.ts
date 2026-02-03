@@ -11,7 +11,8 @@ import type {
   Reminder,
   Invoice,
   JobTemplate,
-  ClientPhoto
+  ClientPhoto,
+  ClientDocument
 } from './types'
 
 export interface SyncQueueItem {
@@ -35,6 +36,7 @@ export class CoolingDB extends Dexie {
   invoices!: Dexie.Table<Invoice, number>
   job_templates!: Dexie.Table<JobTemplate, number>
   client_photos!: Dexie.Table<ClientPhoto, number>
+  client_documents!: Dexie.Table<ClientDocument, number>
 
   constructor() {
     super('CoolingSolutionDB')
@@ -123,6 +125,24 @@ export class CoolingDB extends Dexie {
       invoices: '++id,invoice_number,type,client_id,client_name,status,issue_date,due_date,created_at,updated_at',
       job_templates: '++id,name,client_id,active,created_at,updated_at',
       client_photos: '++id,client_id,client_name,job_id,invoice_id,category,timestamp,created_at'
+    })
+
+    // Version 9 - Add client_documents for contracts, permits, etc.
+    this.version(9).stores({
+      events: '++id,timestamp,type,status,subtype,category,amount,client_id,employee_id,job_id,vehicle_id,payment_method,expense_type',
+      clients: '++id,first_name,last_name,phone,type,active,created_at,updated_at',
+      employees: '++id,first_name,last_name,active,created_at',
+      jobs: '++id,client_id,date,status,payment_status,created_at',
+      vehicles: '++id,name,active,created_at',
+      contracts: '++id,client_id,status,next_service_due,created_at',
+      sync_queue: '++id,timestamp,status',
+      notes: '++id,timestamp,updated_at',
+      appointments: '++id,timestamp,date,client_id,status,created_at',
+      reminders: '++id,timestamp,due_date,completed,priority,created_at',
+      invoices: '++id,invoice_number,type,client_id,client_name,status,issue_date,due_date,created_at,updated_at',
+      job_templates: '++id,name,client_id,active,created_at,updated_at',
+      client_photos: '++id,client_id,client_name,job_id,invoice_id,category,timestamp,created_at',
+      client_documents: '++id,client_id,client_name,job_id,invoice_id,doc_type,file_name,timestamp,created_at'
     })
   }
 }

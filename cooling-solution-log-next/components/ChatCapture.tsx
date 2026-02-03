@@ -297,21 +297,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
     const recognition = new SpeechRecognition()
     recognition.continuous = true
-    recognition.interimResults = true
+    recognition.interimResults = false  // Desactivado para evitar repetición
     recognition.lang = 'es-PR'
 
     recognition.onresult = (event: any) => {
-      let transcript = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript
-      }
-      setInput(prev => {
-        const parts = prev.split(' ')
-        if (parts.length > 1 && !event.results[event.results.length - 1].isFinal) {
-          return parts.slice(0, -1).join(' ') + ' ' + transcript
+        if (event.results[i].isFinal) {
+          const transcript = event.results[i][0].transcript
+          setInput(prev => (prev + ' ' + transcript).trim())
         }
-        return prev + ' ' + transcript
-      })
+      }
     }
 
     recognition.onend = () => {

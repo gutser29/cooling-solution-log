@@ -184,13 +184,32 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     loadAll()
   }
 
+  // ========== CRITICAL FIX: Register income when marking as paid ==========
   const updateStatus = async (inv: Invoice, status: Invoice['status'], paidMethod?: string) => {
     if (!inv.id) return
-    const update: Partial<Invoice> = { status, updated_at: Date.now() }
+    const now = Date.now()
+    const update: Partial<Invoice> = { status, updated_at: now }
+    
     if (status === 'paid') {
-      update.paid_date = Date.now()
+      update.paid_date = now
       update.paid_method = paidMethod || 'cash'
+      
+      // CREATE INCOME EVENT - This is the fix!
+      await db.events.add({
+        timestamp: now,
+        type: 'income',
+        status: 'completed',
+        category: 'factura',
+        amount: inv.total,
+        payment_method: paidMethod || 'cash',
+        client: inv.client_name,
+        note: `Factura ${inv.invoice_number} pagada`,
+        expense_type: 'business'
+      })
+      
+      console.log('✅ Income event created:', inv.total, inv.client_name)
     }
+    
     await db.invoices.update(inv.id, update)
     loadAll()
     if (selected?.id === inv.id) {

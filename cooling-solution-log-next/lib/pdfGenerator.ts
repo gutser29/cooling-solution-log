@@ -4,7 +4,7 @@ import type { EventRecord, Job, Invoice } from './types'
 
 // ============ COMPANY INFO ============
 const COMPANY_NAME = 'Cooling Solution'
-const COMPANY_SLOGAN = 'Donde tu confort es nuestra prioridad'
+const COMPANY_SLOGAN = '"Donde tu confort es nuestra prioridad"'
 const COMPANY_ADDRESS = 'PO BOX 168'
 const COMPANY_CITY = 'Toa Alta, Puerto Rico 00954'
 const COMPANY_PHONE = '939-425-6081'
@@ -51,7 +51,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
   const isQuote = invoice.type === 'quote'
-  const title = isQuote ? 'Cotización' : 'Factura'
+  const title = isQuote ? 'Quote' : 'Invoice'
   const marginL = 20
   const marginR = 20
   const contentW = pageW - marginL - marginR
@@ -61,13 +61,11 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   doc.setTextColor(30, 30, 30)
   doc.text(title, marginL, 28)
 
-  // === LOGO (top right) ===
+  // === LOGO (top right) - Solo logo, sin nombre ===
   try {
     doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 12, 40, 17)
   } catch {
-    doc.setFontSize(16)
-    doc.setTextColor(0, 150, 150)
-    doc.text(COMPANY_NAME, pageW - marginR, 22, { align: 'right' })
+    // Si falla el logo, no mostrar nada
   }
 
   // === INVOICE META (below title) ===
@@ -76,50 +74,46 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   doc.setTextColor(30, 30, 30)
   
   doc.setFont('helvetica', 'bold')
-  doc.text(isQuote ? 'Número cotización' : 'Número factura', marginL, y)
+  doc.text(isQuote ? 'Quote number' : 'Invoice number', marginL, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(invoice.invoice_number, marginL + 45, y)
+  doc.text(invoice.invoice_number, marginL + 40, y)
   
   y += 6
   doc.setFont('helvetica', 'bold')
-  doc.text('Fecha emisión', marginL, y)
+  doc.text('Date of issue', marginL, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(formatDate(invoice.issue_date), marginL + 45, y)
+  doc.text(formatDate(invoice.issue_date), marginL + 40, y)
   
   y += 6
   if (invoice.due_date && !isQuote) {
     doc.setFont('helvetica', 'bold')
-    doc.text('Fecha vence', marginL, y)
+    doc.text('Date due', marginL, y)
     doc.setFont('helvetica', 'normal')
-    doc.text(formatDate(invoice.due_date), marginL + 45, y)
+    doc.text(formatDate(invoice.due_date), marginL + 40, y)
   }
   if (isQuote && invoice.expiration_date) {
     doc.setFont('helvetica', 'bold')
-    doc.text('Válida hasta', marginL, y)
+    doc.text('Valid until', marginL, y)
     doc.setFont('helvetica', 'normal')
-    doc.text(formatDate(invoice.expiration_date), marginL + 45, y)
+    doc.text(formatDate(invoice.expiration_date), marginL + 40, y)
   }
 
   // === COMPANY INFO (left) & BILL TO (right) - PARALLEL ===
   y = 65
   const colMid = pageW / 2 + 5
 
-  // Company info (left column)
-  doc.setFontSize(10)
-  doc.setTextColor(30, 30, 30)
-  doc.setFont('helvetica', 'bold')
-  doc.text(COMPANY_NAME, marginL, y)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(60, 60, 60)
-  doc.text(COMPANY_ADDRESS, marginL, y + 5)
-  doc.text(COMPANY_CITY, marginL, y + 10)
-  doc.text(COMPANY_PHONE, marginL, y + 15)
-  doc.text(COMPANY_EMAIL, marginL, y + 20)
+  // Company info (left column) - Solo dirección, el logo ya está arriba
+  doc.setFontSize(9)
+  doc.setTextColor(80, 80, 80)
+  doc.text(COMPANY_ADDRESS, marginL, y)
+  doc.text(COMPANY_CITY, marginL, y + 4)
+  doc.text(COMPANY_PHONE, marginL, y + 8)
+  doc.text(COMPANY_EMAIL, marginL, y + 12)
 
   // Bill to (right column)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(30, 30, 30)
-  doc.text('Facturar a', colMid, y)
+  doc.text('Bill to', colMid, y)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(60, 60, 60)
   let billY = y + 5
@@ -137,17 +131,8 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     doc.text(invoice.client_email, colMid, billY)
   }
 
-  // === AMOUNT DUE HIGHLIGHT ===
-  y = 100
-  doc.setFontSize(18)
-  doc.setTextColor(30, 30, 30)
-  doc.setFont('helvetica', 'bold')
-  const dueDateStr = invoice.due_date ? formatDate(invoice.due_date) : ''
-  doc.text(`${formatCurrency(invoice.total)} USD${dueDateStr ? ' vence ' + dueDateStr : ''}`, marginL, y)
-  doc.setFont('helvetica', 'normal')
-
   // === ITEMS TABLE ===
-  y = 115
+  y = 100
   
   // Table header line (subtle gray)
   doc.setDrawColor(200, 200, 200)
@@ -158,10 +143,10 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   y += 8
   doc.setFontSize(10)
   doc.setTextColor(100, 100, 100)
-  doc.text('Descripción', marginL, y)
-  doc.text('Cant.', pageW - marginR - 65, y, { align: 'right' })
-  doc.text('Precio unit.', pageW - marginR - 30, y, { align: 'right' })
-  doc.text('Total', pageW - marginR, y, { align: 'right' })
+  doc.text('Description', marginL, y)
+  doc.text('Qty', pageW - marginR - 65, y, { align: 'right' })
+  doc.text('Unit price', pageW - marginR - 30, y, { align: 'right' })
+  doc.text('Amount', pageW - marginR, y, { align: 'right' })
   
   // Line below headers
   y += 4
@@ -188,7 +173,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   
   if (invoice.tax_rate > 0) {
     y += 6
-    doc.text(`IVU (${invoice.tax_rate}%)`, totalsLabelX, y, { align: 'right' })
+    doc.text(`Tax (${invoice.tax_rate}%)`, totalsLabelX, y, { align: 'right' })
     doc.text(formatCurrency(invoice.tax_amount), pageW - marginR, y, { align: 'right' })
   }
   
@@ -199,7 +184,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   y += 6
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(30, 30, 30)
-  doc.text('Total a pagar', totalsLabelX, y, { align: 'right' })
+  doc.text('Amount due', totalsLabelX, y, { align: 'right' })
   doc.text(`${formatCurrency(invoice.total)} USD`, pageW - marginR, y, { align: 'right' })
   doc.setFont('helvetica', 'normal')
 
@@ -208,7 +193,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     y += 18
     doc.setFontSize(9)
     doc.setTextColor(80, 80, 80)
-    doc.text('Notas:', marginL, y)
+    doc.text('Notes:', marginL, y)
     y += 5
     doc.setTextColor(60, 60, 60)
     const lines = doc.splitTextToSize(invoice.notes, contentW)
@@ -220,9 +205,9 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     y += 18
     doc.setFontSize(9)
     doc.setTextColor(100, 100, 100)
-    doc.text('Métodos de pago aceptados:', marginL, y)
+    doc.text('Payment methods accepted:', marginL, y)
     y += 5
-    doc.text('Efectivo, ATH Móvil, Transferencia, PayPal', marginL, y)
+    doc.text('Cash, ATH Móvil, Transfer, PayPal', marginL, y)
   }
 
   // === PAID STAMP ===
@@ -231,19 +216,21 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     doc.setFontSize(10)
     doc.setTextColor(34, 197, 94)
     doc.setFont('helvetica', 'bold')
-    doc.text(`✓ PAGADO - ${formatDate(invoice.paid_date)} (${getPaymentLabel(invoice.paid_method)})`, marginL, y)
+    doc.text(`✓ PAID - ${formatDate(invoice.paid_date)} (${getPaymentLabel(invoice.paid_method)})`, marginL, y)
     doc.setFont('helvetica', 'normal')
   }
 
   // === FOOTER LINE ===
   doc.setDrawColor(200, 200, 200)
   doc.setLineWidth(0.3)
-  doc.line(marginL, pageH - 18, pageW - marginR, pageH - 18)
+  doc.line(marginL, pageH - 22, pageW - marginR, pageH - 22)
 
-  // === FOOTER TEXT ===
+  // === FOOTER - SLOGAN con comillas ===
   doc.setFontSize(9)
+  doc.setTextColor(100, 100, 100)
+  doc.text('"Donde tu confort es nuestra prioridad"', pageW / 2, pageH - 14, { align: 'center' })
   doc.setTextColor(150, 150, 150)
-  doc.text('Página 1 de 1', pageW - marginR, pageH - 10, { align: 'right' })
+  doc.text('Page 1 of 1', pageW - marginR, pageH - 8, { align: 'right' })
 
   return doc.output('blob')
 }
@@ -253,7 +240,7 @@ export function downloadInvoicePDF(invoice: Invoice) {
   const blob = generateInvoicePDF(invoice)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  const prefix = invoice.type === 'quote' ? 'Cotizacion' : 'Factura'
+  const prefix = invoice.type === 'quote' ? 'Quote' : 'Invoice'
   a.href = url
   a.download = `${prefix}-${invoice.invoice_number}.pdf`
   a.click()
