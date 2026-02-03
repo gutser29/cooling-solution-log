@@ -77,6 +77,7 @@ export class CoolingDB extends Dexie {
       reminders: '++id,timestamp,due_date,completed,priority,created_at'
     })
 
+    // Version 6 - Batch 3: Invoices & Quotes
     this.version(6).stores({
       events: '++id,timestamp,type,status,subtype,category,amount,client_id,employee_id,job_id,vehicle_id,payment_method,expense_type',
       clients: '++id,first_name,last_name,phone,type,active,created_at',

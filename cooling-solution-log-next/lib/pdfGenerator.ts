@@ -5,6 +5,7 @@ import type { EventRecord, Job, Invoice } from './types'
 // ============ COMPANY INFO ============
 const COMPANY_NAME = 'Cooling Solution'
 const COMPANY_SLOGAN = 'Donde tu confort es nuestra prioridad'
+const COMPANY_LOCATION = 'Puerto Rico'
 const COMPANY_ADDRESS = 'PO BOX 168, Toa Alta, Puerto Rico 00954'
 const COMPANY_PHONE = '939-425-6081'
 const COMPANY_EMAIL = 'Sergio.gutierrez@coolingsolutionpr.com'
@@ -38,40 +39,35 @@ function formatDate(ts: number): string {
   return new Date(ts).toLocaleDateString('es-PR')
 }
 
-function addCompanyHeader(doc: jsPDF): number {
+function addLogoHeader(doc: jsPDF): number {
   const pageW = doc.internal.pageSize.getWidth()
   
-  // Logo left
+  // Logo on left
   try {
-    doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', 14, 8, 45, 19)
+    doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', 14, 10, 50, 21)
   } catch {
-    doc.setFontSize(18)
+    doc.setFontSize(16)
     doc.setTextColor(0, 150, 150)
-    doc.text(COMPANY_NAME, 14, 20)
+    doc.text(COMPANY_NAME, 14, 22)
   }
   
-  // Company info right
+  // Company contact info on right
   doc.setFontSize(8)
   doc.setTextColor(80, 80, 80)
-  const rightX = pageW - 14
-  doc.text(COMPANY_ADDRESS, rightX, 12, { align: 'right' })
-  doc.text(`Tel: ${COMPANY_PHONE}`, rightX, 17, { align: 'right' })
-  doc.text(COMPANY_EMAIL, rightX, 22, { align: 'right' })
+  doc.text(COMPANY_ADDRESS, pageW - 14, 12, { align: 'right' })
+  doc.text(`Tel: ${COMPANY_PHONE}`, pageW - 14, 17, { align: 'right' })
+  doc.text(COMPANY_EMAIL, pageW - 14, 22, { align: 'right' })
   
-  // Slogan centered
-  doc.setFontSize(9)
-  doc.setTextColor(0, 150, 150)
-  doc.text(COMPANY_SLOGAN, pageW / 2, 32, { align: 'center' })
-  
-  return 38
+  return 35
 }
 
 function addSlogan(doc: jsPDF) {
   const pageH = doc.internal.pageSize.getHeight()
   const pageW = doc.internal.pageSize.getWidth()
   doc.setFontSize(8)
-  doc.setTextColor(0, 150, 150)
-  doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 10, { align: 'center' })
+  doc.setTextColor(120, 120, 120)
+  const sloganW = doc.getTextWidth(COMPANY_SLOGAN)
+  doc.text(COMPANY_SLOGAN, (pageW - sloganW) / 2, pageH - 10)
 }
 
 function generateInvoiceNumber(type: 'invoice' | 'quote'): string {
@@ -83,110 +79,213 @@ function generateInvoiceNumber(type: 'invoice' | 'quote'): string {
   return `${prefix}-${yr}${mo}-${rand}`
 }
 
-// ============ CATEGORY REPORT ============
+// ============ 1) CATEGORY REPORT ============
 
-export function generateCategoryReport(events: EventRecord[], category: string, startDate: number, endDate: number) {
+export function generateCategoryReport(
+  events: EventRecord[],
+  category: string,
+  startDate: number,
+  endDate: number
+) {
   const searchTerm = normalizeText(category)
   const filtered = events.filter(e => {
-    const inCat = (e.category && normalizeText(e.category).includes(searchTerm)) || (e.subtype && normalizeText(e.subtype).includes(searchTerm))
-    return inCat && e.timestamp >= startDate && e.timestamp <= endDate
+    const inCat = (e.category && normalizeText(e.category).includes(searchTerm)) ||
+                  (e.subtype && normalizeText(e.subtype).includes(searchTerm))
+    const inDate = e.timestamp >= startDate && e.timestamp <= endDate
+    return inCat && inDate
   })
-  if (filtered.length === 0) { alert(`No se encontraron eventos de "${category}"`); return }
+
+  if (filtered.length === 0) {
+    alert(`No se encontraron eventos de "${category}" en el período seleccionado`)
+    return
+  }
 
   const doc = new jsPDF()
-  doc.setFontSize(18); doc.text(`Reporte: ${category}`, 14, 20)
-  doc.setFontSize(10); doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, 14, 28)
-  doc.text('Cooling Solution', 14, 33)
+  doc.setFontSize(18)
+  doc.text(`Reporte: ${category}`, 14, 20)
+  doc.setFontSize(10)
+  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, 14, 28)
+  doc.text(`Cooling Solution Log`, 14, 33)
 
   const paymentSummary: Record<string, number> = {}
-  filtered.forEach(e => { const l = getPaymentLabel(e.payment_method); paymentSummary[l] = (paymentSummary[l] || 0) + e.amount })
+  filtered.forEach(e => {
+    const label = getPaymentLabel(e.payment_method)
+    paymentSummary[label] = (paymentSummary[label] || 0) + e.amount
+  })
 
   autoTable(doc, {
     startY: 40,
     head: [['Fecha', 'Monto', 'Método Pago', 'Detalle']],
-    body: filtered.map(e => [formatDate(e.timestamp), formatCurrency(e.amount), getPaymentLabel(e.payment_method), e.vendor || e.note || e.category || '-']),
+    body: filtered.map(e => [
+      formatDate(e.timestamp),
+      formatCurrency(e.amount),
+      getPaymentLabel(e.payment_method),
+      e.vendor || e.note || e.category || '-'
+    ]),
     foot: [['TOTAL', formatCurrency(filtered.reduce((s, e) => s + e.amount, 0)), '', '']]
   })
 
   const finalY = (doc as any).lastAutoTable.finalY + 10
-  doc.setFontSize(12); doc.text('Desglose por método de pago:', 14, finalY)
+  doc.setFontSize(12)
+  doc.text('Desglose por método de pago:', 14, finalY)
   let y = finalY + 7
-  Object.entries(paymentSummary).sort((a, b) => b[1] - a[1]).forEach(([m, t]) => { doc.setFontSize(10); doc.text(`${m}: ${formatCurrency(t)}`, 20, y); y += 6 })
+  Object.entries(paymentSummary).sort((a, b) => b[1] - a[1]).forEach(([method, total]) => {
+    doc.setFontSize(10)
+    doc.text(`${method}: ${formatCurrency(total)}`, 20, y)
+    y += 6
+  })
+
   doc.save(`${category}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
-// ============ P&L REPORT ============
+// ============ 2) P&L REPORT ============
 
-export function generatePLReport(events: EventRecord[], jobs: Job[], startDate: number, endDate: number, periodLabel: string) {
+export function generatePLReport(
+  events: EventRecord[],
+  jobs: Job[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
   const periodEvents = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate)
   const periodJobs = jobs.filter(j => j.date >= startDate && j.date <= endDate)
+
   const incomeEvents = periodEvents.filter(e => e.type === 'income')
   const totalIncome = incomeEvents.reduce((s, e) => s + e.amount, 0)
+
   let jobIncome = 0
-  periodJobs.forEach(j => { j.payments.forEach(p => { if (p.date >= startDate && p.date <= endDate) jobIncome += p.amount }) })
+  periodJobs.forEach(j => {
+    j.payments.forEach(p => {
+      if (p.date >= startDate && p.date <= endDate) jobIncome += p.amount
+    })
+  })
   const grossIncome = totalIncome + jobIncome
+
   const expenseEvents = periodEvents.filter(e => e.type === 'expense')
   const expenseByCategory: Record<string, number> = {}
-  expenseEvents.forEach(e => { const cat = e.category || e.subtype || 'Otro'; expenseByCategory[cat] = (expenseByCategory[cat] || 0) + e.amount })
+  expenseEvents.forEach(e => {
+    const cat = e.category || e.subtype || 'Otro'
+    expenseByCategory[cat] = (expenseByCategory[cat] || 0) + e.amount
+  })
   const totalExpenses = expenseEvents.reduce((s, e) => s + e.amount, 0)
+
   let totalPayroll = 0
   periodJobs.forEach(j => { j.employees.forEach(emp => { totalPayroll += emp.total_net }) })
+
   let materialCost = 0, materialCharged = 0
-  periodJobs.forEach(j => { j.materials.forEach(m => { materialCost += m.unit_cost * m.quantity; materialCharged += m.unit_price * m.quantity }) })
+  periodJobs.forEach(j => {
+    j.materials.forEach(m => {
+      materialCost += m.unit_cost * m.quantity
+      materialCharged += m.unit_price * m.quantity
+    })
+  })
   const materialProfit = materialCharged - materialCost
+
   const totalCosts = totalExpenses + totalPayroll
   const netProfit = grossIncome - totalCosts
   const profitMargin = grossIncome > 0 ? ((netProfit / grossIncome) * 100) : 0
+
   const expenseByMethod: Record<string, number> = {}
-  expenseEvents.forEach(e => { const l = getPaymentLabel(e.payment_method); expenseByMethod[l] = (expenseByMethod[l] || 0) + e.amount })
+  expenseEvents.forEach(e => {
+    const label = getPaymentLabel(e.payment_method)
+    expenseByMethod[label] = (expenseByMethod[label] || 0) + e.amount
+  })
 
   const doc = new jsPDF()
-  doc.setFontSize(20); doc.setTextColor(40, 40, 40); doc.text('PROFIT & LOSS', 14, 20)
-  doc.setFontSize(12); doc.text('Cooling Solution', 14, 27)
-  doc.setFontSize(10); doc.setTextColor(100, 100, 100)
+
+  doc.setFontSize(20)
+  doc.setTextColor(40, 40, 40)
+  doc.text('PROFIT & LOSS', 14, 20)
+  doc.setFontSize(12)
+  doc.text(`Cooling Solution Log`, 14, 27)
+  doc.setFontSize(10)
+  doc.setTextColor(100, 100, 100)
   doc.text(`Período: ${periodLabel}`, 14, 33)
   doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, 14, 38)
   doc.text(`Generado: ${formatDate(Date.now())}`, 14, 43)
-  doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text('Resumen', 14, 55)
+
+  doc.setFontSize(14)
+  doc.setTextColor(40, 40, 40)
+  doc.text('Resumen', 14, 55)
 
   const summaryColor = netProfit >= 0 ? [34, 139, 34] : [220, 20, 20]
+
   autoTable(doc, {
     startY: 60,
     head: [['Concepto', 'Monto']],
     body: [
-      ['Ingresos Totales', formatCurrency(grossIncome)], ['  Cobros directos', formatCurrency(totalIncome)], ['  Pagos de trabajos', formatCurrency(jobIncome)], ['', ''],
-      ['Gastos Totales', formatCurrency(totalCosts)], ['  Gastos operativos', formatCurrency(totalExpenses)], ['  Nómina empleados', formatCurrency(totalPayroll)], ['', ''],
-      ['Ganancia en materiales', formatCurrency(materialProfit)], ['  (Costo: ' + formatCurrency(materialCost) + ' → Cobrado: ' + formatCurrency(materialCharged) + ')', '']
+      ['Ingresos Totales', formatCurrency(grossIncome)],
+      ['  Cobros directos', formatCurrency(totalIncome)],
+      ['  Pagos de trabajos', formatCurrency(jobIncome)],
+      ['', ''],
+      ['Gastos Totales', formatCurrency(totalCosts)],
+      ['  Gastos operativos', formatCurrency(totalExpenses)],
+      ['  Nómina empleados', formatCurrency(totalPayroll)],
+      ['', ''],
+      ['Ganancia en materiales', formatCurrency(materialProfit)],
+      ['  (Costo: ' + formatCurrency(materialCost) + ' → Cobrado: ' + formatCurrency(materialCharged) + ')', ''],
     ],
-    foot: [['PROFIT NETO', formatCurrency(netProfit)], ['Margen', `${profitMargin.toFixed(1)}%`]],
-    styles: { fontSize: 10 }, footStyles: { fillColor: summaryColor as any, textColor: [255, 255, 255] }, columnStyles: { 1: { halign: 'right' } }
+    foot: [
+      ['PROFIT NETO', formatCurrency(netProfit)],
+      ['Margen', `${profitMargin.toFixed(1)}%`]
+    ],
+    styles: { fontSize: 10 },
+    footStyles: { fillColor: summaryColor as any, textColor: [255, 255, 255] },
+    columnStyles: { 1: { halign: 'right' } }
   })
 
   let currentY = (doc as any).lastAutoTable.finalY + 15
-  doc.setFontSize(14); doc.text('Gastos por Categoría', 14, currentY)
+
+  doc.setFontSize(14)
+  doc.text('Gastos por Categoría', 14, currentY)
   const catEntries = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1])
-  autoTable(doc, { startY: currentY + 5, head: [['Categoría', 'Monto', '% del Total']], body: catEntries.map(([cat, amount]) => [cat, formatCurrency(amount), `${((amount / totalExpenses) * 100).toFixed(1)}%`]), foot: [['TOTAL', formatCurrency(totalExpenses), '100%']], styles: { fontSize: 9 }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } } })
+  autoTable(doc, {
+    startY: currentY + 5,
+    head: [['Categoría', 'Monto', '% del Total']],
+    body: catEntries.map(([cat, amount]) => [cat, formatCurrency(amount), `${((amount / totalExpenses) * 100).toFixed(1)}%`]),
+    foot: [['TOTAL', formatCurrency(totalExpenses), '100%']],
+    styles: { fontSize: 9 },
+    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } }
+  })
 
   currentY = (doc as any).lastAutoTable.finalY + 15
   if (currentY > 240) { doc.addPage(); currentY = 20 }
-  doc.setFontSize(14); doc.text('Gastos por Método de Pago', 14, currentY)
+
+  doc.setFontSize(14)
+  doc.text('Gastos por Método de Pago', 14, currentY)
   const methodEntries = Object.entries(expenseByMethod).sort((a, b) => b[1] - a[1])
-  autoTable(doc, { startY: currentY + 5, head: [['Método', 'Monto', '% del Total']], body: methodEntries.map(([m, a]) => [m, formatCurrency(a), `${((a / totalExpenses) * 100).toFixed(1)}%`]), foot: [['TOTAL', formatCurrency(totalExpenses), '100%']], styles: { fontSize: 9 }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } } })
+  autoTable(doc, {
+    startY: currentY + 5,
+    head: [['Método', 'Monto', '% del Total']],
+    body: methodEntries.map(([method, amount]) => [method, formatCurrency(amount), `${((amount / totalExpenses) * 100).toFixed(1)}%`]),
+    foot: [['TOTAL', formatCurrency(totalExpenses), '100%']],
+    styles: { fontSize: 9 },
+    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } }
+  })
+
   doc.save(`PL-${periodLabel}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
-// ============ ACCOUNTS RECEIVABLE ============
+// ============ 3) ACCOUNTS RECEIVABLE ============
 
 export function generateARReport(jobs: Job[], clients: { id?: number; first_name: string; last_name: string }[]) {
   const pendingJobs = jobs.filter(j => j.payment_status === 'pending' || j.payment_status === 'partial')
-  if (pendingJobs.length === 0) { alert('No hay cuentas pendientes de cobro'); return }
+
+  if (pendingJobs.length === 0) {
+    alert('No hay cuentas pendientes de cobro')
+    return
+  }
+
   const clientMap = new Map(clients.map(c => [c.id, `${c.first_name} ${c.last_name}`]))
 
   const doc = new jsPDF()
-  doc.setFontSize(20); doc.text('CUENTAS POR COBRAR', 14, 20)
-  doc.setFontSize(10); doc.text(`Cooling Solution | ${formatDate(Date.now())}`, 14, 27)
+  doc.setFontSize(20)
+  doc.text('CUENTAS POR COBRAR', 14, 20)
+  doc.setFontSize(10)
+  doc.text(`Cooling Solution Log | ${formatDate(Date.now())}`, 14, 27)
 
   let totalPending = 0
+
   autoTable(doc, {
     startY: 35,
     head: [['Cliente', 'Trabajo', 'Fecha', 'Total', 'Pagado', 'Pendiente', 'Status']],
@@ -194,44 +293,94 @@ export function generateARReport(jobs: Job[], clients: { id?: number; first_name
       const paid = j.payments.reduce((s, p) => s + p.amount, 0)
       const pending = j.total_charged - paid
       totalPending += pending
-      return [clientMap.get(j.client_id) || `Cliente #${j.client_id}`, j.type, formatDate(j.date), formatCurrency(j.total_charged), formatCurrency(paid), formatCurrency(pending), j.payment_status === 'partial' ? 'Parcial' : 'Pendiente']
+      return [
+        clientMap.get(j.client_id) || `Cliente #${j.client_id}`,
+        j.type, formatDate(j.date), formatCurrency(j.total_charged),
+        formatCurrency(paid), formatCurrency(pending),
+        j.payment_status === 'partial' ? 'Parcial' : 'Pendiente'
+      ]
     }),
     foot: [['', '', '', '', 'TOTAL:', formatCurrency(totalPending), '']],
-    styles: { fontSize: 9 }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
+    styles: { fontSize: 9 },
+    columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
   })
 
-  const now = Date.now(), day = 86400000
+  const now = Date.now()
+  const day = 86400000
   let u30 = 0, u60 = 0, u90 = 0, o90 = 0
-  pendingJobs.forEach(j => { const p = j.total_charged - j.payments.reduce((s, x) => s + x.amount, 0); const age = now - j.date; if (age < 30 * day) u30 += p; else if (age < 60 * day) u60 += p; else if (age < 90 * day) u90 += p; else o90 += p })
+  pendingJobs.forEach(j => {
+    const pending = j.total_charged - j.payments.reduce((s, p) => s + p.amount, 0)
+    const age = now - j.date
+    if (age < 30 * day) u30 += pending
+    else if (age < 60 * day) u60 += pending
+    else if (age < 90 * day) u90 += pending
+    else o90 += pending
+  })
+
   const finalY = (doc as any).lastAutoTable.finalY + 15
-  doc.setFontSize(14); doc.text('Aging (Antigüedad)', 14, finalY)
-  autoTable(doc, { startY: finalY + 5, head: [['Período', 'Monto']], body: [['0-30 días', formatCurrency(u30)], ['31-60 días', formatCurrency(u60)], ['61-90 días', formatCurrency(u90)], ['90+ días', formatCurrency(o90)]], foot: [['TOTAL', formatCurrency(totalPending)]], styles: { fontSize: 10 }, columnStyles: { 1: { halign: 'right' } } })
+  doc.setFontSize(14)
+  doc.text('Aging (Antigüedad)', 14, finalY)
+  autoTable(doc, {
+    startY: finalY + 5,
+    head: [['Período', 'Monto']],
+    body: [['0-30 días', formatCurrency(u30)], ['31-60 días', formatCurrency(u60)], ['61-90 días', formatCurrency(u90)], ['90+ días', formatCurrency(o90)]],
+    foot: [['TOTAL', formatCurrency(totalPending)]],
+    styles: { fontSize: 10 },
+    columnStyles: { 1: { halign: 'right' } }
+  })
+
   doc.save(`Cuentas-por-Cobrar-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
-// ============ PAYMENT METHOD REPORT ============
+// ============ 4) PAYMENT METHOD REPORT ============
 
-export function generatePaymentMethodReport(events: EventRecord[], paymentMethod: string, startDate: number, endDate: number) {
+export function generatePaymentMethodReport(
+  events: EventRecord[],
+  paymentMethod: string,
+  startDate: number,
+  endDate: number
+) {
   const searchPM = paymentMethod.toLowerCase().replace(/\s+/g, '_')
-  const filtered = events.filter(e => { const pm = (e.payment_method || '').toLowerCase(); return (pm === searchPM || pm.includes(searchPM)) && e.timestamp >= startDate && e.timestamp <= endDate })
-  if (filtered.length === 0) { alert(`No se encontraron gastos con "${paymentMethod}"`); return }
+  const filtered = events.filter(e => {
+    const pm = (e.payment_method || '').toLowerCase()
+    return (pm === searchPM || pm.includes(searchPM)) && e.timestamp >= startDate && e.timestamp <= endDate
+  })
+
+  if (filtered.length === 0) {
+    alert(`No se encontraron gastos con "${paymentMethod}" en el período`)
+    return
+  }
 
   const doc = new jsPDF()
-  doc.setFontSize(18); doc.text(`Reporte: ${getPaymentLabel(paymentMethod)}`, 14, 20)
-  doc.setFontSize(10); doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, 14, 28)
+  doc.setFontSize(18)
+  doc.text(`Reporte: ${getPaymentLabel(paymentMethod)}`, 14, 20)
+  doc.setFontSize(10)
+  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, 14, 28)
 
   const catSummary: Record<string, number> = {}
   filtered.forEach(e => { catSummary[e.category || 'Otro'] = (catSummary[e.category || 'Otro'] || 0) + e.amount })
-  autoTable(doc, { startY: 35, head: [['Fecha', 'Categoría', 'Monto', 'Detalle']], body: filtered.map(e => [formatDate(e.timestamp), e.category || e.subtype || '-', formatCurrency(e.amount), e.vendor || e.note || '-']), foot: [['TOTAL', '', formatCurrency(filtered.reduce((s, e) => s + e.amount, 0)), '']] })
+
+  autoTable(doc, {
+    startY: 35,
+    head: [['Fecha', 'Categoría', 'Monto', 'Detalle']],
+    body: filtered.map(e => [formatDate(e.timestamp), e.category || e.subtype || '-', formatCurrency(e.amount), e.vendor || e.note || '-']),
+    foot: [['TOTAL', '', formatCurrency(filtered.reduce((s, e) => s + e.amount, 0)), '']]
+  })
 
   const finalY = (doc as any).lastAutoTable.finalY + 10
-  doc.setFontSize(12); doc.text('Por categoría:', 14, finalY)
+  doc.setFontSize(12)
+  doc.text('Por categoría:', 14, finalY)
   let y = finalY + 7
-  Object.entries(catSummary).sort((a, b) => b[1] - a[1]).forEach(([c, t]) => { doc.setFontSize(10); doc.text(`${c}: ${formatCurrency(t)}`, 20, y); y += 6 })
+  Object.entries(catSummary).sort((a, b) => b[1] - a[1]).forEach(([cat, total]) => {
+    doc.setFontSize(10)
+    doc.text(`${cat}: ${formatCurrency(total)}`, 20, y)
+    y += 6
+  })
+
   doc.save(`${paymentMethod}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
-// ============ INVOICE / QUOTE PDF ============
+// ============ 5) INVOICE / QUOTE PDF ============
 
 export function generateInvoicePDF(invoice: Invoice): Blob {
   const doc = new jsPDF()
@@ -239,20 +388,202 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   const isQuote = invoice.type === 'quote'
   const title = isQuote ? 'COTIZACIÓN' : 'FACTURA'
 
-  const startY = addCompanyHeader(doc)
-  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.8); doc.line(14, startY, pageW - 14, startY)
+  // === HEADER WITH LOGO ===
+  const startY = addLogoHeader(doc)
+
+  // Title + Number on right side
+  doc.setFontSize(22)
+  doc.setTextColor(40, 40, 40)
+  doc.text(title, pageW - 14, 18, { align: 'right' })
+  doc.setFontSize(11)
+  doc.setTextColor(80, 80, 80)
+  doc.text(`#${invoice.invoice_number}`, pageW - 14, 25, { align: 'right' })
+
+  // Divider line
+  doc.setDrawColor(0, 180, 180)
+  doc.setLineWidth(0.8)
+  doc.line(14, startY, pageW - 14, startY)
 
   let y = startY + 8
-  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(title, 14, y)
-  doc.setFontSize(11); doc.setTextColor(80, 80, 80); doc.text(`#${invoice.invoice_number}`, 14, y + 6)
-  doc.setFontSize(9); doc.text(`Fecha: ${formatDate(invoice.issue_date)}`, pageW - 14, y, { align: 'right' })
-  if (invoice.due_date && !isQuote) doc.text(`Vence: ${formatDate(invoice.due_date)}`, pageW - 14, y + 5, { align: 'right' })
-  if (isQuote && invoice.expiration_date) doc.text(`Válida hasta: ${formatDate(invoice.expiration_date)}`, pageW - 14, y + 5, { align: 'right' })
-  y += 18
 
-  doc.setFontSize(10); doc.setTextColor(40, 40, 40); doc.text('CLIENTE:', 14, y); y += 5
-  doc.setFontSize(12); doc.setTextColor(20, 20, 20); doc.text(invoice.client_name, 14, y); y += 5
-  doc.setFontSize(9); doc.setTextColor(80, 80, 80)
+  // === DATES ===
+  doc.setFontSize(9)
+  doc.setTextColor(100, 100, 100)
+  doc.text(`Fecha: ${formatDate(invoice.issue_date)}`, 14, y)
+  if (invoice.due_date) {
+    doc.text(`Vence: ${formatDate(invoice.due_date)}`, 80, y)
+  }
+  if (isQuote && invoice.expiration_date) {
+    doc.text(`Válida hasta: ${formatDate(invoice.expiration_date)}`, 80, y)
+  }
+  if (invoice.status === 'paid' && invoice.paid_date) {
+    doc.text(`Pagado: ${formatDate(invoice.paid_date)} (${getPaymentLabel(invoice.paid_method)})`, 140, y)
+  }
+  y += 10
+
+  // === CLIENT INFO ===
+  doc.setFontSize(10)
+  doc.setTextColor(40, 40, 40)
+  doc.text('CLIENTE:', 14, y)
+  y += 6
+  doc.setFontSize(12)
+  doc.setTextColor(20, 20, 20)
+  doc.text(invoice.client_name, 14, y)
+  y += 5
+  doc.setFontSize(9)
+  doc.setTextColor(80, 80, 80)
+  if (invoice.client_phone) { doc.text(`Tel: ${invoice.client_phone}`, 14, y); y += 4.5 }
+  if (invoice.client_email) { doc.text(invoice.client_email, 14, y); y += 4.5 }
+  if (invoice.client_address) { doc.text(invoice.client_address, 14, y); y += 4.5 }
+  y += 6
+
+  // === STATUS BADGE (for non-draft) ===
+  if (invoice.status !== 'draft') {
+    const statusLabels: Record<string, string> = {
+      sent: 'ENVIADA', paid: 'PAGADA', overdue: 'VENCIDA', cancelled: 'CANCELADA'
+    }
+    const statusColors: Record<string, number[]> = {
+      sent: [59, 130, 246], paid: [34, 197, 94], overdue: [239, 68, 68], cancelled: [156, 163, 175]
+    }
+    const label = statusLabels[invoice.status] || invoice.status.toUpperCase()
+    const color = statusColors[invoice.status] || [100, 100, 100]
+    const badgeW = doc.getTextWidth(label) + 10
+    doc.setFillColor(color[0], color[1], color[2])
+    doc.roundedRect(pageW - 14 - badgeW, y - 18, badgeW, 7, 2, 2, 'F')
+    doc.setFontSize(8)
+    doc.setTextColor(255, 255, 255)
+    doc.text(label, pageW - 14 - badgeW / 2, y - 13.5, { align: 'center' })
+    doc.setTextColor(40, 40, 40)
+  }
+
+  // === ITEMS TABLE ===
+  autoTable(doc, {
+    startY: y,
+    head: [['#', 'Descripción', 'Cant.', 'Precio Unit.', 'Total']],
+    body: invoice.items.map((item, i) => [
+      String(i + 1),
+      item.description,
+      String(item.quantity),
+      formatCurrency(item.unit_price),
+      formatCurrency(item.total)
+    ]),
+    headStyles: {
+      fillColor: [0, 150, 150],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 9
+    },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center' },
+      2: { cellWidth: 18, halign: 'center' },
+      3: { cellWidth: 30, halign: 'right' },
+      4: { cellWidth: 30, halign: 'right' }
+    },
+    styles: { cellPadding: 3 }
+  })
+
+  y = (doc as any).lastAutoTable.finalY + 5
+
+  // === TOTALS SECTION (right-aligned) ===
+  const totalsX = pageW - 80
+  const valX = pageW - 14
+
+  doc.setFontSize(10)
+  doc.setTextColor(80, 80, 80)
+  doc.text('Subtotal:', totalsX, y)
+  doc.text(formatCurrency(invoice.subtotal), valX, y, { align: 'right' })
+  y += 6
+
+  if (invoice.tax_rate > 0) {
+    doc.text(`IVU (${invoice.tax_rate}%):`, totalsX, y)
+    doc.text(formatCurrency(invoice.tax_amount), valX, y, { align: 'right' })
+    y += 6
+  }
+
+  // Total box
+  doc.setFillColor(0, 150, 150)
+  doc.roundedRect(totalsX - 5, y - 4, valX - totalsX + 19, 10, 2, 2, 'F')
+  doc.setFontSize(12)
+  doc.setTextColor(255, 255, 255)
+  doc.text('TOTAL:', totalsX, y + 3)
+  doc.text(formatCurrency(invoice.total), valX, y + 3, { align: 'right' })
+  y += 16
+
+  // === NOTES ===
+  if (invoice.notes) {
+    doc.setFontSize(9)
+    doc.setTextColor(80, 80, 80)
+    doc.text('Notas:', 14, y)
+    y += 5
+    doc.setTextColor(60, 60, 60)
+    const lines = doc.splitTextToSize(invoice.notes, pageW - 28)
+    doc.text(lines, 14, y)
+    y += lines.length * 4.5
+  }
+
+  // === PAYMENT INFO (for invoices) ===
+  if (!isQuote && invoice.status !== 'paid') {
+    y += 5
+    doc.setFontSize(9)
+    doc.setTextColor(80, 80, 80)
+    doc.text('Métodos de pago aceptados: Efectivo, ATH Móvil, Transferencia, PayPal', 14, y)
+  }
+
+  // === SLOGAN FOOTER ===
+  addSlogan(doc)
+
+  // Return as blob (for preview) instead of auto-download
+  return doc.output('blob')
+}
+
+// Convenience: generate and download
+export function downloadInvoicePDF(invoice: Invoice) {
+  const doc = generateInvoicePDFDoc(invoice)
+  const prefix = invoice.type === 'quote' ? 'Cotizacion' : 'Factura'
+  doc.save(`${prefix}-${invoice.invoice_number}.pdf`)
+}
+
+// Full doc version (for download)
+function generateInvoicePDFDoc(invoice: Invoice): jsPDF {
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const isQuote = invoice.type === 'quote'
+  const title = isQuote ? 'COTIZACIÓN' : 'FACTURA'
+
+  const startY = addLogoHeader(doc)
+
+  doc.setFontSize(22)
+  doc.setTextColor(40, 40, 40)
+  doc.text(title, pageW - 14, 18, { align: 'right' })
+  doc.setFontSize(11)
+  doc.setTextColor(80, 80, 80)
+  doc.text(`#${invoice.invoice_number}`, pageW - 14, 25, { align: 'right' })
+
+  doc.setDrawColor(0, 180, 180)
+  doc.setLineWidth(0.8)
+  doc.line(14, startY, pageW - 14, startY)
+
+  let y = startY + 8
+
+  doc.setFontSize(9)
+  doc.setTextColor(100, 100, 100)
+  doc.text(`Fecha: ${formatDate(invoice.issue_date)}`, 14, y)
+  if (invoice.due_date) doc.text(`Vence: ${formatDate(invoice.due_date)}`, 80, y)
+  if (isQuote && invoice.expiration_date) doc.text(`Válida hasta: ${formatDate(invoice.expiration_date)}`, 80, y)
+  if (invoice.status === 'paid' && invoice.paid_date) doc.text(`Pagado: ${formatDate(invoice.paid_date)} (${getPaymentLabel(invoice.paid_method)})`, 140, y)
+  y += 10
+
+  doc.setFontSize(10)
+  doc.setTextColor(40, 40, 40)
+  doc.text('CLIENTE:', 14, y)
+  y += 6
+  doc.setFontSize(12)
+  doc.setTextColor(20, 20, 20)
+  doc.text(invoice.client_name, 14, y)
+  y += 5
+  doc.setFontSize(9)
+  doc.setTextColor(80, 80, 80)
   if (invoice.client_phone) { doc.text(`Tel: ${invoice.client_phone}`, 14, y); y += 4.5 }
   if (invoice.client_email) { doc.text(invoice.client_email, 14, y); y += 4.5 }
   if (invoice.client_address) { doc.text(invoice.client_address, 14, y); y += 4.5 }
@@ -264,8 +595,12 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     const label = statusLabels[invoice.status] || invoice.status.toUpperCase()
     const color = statusColors[invoice.status] || [100, 100, 100]
     const badgeW = doc.getTextWidth(label) + 10
-    doc.setFillColor(color[0], color[1], color[2]); doc.roundedRect(pageW - 14 - badgeW, y - 25, badgeW, 7, 2, 2, 'F')
-    doc.setFontSize(8); doc.setTextColor(255, 255, 255); doc.text(label, pageW - 14 - badgeW / 2, y - 20.5, { align: 'center' }); doc.setTextColor(40, 40, 40)
+    doc.setFillColor(color[0], color[1], color[2])
+    doc.roundedRect(pageW - 14 - badgeW, y - 18, badgeW, 7, 2, 2, 'F')
+    doc.setFontSize(8)
+    doc.setTextColor(255, 255, 255)
+    doc.text(label, pageW - 14 - badgeW / 2, y - 13.5, { align: 'center' })
+    doc.setTextColor(40, 40, 40)
   }
 
   autoTable(doc, {
@@ -279,74 +614,48 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   })
 
   y = (doc as any).lastAutoTable.finalY + 5
-  const totalsX = pageW - 80, valX = pageW - 14
-  doc.setFontSize(10); doc.setTextColor(80, 80, 80)
-  doc.text('Subtotal:', totalsX, y); doc.text(formatCurrency(invoice.subtotal), valX, y, { align: 'right' }); y += 6
-  if (invoice.tax_rate > 0) { doc.text(`IVU (${invoice.tax_rate}%):`, totalsX, y); doc.text(formatCurrency(invoice.tax_amount), valX, y, { align: 'right' }); y += 6 }
-  doc.setFillColor(0, 150, 150); doc.roundedRect(totalsX - 5, y - 4, valX - totalsX + 19, 10, 2, 2, 'F')
-  doc.setFontSize(12); doc.setTextColor(255, 255, 255); doc.text('TOTAL:', totalsX, y + 3); doc.text(formatCurrency(invoice.total), valX, y + 3, { align: 'right' }); y += 16
+  const totalsX = pageW - 80
+  const valX = pageW - 14
 
-  if (invoice.notes) { doc.setFontSize(9); doc.setTextColor(80, 80, 80); doc.text('Notas:', 14, y); y += 5; doc.setTextColor(60, 60, 60); const lines = doc.splitTextToSize(invoice.notes, pageW - 28); doc.text(lines, 14, y) }
-  if (!isQuote && invoice.status !== 'paid') { y += 8; doc.setFontSize(9); doc.setTextColor(80, 80, 80); doc.text('Métodos de pago: Efectivo, ATH Móvil, Transferencia, PayPal', 14, y) }
-  addSlogan(doc)
-  return doc.output('blob')
-}
-
-export function downloadInvoicePDF(invoice: Invoice) {
-  const doc = new jsPDF()
-  const pageW = doc.internal.pageSize.getWidth()
-  const isQuote = invoice.type === 'quote'
-  const title = isQuote ? 'COTIZACIÓN' : 'FACTURA'
-
-  const startY = addCompanyHeader(doc)
-  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.8); doc.line(14, startY, pageW - 14, startY)
-
-  let y = startY + 8
-  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(title, 14, y)
-  doc.setFontSize(11); doc.setTextColor(80, 80, 80); doc.text(`#${invoice.invoice_number}`, 14, y + 6)
-  doc.setFontSize(9); doc.text(`Fecha: ${formatDate(invoice.issue_date)}`, pageW - 14, y, { align: 'right' })
-  if (invoice.due_date && !isQuote) doc.text(`Vence: ${formatDate(invoice.due_date)}`, pageW - 14, y + 5, { align: 'right' })
-  if (isQuote && invoice.expiration_date) doc.text(`Válida hasta: ${formatDate(invoice.expiration_date)}`, pageW - 14, y + 5, { align: 'right' })
-  y += 18
-
-  doc.setFontSize(10); doc.setTextColor(40, 40, 40); doc.text('CLIENTE:', 14, y); y += 5
-  doc.setFontSize(12); doc.setTextColor(20, 20, 20); doc.text(invoice.client_name, 14, y); y += 5
-  doc.setFontSize(9); doc.setTextColor(80, 80, 80)
-  if (invoice.client_phone) { doc.text(`Tel: ${invoice.client_phone}`, 14, y); y += 4.5 }
-  if (invoice.client_email) { doc.text(invoice.client_email, 14, y); y += 4.5 }
-  if (invoice.client_address) { doc.text(invoice.client_address, 14, y); y += 4.5 }
+  doc.setFontSize(10)
+  doc.setTextColor(80, 80, 80)
+  doc.text('Subtotal:', totalsX, y)
+  doc.text(formatCurrency(invoice.subtotal), valX, y, { align: 'right' })
   y += 6
 
-  if (invoice.status !== 'draft') {
-    const statusLabels: Record<string, string> = { sent: 'ENVIADA', paid: 'PAGADA', overdue: 'VENCIDA', cancelled: 'CANCELADA' }
-    const statusColors: Record<string, number[]> = { sent: [59, 130, 246], paid: [34, 197, 94], overdue: [239, 68, 68], cancelled: [156, 163, 175] }
-    const label = statusLabels[invoice.status] || invoice.status.toUpperCase()
-    const color = statusColors[invoice.status] || [100, 100, 100]
-    const badgeW = doc.getTextWidth(label) + 10
-    doc.setFillColor(color[0], color[1], color[2]); doc.roundedRect(pageW - 14 - badgeW, y - 25, badgeW, 7, 2, 2, 'F')
-    doc.setFontSize(8); doc.setTextColor(255, 255, 255); doc.text(label, pageW - 14 - badgeW / 2, y - 20.5, { align: 'center' }); doc.setTextColor(40, 40, 40)
+  if (invoice.tax_rate > 0) {
+    doc.text(`IVU (${invoice.tax_rate}%):`, totalsX, y)
+    doc.text(formatCurrency(invoice.tax_amount), valX, y, { align: 'right' })
+    y += 6
   }
 
-  autoTable(doc, {
-    startY: y, head: [['#', 'Descripción', 'Cant.', 'Precio Unit.', 'Total']],
-    body: invoice.items.map((item, i) => [String(i + 1), item.description, String(item.quantity), formatCurrency(item.unit_price), formatCurrency(item.total)]),
-    headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 }, bodyStyles: { fontSize: 9 },
-    columnStyles: { 0: { cellWidth: 12, halign: 'center' }, 2: { cellWidth: 18, halign: 'center' }, 3: { cellWidth: 30, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' } }, styles: { cellPadding: 3 }
-  })
+  doc.setFillColor(0, 150, 150)
+  doc.roundedRect(totalsX - 5, y - 4, valX - totalsX + 19, 10, 2, 2, 'F')
+  doc.setFontSize(12)
+  doc.setTextColor(255, 255, 255)
+  doc.text('TOTAL:', totalsX, y + 3)
+  doc.text(formatCurrency(invoice.total), valX, y + 3, { align: 'right' })
+  y += 16
 
-  y = (doc as any).lastAutoTable.finalY + 5
-  const totalsX = pageW - 80, valX = pageW - 14
-  doc.setFontSize(10); doc.setTextColor(80, 80, 80)
-  doc.text('Subtotal:', totalsX, y); doc.text(formatCurrency(invoice.subtotal), valX, y, { align: 'right' }); y += 6
-  if (invoice.tax_rate > 0) { doc.text(`IVU (${invoice.tax_rate}%):`, totalsX, y); doc.text(formatCurrency(invoice.tax_amount), valX, y, { align: 'right' }); y += 6 }
-  doc.setFillColor(0, 150, 150); doc.roundedRect(totalsX - 5, y - 4, valX - totalsX + 19, 10, 2, 2, 'F')
-  doc.setFontSize(12); doc.setTextColor(255, 255, 255); doc.text('TOTAL:', totalsX, y + 3); doc.text(formatCurrency(invoice.total), valX, y + 3, { align: 'right' }); y += 16
+  if (invoice.notes) {
+    doc.setFontSize(9)
+    doc.setTextColor(80, 80, 80)
+    doc.text('Notas:', 14, y)
+    y += 5
+    doc.setTextColor(60, 60, 60)
+    const lines = doc.splitTextToSize(invoice.notes, pageW - 28)
+    doc.text(lines, 14, y)
+  }
 
-  if (invoice.notes) { doc.setFontSize(9); doc.setTextColor(80, 80, 80); doc.text('Notas:', 14, y); y += 5; doc.setTextColor(60, 60, 60); const lines = doc.splitTextToSize(invoice.notes, pageW - 28); doc.text(lines, 14, y) }
-  if (!isQuote && invoice.status !== 'paid') { y += 8; doc.setFontSize(9); doc.setTextColor(80, 80, 80); doc.text('Métodos de pago: Efectivo, ATH Móvil, Transferencia, PayPal', 14, y) }
+  if (!isQuote && invoice.status !== 'paid') {
+    y += 8
+    doc.setFontSize(9)
+    doc.setTextColor(80, 80, 80)
+    doc.text('Métodos de pago aceptados: Efectivo, ATH Móvil, Transferencia, PayPal', 14, y)
+  }
+
   addSlogan(doc)
-  const prefix = isQuote ? 'Cotizacion' : 'Factura'
-  doc.save(`${prefix}-${invoice.invoice_number}.pdf`)
+  return doc
 }
 
 export { generateInvoiceNumber }

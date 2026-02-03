@@ -60,10 +60,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_PAYMENT_REPORT', payload: { paymentMethod: cardName, period } })
     }
 
-    // Reporte por categoría
     // Reporte por categoría - EXCLUIR facturas/cotizaciones
     const isInvoiceRequest = userText.includes('factura') || userText.includes('invoice') || 
-                             userText.includes('cotiza') || userText.includes('quote')
+                             userText.includes('cotiza') || userText.includes('quote') ||
+                             userText.includes('template')
+    
     const wantsReport = !isInvoiceRequest && (
       userText.includes('reporte') ||
       userText.includes('report') ||
@@ -268,11 +269,6 @@ SAVE_QUOTE:
   "notes": "Incluye garantía 1 año en mano de obra",
   "valid_days": 15
 }
-
-# TEMPLATES
-- Si dice "usa el template de X" o "factura de mantenimiento para X", busca en CONTEXTO_DB.templates
-- Si encuentra el template, usa sus items para generar la factura
-- Ejemplo: "hazme la factura mensual de Farmacia Caridad" → busca template, genera SAVE_INVOICE
 
 # REPORTES - EL USUARIO PUEDE PEDIR:
 - "dame el P&L de enero" → P&L con ingresos, gastos, profit

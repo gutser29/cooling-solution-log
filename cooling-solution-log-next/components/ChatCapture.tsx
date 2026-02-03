@@ -148,12 +148,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const appointments = await db.appointments.toArray()
       const reminders = await db.reminders.toArray()
       const invoices = await db.invoices.toArray()
-      const job_templates = await db.job_templates.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices })
       })
 
       if (res.ok) {
@@ -204,115 +203,30 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     syncingRef.current = true
     setSyncing(true)
     try {
-      // 1. Get local data
-      const localEvents = await db.events.toArray()
-      const localClients = await db.clients.toArray()
-      const localJobs = await db.jobs.toArray()
-      const localEmployees = await db.employees.toArray()
-      const localVehicles = await db.vehicles.toArray()
-      const localContracts = await db.contracts.toArray()
-      const localNotes = await db.notes.toArray()
-      const localAppointments = await db.appointments.toArray()
-      const localReminders = await db.reminders.toArray()
-      const localInvoices = await db.invoices.toArray()
-      const localTemplates = await db.job_templates.toArray()
+      const events = await db.events.toArray()
+      const clients = await db.clients.toArray()
+      const jobs = await db.jobs.toArray()
+      const employees = await db.employees.toArray()
+      const vehicles = await db.vehicles.toArray()
+      const contracts = await db.contracts.toArray()
+      const notes = await db.notes.toArray()
+      const appointments = await db.appointments.toArray()
+      const reminders = await db.reminders.toArray()
+      const invoices = await db.invoices.toArray()
 
-      // 2. Fetch remote data from Drive
-      let remoteData: any = {}
-      try {
-        const fetchRes = await fetch('/api/sync/drive')
-        if (fetchRes.ok) {
-          const { data } = await fetchRes.json()
-          if (data) remoteData = data
-        }
-      } catch { /* no remote data yet */ }
-
-      // 3. Merge function: combine local + remote, newer timestamp wins for conflicts
-      const mergeArrays = (local: any[], remote: any[], idKey = 'id', tsKey = 'timestamp') => {
-        const merged = new Map()
-        // Add all local items
-        local.forEach(item => {
-          if (item[idKey]) merged.set(item[idKey], item)
-        })
-        // Add/update with remote items (if newer or not exists)
-        ;(remote || []).forEach((item: any) => {
-          if (!item[idKey]) return
-          const existing = merged.get(item[idKey])
-          if (!existing) {
-            merged.set(item[idKey], item)
-          } else {
-            // Keep the one with newer timestamp (or updated_at)
-            const localTs = existing[tsKey] || existing.updated_at || existing.created_at || 0
-            const remoteTs = item[tsKey] || item.updated_at || item.created_at || 0
-            if (remoteTs > localTs) {
-              merged.set(item[idKey], item)
-            }
-          }
-        })
-        return Array.from(merged.values())
-      }
-
-      // 4. Merge all tables
-      const mergedEvents = mergeArrays(localEvents, remoteData.events)
-      const mergedClients = mergeArrays(localClients, remoteData.clients, 'id', 'created_at')
-      const mergedJobs = mergeArrays(localJobs, remoteData.jobs, 'id', 'created_at')
-      const mergedEmployees = mergeArrays(localEmployees, remoteData.employees, 'id', 'created_at')
-      const mergedVehicles = mergeArrays(localVehicles, remoteData.vehicles, 'id', 'created_at')
-      const mergedContracts = mergeArrays(localContracts, remoteData.contracts, 'id', 'created_at')
-      const mergedNotes = mergeArrays(localNotes, remoteData.notes, 'id', 'updated_at')
-      const mergedAppointments = mergeArrays(localAppointments, remoteData.appointments, 'id', 'created_at')
-      const mergedReminders = mergeArrays(localReminders, remoteData.reminders, 'id', 'created_at')
-      const mergedInvoices = mergeArrays(localInvoices, remoteData.invoices, 'id', 'updated_at')
-      const mergedTemplates = mergeArrays(localTemplates, remoteData.job_templates, 'id', 'updated_at')
-
-      // 5. Push merged data to Drive
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          events: mergedEvents,
-          clients: mergedClients,
-          jobs: mergedJobs,
-          employees: mergedEmployees,
-          vehicles: mergedVehicles,
-          contracts: mergedContracts,
-          notes: mergedNotes,
-          appointments: mergedAppointments,
-          reminders: mergedReminders,
-          invoices: mergedInvoices,
-          job_templates: mergedTemplates
-        })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices })
       })
 
-      // 6. Update local DB with any new remote items
       if (res.ok) {
-        // Add any remote items that weren't in local
-        const addNewItems = async (table: any, local: any[], merged: any[]) => {
-          const localIds = new Set(local.map(i => i.id))
-          const newItems = merged.filter(i => i.id && !localIds.has(i.id))
-          if (newItems.length > 0) {
-            await table.bulkPut(newItems)
-          }
-        }
-        
-        await addNewItems(db.events, localEvents, mergedEvents)
-        await addNewItems(db.clients, localClients, mergedClients)
-        await addNewItems(db.jobs, localJobs, mergedJobs)
-        await addNewItems(db.employees, localEmployees, mergedEmployees)
-        await addNewItems(db.vehicles, localVehicles, mergedVehicles)
-        await addNewItems(db.contracts, localContracts, mergedContracts)
-        await addNewItems(db.notes, localNotes, mergedNotes)
-        await addNewItems(db.appointments, localAppointments, mergedAppointments)
-        await addNewItems(db.reminders, localReminders, mergedReminders)
-        await addNewItems(db.invoices, localInvoices, mergedInvoices)
-        await addNewItems(db.job_templates, localTemplates, mergedTemplates)
-
         const pending = await db.sync_queue.where('status').equals('pending').toArray()
         await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
         const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
         setLastSync(time)
         setPendingSyncCount(0)
-        console.log('☁️ Synced (merged) at', time)
+        console.log('☁️ Synced at', time)
       } else {
         const err = await res.json()
         console.error('Sync failed:', err)
@@ -367,11 +281,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const localIds = new Set((await db.invoices.toArray()).map(i => i.id))
         const newItems = data.invoices.filter((i: any) => !localIds.has(i.id))
         if (newItems.length) await db.invoices.bulkAdd(newItems)
-      }
-      if (data.job_templates?.length) {
-        const localIds = new Set((await db.job_templates.toArray()).map(t => t.id))
-        const newItems = data.job_templates.filter((t: any) => !localIds.has(t.id))
-        if (newItems.length) await db.job_templates.bulkAdd(newItems)
       }
 
       setLastSync(new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' }))
@@ -504,17 +413,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             ctx += '\n\nRECORDATORIOS PENDIENTES:\n' + rems.map(r => {
               const d = new Date(r.due_date)
               return `[${d.toLocaleDateString('es-PR')}] ${r.text} (${r.priority})`
-            }).join('\n')
-          }
-        } catch {}
-
-        // Add templates context
-        try {
-          const templates = await db.job_templates.where('active').equals(1).toArray()
-          if (templates.length > 0) {
-            ctx += '\n\nTEMPLATES DISPONIBLES:\n' + templates.map(t => {
-              const total = t.items.reduce((s: number, i: any) => s + (i.quantity * i.unit_price), 0)
-              return `[${t.name}] ${t.client_name ? 'Cliente: ' + t.client_name + ' ' : ''}Total: $${total.toFixed(2)} Items: ${t.items.length}`
             }).join('\n')
           }
         } catch {}
@@ -678,11 +576,37 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         } catch (e) { console.error('SAVE_REMINDER error:', e) }
       }
 
+      // Helper: extract complete JSON from text (handles nested arrays/objects)
+      const extractJSON = (text: string, cmd: string): any => {
+        const idx = text.toUpperCase().indexOf(cmd.toUpperCase())
+        if (idx === -1) return null
+        const after = text.slice(idx + cmd.length)
+        const start = after.indexOf('{')
+        if (start === -1) return null
+        let depth = 0, inStr = false, esc = false
+        for (let i = start; i < after.length; i++) {
+          const c = after[i]
+          if (esc) { esc = false; continue }
+          if (c === '\\') { esc = true; continue }
+          if (c === '"') { inStr = !inStr; continue }
+          if (inStr) continue
+          if (c === '{') depth++
+          else if (c === '}') { 
+            depth--
+            if (depth === 0) { 
+              try { return JSON.parse(after.slice(start, i + 1)) } 
+              catch { return null } 
+            } 
+          }
+        }
+        return null
+      }
+
       // ====== SAVE_INVOICE ======
-      const invoiceMatch = assistantText.match(/SAVE_INVOICE:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (invoiceMatch) {
+      const invoiceData = extractJSON(assistantText, 'SAVE_INVOICE:')
+      if (invoiceData) {
         try {
-          const id = JSON.parse(invoiceMatch[1])
+          const id = invoiceData
           const now = Date.now()
           const items = (id.items || []).map((i: any) => ({ description: i.description, quantity: i.quantity || 1, unit_price: i.unit_price || 0, total: i.total || (i.quantity || 1) * (i.unit_price || 0) }))
           const subtotal = items.reduce((s: number, i: any) => s + i.total, 0)
@@ -715,10 +639,10 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       }
 
       // ====== SAVE_QUOTE ======
-      const quoteMatch = assistantText.match(/SAVE_QUOTE:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (quoteMatch) {
+      const quoteData = extractJSON(assistantText, 'SAVE_QUOTE:')
+      if (quoteData) {
         try {
-          const qd = JSON.parse(quoteMatch[1])
+          const qd = quoteData
           const now = Date.now()
           const items = (qd.items || []).map((i: any) => ({ description: i.description, quantity: i.quantity || 1, unit_price: i.unit_price || 0, total: i.total || (i.quantity || 1) * (i.unit_price || 0) }))
           const subtotal = items.reduce((s: number, i: any) => s + i.total, 0)
@@ -895,7 +819,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
             <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Facturas</button>
-            <button onClick={() => { setShowMenu(false); onNavigate('templates') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Templates</button>
             <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
             <button onClick={() => { setShowMenu(false); onNavigate('notes') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📝 Notas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
