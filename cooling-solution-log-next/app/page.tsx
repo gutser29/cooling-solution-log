@@ -3,43 +3,24 @@
 import { useState } from 'react'
 import ChatCapture from '@/components/ChatCapture'
 import Dashboard from '@/components/Dashboard'
-import SearchPage from '@/components/SearchPage'
-import HistoryPage from '@/components/HistoryPage'
 import ClientsPage from '@/components/ClientsPage'
-import NotesPage from '@/components/NotesPage'
 import CalendarPage from '@/components/CalendarPage'
+import NotesPage from '@/components/NotesPage'
 import InvoicesPage from '@/components/InvoicesPage'
 import JobTemplatesPage from '@/components/JobTemplatesPage'
 
 export default function Home() {
-  const [currentPage, setCurrentPage] = useState('dashboard')
+  const [currentPage, setCurrentPage] = useState('chat')
 
-  const navigate = (page: string) => {
-    setCurrentPage(page)
-  }
+  const navigate = (page: string) => setCurrentPage(page)
 
   switch (currentPage) {
-    case 'dashboard':
-      return <Dashboard onNavigate={navigate} />
-    case 'chat':
-    case 'capture':
-      return <ChatCapture onNavigate={navigate} />
-    case 'search':
-    case 'ask':
-      return <SearchPage onNavigate={navigate} />
-    case 'history':
-      return <HistoryPage onNavigate={navigate} />
-    case 'clients':
-      return <ClientsPage onNavigate={navigate} />
-    case 'notes':
-      return <NotesPage onNavigate={navigate} />
-    case 'calendar':
-      return <CalendarPage onNavigate={navigate} />
-    case 'invoices':
-      return <InvoicesPage onNavigate={navigate} />
-    case 'templates':
-      return <JobTemplatesPage onNavigate={navigate} />
-    default:
-      return <Dashboard onNavigate={navigate} />
+    case 'dashboard': return <Dashboard onNavigate={navigate} />
+    case 'clients': return <ClientsPage onNavigate={navigate} />
+    case 'calendar': return <CalendarPage onNavigate={navigate} />
+    case 'notes': return <NotesPage onNavigate={navigate} />
+    case 'invoices': return <InvoicesPage onNavigate={navigate} />
+    case 'templates': return <JobTemplatesPage onNavigate={navigate} />
+    default: return <ChatCapture onNavigate={navigate} />
   }
 }

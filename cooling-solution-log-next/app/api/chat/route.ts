@@ -9,6 +9,39 @@ interface ChatMessage {
   photos?: string[]
 }
 
+// ============ ROBUST JSON EXTRACTOR ============
+function extractJSON(text: string, command: string): any {
+  const upperText = text.toUpperCase()
+  const upperCmd = command.toUpperCase()
+  const idx = upperText.indexOf(upperCmd)
+  if (idx === -1) return null
+  
+  const after = text.slice(idx + command.length)
+  const start = after.indexOf('{')
+  if (start === -1) return null
+  
+  let depth = 0
+  let inString = false
+  let escaped = false
+  
+  for (let i = start; i < after.length; i++) {
+    const c = after[i]
+    if (escaped) { escaped = false; continue }
+    if (c === '\\') { escaped = true; continue }
+    if (c === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) {
+        try { return JSON.parse(after.slice(start, i + 1)) }
+        catch { return null }
+      }
+    }
+  }
+  return null
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json()
@@ -21,10 +54,14 @@ export async function POST(request: Request) {
     const lastMsg = messages[messages.length - 1]
     const userText = (lastMsg.content || '').toLowerCase()
 
-    // ====== 1) DETECCIÓN DE REPORTES (bypass Claude - rápido) ======
+    // ====== 1) DETECCIÓN DE REPORTES (bypass Claude - SOLO P&L y AR) ======
+    // IMPORTANTE: Solo interceptamos P&L y cuentas por cobrar
+    // Todo lo demás (facturas, clientes, reportes de categoría) va a Claude
 
-    // P&L
-    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') || userText.includes('perdida') || userText.includes('ganancia')) {
+    // P&L Report
+    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') || 
+        (userText.includes('perdida') && userText.includes('ganancia')) ||
+        (userText.includes('pérdida') && userText.includes('ganancia'))) {
       let period: 'week' | 'month' | 'year' = 'month'
       let periodLabel = 'este mes'
       if (userText.includes('semana') || userText.includes('week')) { period = 'week'; periodLabel = 'esta semana' }
@@ -45,51 +82,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_PL', payload: { period, periodLabel } })
     }
 
-    // Cuentas por cobrar
-    if (userText.includes('quien me debe') || userText.includes('cuentas por cobrar') || userText.includes('pendiente de pago') || userText.includes('me deben')) {
+    // Cuentas por cobrar - solo keywords específicos
+    if (userText.includes('quien me debe') || userText.includes('quién me debe') || 
+        userText.includes('cuentas por cobrar') || userText.includes('me deben dinero')) {
       return NextResponse.json({ type: 'GENERATE_AR' })
     }
 
-    // Reporte por tarjeta/método de pago
-    const cardReportMatch = userText.match(/(?:reporte|cuanto|cuánto|gast[eé]).*(?:con la|con el|en la|en el)\s+(.+?)(?:\s+(?:este|esta|del|de)\s+(?:mes|semana|año|ano))?$/i)
-    if (cardReportMatch && !userText.includes('gasolina') && !userText.includes('comida')) {
-      const cardName = cardReportMatch[1].trim().replace(/\s+/g, '_').toLowerCase()
-      let period: 'week' | 'month' | 'year' = 'month'
-      if (userText.includes('semana')) period = 'week'
-      else if (userText.includes('año') || userText.includes('ano')) period = 'year'
-      return NextResponse.json({ type: 'GENERATE_PAYMENT_REPORT', payload: { paymentMethod: cardName, period } })
-    }
-
-    // Reporte por categoría - EXCLUIR facturas/cotizaciones
-    const isInvoiceRequest = userText.includes('factura') || userText.includes('invoice') || 
-                             userText.includes('cotiza') || userText.includes('quote') ||
-                             userText.includes('template')
-    
-    const wantsReport = !isInvoiceRequest && (
-      userText.includes('reporte') ||
-      userText.includes('report') ||
-      (userText.includes('genera') && (userText.includes('pdf') || userText.includes('reporte')))
-    )
-
-    if (wantsReport) {
-      let category = 'general'
-      if (userText.includes('gasolina') || userText.includes('gas')) category = 'gasolina'
-      else if (userText.includes('comida') || userText.includes('food')) category = 'comida'
-      else if (userText.includes('material')) category = 'materiales'
-      else if (userText.includes('herramient')) category = 'herramientas'
-      else if (userText.includes('peaje')) category = 'peajes'
-      else if (userText.includes('seguro')) category = 'seguros'
-      else if (userText.includes('mantenimiento')) category = 'mantenimiento'
-      else if (userText.includes('nomina') || userText.includes('nómina')) category = 'nómina'
-
-      let period: 'week' | 'month' | 'year' = 'month'
-      if (userText.includes('semana') || userText.includes('week')) period = 'week'
-      else if (userText.includes('año') || userText.includes('ano') || userText.includes('year') || userText.includes('anual')) period = 'year'
-
-      return NextResponse.json({ type: 'GENERATE_PDF', payload: { category, period } })
-    }
-
-    // ====== 2) FECHA REAL ======
+    // ====== 2) TODO LO DEMÁS VA A CLAUDE ======
     const now = new Date()
     const todayStr = now.toLocaleDateString('es-PR', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -99,216 +98,134 @@ export async function POST(request: Request) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const usedModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929'
 
-    const systemPrompt = `Eres el asistente de Cooling Solution Log, app HVAC en Puerto Rico.
-FECHA: ${todayStr} | TIMESTAMP: ${epochNow}
+    const systemPrompt = `Eres el asistente de Cooling Solution, app HVAC en Puerto Rico.
+FECHA ACTUAL: ${todayStr} | TIMESTAMP: ${epochNow}
 
-# MISIÓN
-Registrar CADA centavo. Gastos, ingresos, trabajos, empleados, clientes, vehículos.
-También: notas, citas, recordatorios.
-Respuestas BREVES. El usuario está en la calle.
+# TU MISIÓN
+Registrar gastos, ingresos, clientes, facturas, citas, notas. Respuestas BREVES.
 
-# MEMORIA
-- "CONTEXTO_DB" tiene registros anteriores. USA para consultas.
-- NUNCA muestres contexto raw.
+# DATOS DISPONIBLES
+El CONTEXTO_DB contiene: eventos, trabajos, clientes, citas, recordatorios, facturas, notas, templates.
+SIEMPRE consulta el contexto antes de responder preguntas sobre datos existentes.
 
 # FOTOS
 - Analiza → Describe → PREGUNTA antes de guardar
-- "Veo recibo de [vendor] por $[monto]. ¿Correcto?"
+- "Veo recibo de [vendor] por $[monto]. ¿Lo registro?"
 - NUNCA guardes sin confirmación
 
-# MÉTODO DE PAGO - NOMBRE EXACTO
-"Capital One" → capital_one | "Chase Visa" → chase_visa | "Sam's MC" → sams_mastercard
-"ATH Móvil" → ath_movil | "efectivo" → cash | "PayPal" → paypal
-Si dice "tarjeta" genérico → PREGUNTA "¿Cuál tarjeta?"
+# MÉTODO DE PAGO
+"Capital One" → capital_one | "Chase Visa" → chase_visa | "ATH Móvil" → ath_movil
+"efectivo/cash" → cash | "PayPal" → paypal | "Sam's MC" → sams_mastercard
+Si dice "tarjeta" sin especificar → PREGUNTA "¿Cuál tarjeta?"
 
 # PERSONAL vs NEGOCIO
-- Si dice "personal" o "pa la casa" o "no es del negocio" → expense_type: "personal"
-- Si no especifica → expense_type: "business" (default)
-- Si ambiguo (comida, gasolina) y no aclara → PREGUNTA "¿personal o del negocio?"
+- "personal", "pa la casa" → expense_type: "personal"
+- Default → expense_type: "business"
+- Si ambiguo (comida, gas) → PREGUNTA
 
-# TIPOS DE EVENTO
+# ========== COMANDOS DE GUARDADO ==========
 
-## GASTO (type: expense)
-Categorías: Gasolina, Comida, Materiales, Herramientas, Seguros, Peajes, Mantenimiento, Nómina
+## SAVE_EVENT (Gastos e Ingresos)
+SAVE_EVENT:{"type":"expense","subtype":"gas","category":"Gasolina","amount":45,"payment_method":"capital_one","vendor":"Shell","vehicle_id":"f150","expense_type":"business","timestamp":${epochNow}}
+SAVE_EVENT:{"type":"income","subtype":"service","category":"Servicio","amount":500,"payment_method":"cash","client":"Hotel Plaza","note":"Limpieza 4 unidades","timestamp":${epochNow}}
 
-## INGRESO (type: income)
-Categorías: Servicio, Instalación, Reparación, Mantenimiento, Emergencia, Contrato
-SIEMPRE vincular a cliente cuando aplique
+Categorías gasto: Gasolina, Comida, Materiales, Herramientas, Seguros, Peajes, Mantenimiento, Nómina
+Categorías ingreso: Servicio, Instalación, Reparación, Mantenimiento, Emergencia, Contrato
 
-# TRABAJOS (JOBS) - SISTEMA COMPLETO
+## SAVE_CLIENT (Crear cliente nuevo)
+Cuando diga "nuevo cliente", "agregar cliente", "cliente nuevo":
+SAVE_CLIENT:{"first_name":"José","last_name":"Rivera","phone":"787-555-1234","email":"jose@email.com","address":"Bayamón, PR","type":"residential","notes":"Referido por María"}
 
-## Crear trabajo:
-Cuando mencione un trabajo para un cliente:
-SAVE_JOB:
-{
-  "client_name": "José Rivera",
-  "type": "maintenance",
-  "services": [{"description": "Limpieza mini split", "quantity": 4, "unit_price": 85, "total": 340}],
-  "materials": [{"item": "Filtro", "quantity": 4, "unit_cost": 5, "unit_price": 10}],
-  "total_charged": 380,
-  "deposit": 0,
-  "payment_status": "pending",
-  "payments": [],
-  "balance_due": 380,
-  "notes": ""
-}
+type: "residential" o "commercial"
 
-## Materiales con markup:
-- SIEMPRE pregunta costo Y precio de venta
-- Si dice "lo cobré a 150 y me costó 100" → unit_cost: 100, unit_price: 150
-- Si no especifica markup, PREGUNTA: "¿A cuánto lo cobraste?"
+## SAVE_JOB (Trabajo completo)
+SAVE_JOB:{"client_name":"Hotel Plaza","type":"maintenance","services":[{"description":"Limpieza unidades","quantity":4,"unit_price":85,"total":340}],"materials":[{"item":"Filtro","quantity":4,"unit_cost":5,"unit_price":10}],"total_charged":380,"payment_status":"pending","notes":""}
 
-## Pagos parciales:
-"José me pagó 200 de los 380" →
-SAVE_PAYMENT:
-{
-  "client_name": "José Rivera",
-  "amount": 200,
-  "method": "cash",
-  "job_reference": "Limpieza mini splits",
-  "remaining": 180
-}
+## SAVE_INVOICE (Factura)
+Cuando diga "factura", "invoice", "hazme factura", "genera factura":
+SAVE_INVOICE:{"client_name":"Farmacia Caridad","client_phone":"787-555-0000","client_address":"Bayamón, PR","items":[{"description":"Limpieza de unidades","quantity":5,"unit_price":85,"total":425},{"description":"Filtros","quantity":5,"unit_price":15,"total":75}],"tax_rate":0,"notes":"Servicio mensual","due_days":30}
 
-## Cobro completado:
-"José pagó el balance" →
-SAVE_PAYMENT con remaining: 0
+IMPORTANTE: El JSON debe estar en UNA SOLA LÍNEA sin saltos de línea.
 
-# EMPLEADOS
-- Cobran por día. SIEMPRE 10% retención.
-- 3 días × $300 = $900 → 10% = $810 neto
-SAVE_EMPLOYEE_PAYMENT:
-{
-  "employee_name": "Miguel Santos",
-  "days": 3,
-  "daily_rate": 300,
-  "gross": 900,
-  "retention": 90,
-  "net": 810,
-  "payment_method": "cash",
-  "job_reference": "Instalación Casa Rivera"
-}
+## SAVE_QUOTE (Cotización)
+SAVE_QUOTE:{"client_name":"Hotel Plaza","items":[{"description":"Instalación mini split","quantity":2,"unit_price":1200,"total":2400}],"tax_rate":0,"notes":"Incluye garantía","valid_days":15}
 
-# CONTRATOS RECURRENTES (Farmacias Caridad, etc.)
-SAVE_CONTRACT:
-{
-  "client_name": "Farmacias Caridad",
-  "service": "Limpieza paquete 5 unidades",
-  "frequency": "monthly",
-  "amount": 500,
-  "locations": ["Bayamón", "Toa Baja", "Carolina", "Caguas", "Ponce"]
-}
+## SAVE_JOB_TEMPLATE (Template reutilizable)
+Cuando diga "guardar como template", "crear template", "template nuevo":
+SAVE_JOB_TEMPLATE:{"name":"Mantenimiento Farmacia Caridad","client_name":"Farmacia Caridad","items":[{"description":"Limpieza unidades","quantity":5,"unit_price":85},{"description":"Filtros","quantity":5,"unit_price":15}],"notes":"Servicio mensual","default_tax_rate":0}
 
-# NOTAS / IDEAS
-Cuando diga "anota que", "nota:", "idea:", "apunta que":
-SAVE_NOTE:
-{
-  "title": "Título corto opcional",
-  "content": "Contenido de la nota completo"
-}
+## SAVE_NOTE
+SAVE_NOTE:{"title":"Idea equipo","content":"Comprar van nueva para materiales grandes"}
 
-# CITAS / CALENDARIO
-Cuando diga "agenda", "cita", "appointment", "programar":
-- SIEMPRE pide fecha y hora si no las da
-- Formato de date: ISO string (YYYY-MM-DDTHH:MM)
-- Si dice "el jueves a las 2" → calcula la fecha real basado en FECHA actual
-- Si dice "mañana" → calcula basado en FECHA actual
-SAVE_APPOINTMENT:
-{
-  "title": "Limpieza mini splits",
-  "date": "2026-02-05T14:00",
-  "client_name": "José Rivera",
-  "location": "Bayamón",
-  "notes": "4 unidades, llevar filtros"
-}
+## SAVE_APPOINTMENT
+SAVE_APPOINTMENT:{"title":"Instalación mini split","date":"2026-02-10T10:00","client_name":"María López","location":"Guaynabo","notes":"Llevar escalera"}
 
-## DETECCIÓN DE CONFLICTOS
-- Revisa CONTEXTO_DB por citas existentes
-- Si hay conflicto: "⚠️ Ya tienes [cita] ese día a las [hora]. ¿Agendar de todos modos?"
+Si dice "mañana" o "el jueves" → calcula la fecha basado en FECHA ACTUAL.
+Revisa CONTEXTO_DB por conflictos antes de confirmar.
 
-# RECORDATORIOS
-Cuando diga "recuérdame", "reminder", "no se me olvide", "pendiente":
-- Si da fecha → usa esa fecha
-- Si dice "hoy" → usa hoy a las 6pm (o la hora que diga)
-- Si no da fecha → PREGUNTA "¿Para cuándo?"
-SAVE_REMINDER:
-{
-  "text": "Comprar filtros en Carrier",
-  "due_date": "2026-02-03T09:00",
-  "priority": "normal"
-}
-Priority: "high" si dice urgente/importante, "low" si dice cuando pueda, "normal" default
+## SAVE_REMINDER
+SAVE_REMINDER:{"text":"Llamar a proveedor filtros","due_date":"2026-02-05T09:00","priority":"normal"}
 
-# FACTURAS
-Cuando diga "factura", "invoice", "hazme una factura":
-- Recoge: cliente, items (descripción, cantidad, precio), notas
-- Si falta info, PREGUNTA
-SAVE_INVOICE:
-{
-  "client_name": "Farmacias Caridad",
-  "client_phone": "787-555-1234",
-  "client_address": "Bayamón, PR",
-  "items": [
-    {"description": "Limpieza de unidades", "quantity": 5, "unit_price": 85, "total": 425},
-    {"description": "Filtro reemplazo", "quantity": 5, "unit_price": 15, "total": 75}
-  ],
-  "tax_rate": 0,
-  "notes": "Servicio mensual febrero 2026",
-  "due_days": 30
-}
+priority: "high" (urgente), "normal" (default), "low" (cuando pueda)
 
-# COTIZACIONES
-Cuando diga "cotización", "quote", "cotiza", "cotizame":
-SAVE_QUOTE:
-{
-  "client_name": "Hotel Plaza",
-  "items": [
-    {"description": "Instalación mini split 12K BTU", "quantity": 2, "unit_price": 1200, "total": 2400},
-    {"description": "Tubería y materiales", "quantity": 1, "unit_price": 350, "total": 350}
-  ],
-  "tax_rate": 0,
-  "notes": "Incluye garantía 1 año en mano de obra",
-  "valid_days": 15
-}
+## SAVE_PHOTO
+Para guardar fotos con cliente/trabajo:
+SAVE_PHOTO:{"client_name":"Farmacia Caridad","category":"before","description":"Estado de filtros antes de limpieza"}
 
-# REPORTES - EL USUARIO PUEDE PEDIR:
-- "dame el P&L de enero" → P&L con ingresos, gastos, profit
-- "¿quién me debe?" → Cuentas por cobrar con aging
-- "reporte de gasolina del mes" → reporte por categoría
-- "¿cuánto gasté con la Capital One este mes?" → reporte por tarjeta
-- "reporte anual" → P&L del año
+category: "before", "after", "diagnostic", "receipt", "other"
 
-# CONSULTAS INTELIGENTES
-- "¿tuve profit este mes?" → calcula con CONTEXTO_DB
-- "¿cuánto me deben?" → revisa jobs pendientes en contexto
-- "¿cuánto gasté en la F150?" → filtra por vehicle_id
-- "¿qué tengo mañana?" → revisa citas en contexto
-- "¿qué me falta?" → revisa recordatorios pendientes
-- "¿cuántas facturas pendientes tengo?" → revisa facturas enviadas no pagadas
-- "hazme factura para X" → crea factura con datos del cliente
+# ========== REPORTES ==========
 
-# FORMATO SAVE_EVENT
-SAVE_EVENT:
-{
-  "type": "expense|income",
-  "subtype": "gas|food|materials|service|...",
-  "category": "Gasolina|Comida|Servicio|...",
-  "amount": 80,
-  "payment_method": "capital_one",
-  "vendor": "Shell Toa Baja",
-  "vehicle_id": "transit|f150|bmw",
-  "client": "José Rivera",
-  "note": "",
-  "expense_type": "business|personal",
-  "timestamp": ${epochNow}
-}
+El usuario puede pedir reportes. Tú puedes:
+1. Contestar con datos del CONTEXTO_DB
+2. Generar PDF con GENERATE_PDF
 
-# REGLAS FINALES
+## Reporte de categoría específica:
+"reporte de gasolina" → GENERATE_PDF:{"category":"gasolina","period":"month"}
+"cuánto gasté en comida este año" → GENERATE_PDF:{"category":"comida","period":"year"}
+
+## Reporte por tarjeta:
+"reporte de la Capital One" → GENERATE_PDF:{"payment_method":"capital_one","period":"month"}
+
+## Reporte de ingresos:
+"reporte de ingresos del mes" → GENERATE_PDF:{"type":"income","period":"month"}
+
+## Reporte de gastos:
+"reporte de gastos de la semana" → GENERATE_PDF:{"type":"expense","period":"week"}
+
+## Reporte de fotos:
+"genera reporte de fotos de [cliente]" → responde con type GENERATE_PHOTO_REPORT
+"PDF con fotos de [cliente]" → responde con type GENERATE_PHOTO_REPORT
+Ejemplo respuesta: Voy a generar el reporte de fotos. GENERATE_PHOTO_REPORT:{"client_name":"Farmacia Caridad","job_description":"Mantenimiento mensual"}
+
+# ========== CONSULTAS ==========
+
+Cuando pregunten sobre datos, USA EL CONTEXTO:
+- "¿cuántas facturas pendientes?" → cuenta en CONTEXTO_DB
+- "¿qué tengo mañana?" → busca en citas
+- "¿cuánto me debe X?" → busca en facturas/trabajos
+- "¿qué notas tengo?" → lista de CONTEXTO_DB
+- "¿qué templates tengo?" → lista de CONTEXTO_DB
+- "¿qué clientes tengo?" → lista de CONTEXTO_DB
+
+# ========== TEMPLATES ==========
+
+Si el usuario tiene TEMPLATES en el contexto y pide factura para un cliente:
+1. Busca si hay template para ese cliente
+2. Usa los items del template
+3. Genera SAVE_INVOICE con esos items
+
+Ejemplo: "hazme la factura de farmacia caridad"
+→ Busca template "Farmacia Caridad" en contexto
+→ Copia items exactamente
+→ SAVE_INVOICE con esos items
+
+# ========== REGLAS FINALES ==========
 - BREVE y directo
 - NUNCA inventes datos
 - Si falta info → pregunta UNA cosa
-- payment_method ESPECÍFICO siempre
-- expense_type: default "business", pregunta si ambiguo
-- El usuario puede dictar por voz - interpreta errores inteligentemente
+- JSON en UNA LÍNEA (importante para parsing)
+- El usuario puede dictar por voz - interpreta errores fonéticos
 - "cápital wan" = Capital One, "eitiach" = ATH, etc.`
 
     // ====== 3) MENSAJES MULTIMODAL ======
@@ -330,7 +247,7 @@ SAVE_EVENT:
       return { role: m.role as 'user' | 'assistant', content: text }
     })
 
-    // ====== 4) ANTHROPIC ======
+    // ====== 4) LLAMADA A ANTHROPIC ======
     const response = await client.messages.create({
       model: usedModel,
       max_tokens: 1500,
@@ -344,10 +261,16 @@ SAVE_EVENT:
       .join('\n')
       .trim()
 
-    // ====== 5) DETECTAR COMANDOS EN RESPUESTA ======
-    const pdfMatch = text.match(/GENERATE_PDF:\s*(\{[\s\S]*?\})/)
-    if (pdfMatch) {
-      try { return NextResponse.json({ type: 'GENERATE_PDF', payload: JSON.parse(pdfMatch[1]) }) } catch {}
+    // ====== 5) DETECTAR GENERATE_PDF EN RESPUESTA (usando extractJSON) ======
+    const pdfPayload = extractJSON(text, 'GENERATE_PDF:')
+    if (pdfPayload) {
+      return NextResponse.json({ type: 'GENERATE_PDF', payload: pdfPayload })
+    }
+
+    // ====== 6) DETECTAR GENERATE_PHOTO_REPORT ======
+    const photoReportPayload = extractJSON(text, 'GENERATE_PHOTO_REPORT:')
+    if (photoReportPayload) {
+      return NextResponse.json({ type: 'GENERATE_PHOTO_REPORT', payload: photoReportPayload })
     }
 
     return NextResponse.json({ type: 'TEXT', text })

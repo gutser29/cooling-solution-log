@@ -2,19 +2,21 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
-import type { Client, Job, EventRecord } from '@/lib/types'
+import { generatePhotoReport } from '@/lib/pdfGenerator'
+import type { Client, Job, EventRecord, ClientPhoto } from '@/lib/types'
 
 interface ClientsPageProps {
   onNavigate: (page: string) => void
 }
 
-type ViewMode = 'list' | 'detail' | 'edit'
+type ViewMode = 'list' | 'detail' | 'edit' | 'new'
 
 export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [clients, setClients] = useState<Client[]>([])
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [clientJobs, setClientJobs] = useState<Job[]>([])
   const [clientEvents, setClientEvents] = useState<EventRecord[]>([])
+  const [clientPhotos, setClientPhotos] = useState<ClientPhoto[]>([])
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
@@ -41,12 +43,33 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       (e.client && e.client.toLowerCase().includes(clientName))
     ).sort((a, b) => b.timestamp - a.timestamp)
     setClientEvents(related)
+    
+    // Load photos
+    const photos = await db.client_photos.toArray()
+    const clientPhotosFiltered = photos.filter(p => 
+      p.client_id === client.id || 
+      p.client_name?.toLowerCase().includes(clientName)
+    )
+    setClientPhotos(clientPhotosFiltered)
   }
 
   const startEdit = () => {
     if (!selectedClient) return
     setEditForm({ ...selectedClient })
     setViewMode('edit')
+  }
+
+  const startNew = () => {
+    setEditForm({
+      first_name: '',
+      last_name: '',
+      phone: '',
+      email: '',
+      address: '',
+      type: 'residential',
+      notes: ''
+    })
+    setViewMode('new')
   }
 
   const saveEdit = async () => {
@@ -58,7 +81,8 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       email: editForm.email || '',
       address: editForm.address || '',
       type: editForm.type || selectedClient.type,
-      notes: editForm.notes || ''
+      notes: editForm.notes || '',
+      updated_at: Date.now()
     })
     const updated = await db.clients.get(selectedClient.id)
     if (updated) {
@@ -68,12 +92,43 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     }
   }
 
+  const saveNew = async () => {
+    if (!editForm.first_name) {
+      alert('El nombre es requerido')
+      return
+    }
+    const now = Date.now()
+    await db.clients.add({
+      first_name: editForm.first_name || '',
+      last_name: editForm.last_name || '',
+      phone: editForm.phone || '',
+      email: editForm.email || '',
+      address: editForm.address || '',
+      type: editForm.type || 'residential',
+      notes: editForm.notes || '',
+      active: true,
+      created_at: now,
+      updated_at: now
+    })
+    setViewMode('list')
+    loadClients()
+  }
+
   const toggleActive = async () => {
     if (!selectedClient?.id) return
     await db.clients.update(selectedClient.id, { active: !selectedClient.active })
     setViewMode('list')
     setSelectedClient(null)
     loadClients()
+  }
+
+  const handleGeneratePhotoReport = () => {
+    if (!selectedClient || clientPhotos.length === 0) {
+      alert('No hay fotos para este cliente')
+      return
+    }
+    const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`
+    generatePhotoReport(clientPhotos, clientName)
   }
 
   const fmt = (n: number) => `$${n.toFixed(2)}`
@@ -95,7 +150,10 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <button onClick={() => onNavigate('dashboard')} className="text-lg">←</button>
             <h1 className="text-xl font-bold">👥 Clientes</h1>
           </div>
-          <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬 Chat</button>
+          <div className="flex items-center gap-2">
+            <button onClick={startNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">+ Nuevo</button>
+            <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
+          </div>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-3">
@@ -126,7 +184,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <div className="text-center py-8 text-gray-500">Cargando...</div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
-              {search ? 'No se encontraron clientes' : 'No hay clientes registrados. Registra trabajos por chat para crear clientes.'}
+              {search ? 'No se encontraron clientes' : 'No hay clientes. Presiona "+ Nuevo" para agregar uno.'}
             </div>
           ) : (
             <div className="space-y-2">
@@ -160,6 +218,104 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
   }
 
+  // ========== NEW CLIENT VIEW ==========
+  if (viewMode === 'new') {
+    return (
+      <div className="min-h-screen bg-[#0b1220] text-gray-100">
+        <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setViewMode('list')} className="text-lg">←</button>
+            <h1 className="text-xl font-bold">➕ Nuevo Cliente</h1>
+          </div>
+          <button onClick={saveNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
+        </div>
+
+        <div className="p-4 max-w-2xl mx-auto space-y-4">
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Nombre *</label>
+                <input
+                  value={editForm.first_name || ''}
+                  onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                  placeholder="José"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Apellido</label>
+                <input
+                  value={editForm.last_name || ''}
+                  onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                  placeholder="Rivera"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Teléfono</label>
+              <input
+                value={editForm.phone || ''}
+                onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                placeholder="787-555-1234"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Email</label>
+              <input
+                value={editForm.email || ''}
+                onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                placeholder="jose@email.com"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Dirección</label>
+              <input
+                value={editForm.address || ''}
+                onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                placeholder="Bayamón, PR"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditForm(f => ({ ...f, type: 'residential' }))}
+                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'residential' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
+                >
+                  🏠 Residencial
+                </button>
+                <button
+                  onClick={() => setEditForm(f => ({ ...f, type: 'commercial' }))}
+                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'commercial' ? 'bg-purple-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
+                >
+                  🏢 Comercial
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Notas</label>
+              <textarea
+                value={editForm.notes || ''}
+                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20"
+                placeholder="Notas adicionales..."
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ========== EDIT VIEW ==========
   if (viewMode === 'edit' && selectedClient) {
     return (
@@ -169,51 +325,88 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <button onClick={() => setViewMode('detail')} className="text-lg">←</button>
             <h1 className="text-xl font-bold">✏️ Editar Cliente</h1>
           </div>
-          <button onClick={saveEdit} className="bg-green-500 rounded-lg px-4 py-1.5 text-sm font-medium">💾 Guardar</button>
+          <button onClick={saveEdit} className="bg-green-500 hover:bg-green-600 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
-          {[
-            { label: 'Nombre', key: 'first_name' },
-            { label: 'Apellido', key: 'last_name' },
-            { label: 'Teléfono', key: 'phone' },
-            { label: 'Email', key: 'email' },
-            { label: 'Dirección', key: 'address' }
-          ].map(field => (
-            <div key={field.key}>
-              <label className="text-xs text-gray-400 mb-1 block">{field.label}</label>
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Nombre</label>
+                <input
+                  value={editForm.first_name || ''}
+                  onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Apellido</label>
+                <input
+                  value={editForm.last_name || ''}
+                  onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Teléfono</label>
               <input
-                value={(editForm as any)[field.key] || ''}
-                onChange={e => setEditForm(prev => ({ ...prev, [field.key]: e.target.value }))}
-                className="w-full bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={editForm.phone || ''}
+                onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
               />
             </div>
-          ))}
 
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
-            <div className="flex gap-2">
-              {(['residential', 'commercial'] as const).map(t => (
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Email</label>
+              <input
+                value={editForm.email || ''}
+                onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Dirección</label>
+              <input
+                value={editForm.address || ''}
+                onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
+              <div className="flex gap-2">
                 <button
-                  key={t}
-                  onClick={() => setEditForm(prev => ({ ...prev, type: t }))}
-                  className={`flex-1 py-3 rounded-xl text-sm font-medium transition-colors ${editForm.type === t ? 'bg-blue-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'}`}
+                  onClick={() => setEditForm(f => ({ ...f, type: 'residential' }))}
+                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'residential' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
                 >
-                  {t === 'residential' ? '🏠 Residencial' : '🏢 Comercial'}
+                  🏠 Residencial
                 </button>
-              ))}
+                <button
+                  onClick={() => setEditForm(f => ({ ...f, type: 'commercial' }))}
+                  className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'commercial' ? 'bg-purple-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}
+                >
+                  🏢 Comercial
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Notas</label>
+              <textarea
+                value={editForm.notes || ''}
+                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20"
+              />
             </div>
           </div>
 
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">Notas</label>
-            <textarea
-              value={editForm.notes || ''}
-              onChange={e => setEditForm(prev => ({ ...prev, notes: e.target.value }))}
-              rows={3}
-              className="w-full bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
-          </div>
+          <button onClick={toggleActive} className="w-full bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
+            {selectedClient.active ? '🗑️ Desactivar Cliente' : '✅ Reactivar Cliente'}
+          </button>
         </div>
       </div>
     )
@@ -221,111 +414,135 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
 
   // ========== DETAIL VIEW ==========
   if (viewMode === 'detail' && selectedClient) {
-    const name = `${selectedClient.first_name} ${selectedClient.last_name}`
+    const totalJobs = clientJobs.length
     const totalCharged = clientJobs.reduce((s, j) => s + j.total_charged, 0)
     const totalPaid = clientJobs.reduce((s, j) => s + (j.payments?.reduce((ps, p) => ps + p.amount, 0) || 0), 0)
-    const totalOwed = totalCharged - totalPaid
+    const totalPending = totalCharged - totalPaid
 
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100">
         <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => { setViewMode('list'); setSelectedClient(null) }} className="text-lg">←</button>
-            <h1 className="text-xl font-bold">{name}</h1>
+            <h1 className="text-xl font-bold">👤 {selectedClient.first_name}</h1>
           </div>
           <button onClick={startEdit} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">✏️ Editar</button>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
-          {/* Info Card */}
-          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-2">
-            <div className="flex justify-between items-center">
-              <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
-                {selectedClient.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
-              </span>
-              <span className="text-xs text-gray-500">Desde {fmtDate(selectedClient.created_at)}</span>
-            </div>
-            {selectedClient.phone && <p className="text-sm text-gray-300">📞 {selectedClient.phone}</p>}
-            {selectedClient.email && <p className="text-sm text-gray-300">📧 {selectedClient.email}</p>}
-            {selectedClient.address && <p className="text-sm text-gray-300">📍 {selectedClient.address}</p>}
-            {selectedClient.notes && <p className="text-sm text-gray-400 italic mt-2">📝 {selectedClient.notes}</p>}
+          {/* Client Info */}
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+            <h2 className="text-xl font-bold text-gray-100 mb-2">{selectedClient.first_name} {selectedClient.last_name}</h2>
+            <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
+              {selectedClient.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
+            </span>
+            {selectedClient.phone && <p className="text-sm text-gray-400 mt-3">📞 {selectedClient.phone}</p>}
+            {selectedClient.email && <p className="text-sm text-gray-400">✉️ {selectedClient.email}</p>}
+            {selectedClient.address && <p className="text-sm text-gray-400">📍 {selectedClient.address}</p>}
+            {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">"{selectedClient.notes}"</p>}
           </div>
 
-          {/* Summary */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-2">
             <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
-              <p className="text-xs text-gray-400">Total Cobrado</p>
-              <p className="text-lg font-bold text-green-400">{fmt(totalCharged)}</p>
+              <p className="text-2xl font-bold text-gray-200">{totalJobs}</p>
+              <p className="text-xs text-gray-500">Trabajos</p>
             </div>
             <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
-              <p className="text-xs text-gray-400">Pagado</p>
-              <p className="text-lg font-bold text-blue-400">{fmt(totalPaid)}</p>
+              <p className="text-2xl font-bold text-green-400">{fmt(totalCharged)}</p>
+              <p className="text-xs text-gray-500">Facturado</p>
             </div>
             <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
-              <p className="text-xs text-gray-400">Debe</p>
-              <p className={`text-lg font-bold ${totalOwed > 0 ? 'text-yellow-400' : 'text-gray-500'}`}>{fmt(totalOwed)}</p>
+              <p className={`text-2xl font-bold ${totalPending > 0 ? 'text-yellow-400' : 'text-gray-400'}`}>{fmt(totalPending)}</p>
+              <p className="text-xs text-gray-500">Pendiente</p>
             </div>
           </div>
+
+          {/* Photo Report Button */}
+          {clientPhotos.length > 0 && (
+            <button 
+              onClick={handleGeneratePhotoReport}
+              className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">📸</span>
+                <div className="text-left">
+                  <p className="text-sm font-medium text-gray-200">Reporte de Fotos</p>
+                  <p className="text-xs text-gray-500">{clientPhotos.length} foto(s) guardadas</p>
+                </div>
+              </div>
+              <span className="text-blue-400 text-sm font-medium">Generar PDF →</span>
+            </button>
+          )}
+
+          {/* Photos Preview */}
+          {clientPhotos.length > 0 && (
+            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">📷 Fotos ({clientPhotos.length})</h3>
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                {clientPhotos.slice(0, 6).map((photo, i) => (
+                  <div key={i} className="flex-shrink-0">
+                    <img 
+                      src={photo.photo_data} 
+                      alt={photo.description || 'Foto'} 
+                      className="w-20 h-20 object-cover rounded-lg"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1 text-center capitalize">{photo.category}</p>
+                  </div>
+                ))}
+                {clientPhotos.length > 6 && (
+                  <div className="flex-shrink-0 w-20 h-20 bg-[#0b1220] rounded-lg flex items-center justify-center">
+                    <span className="text-gray-400 text-sm">+{clientPhotos.length - 6}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Jobs */}
-          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-            <p className="text-sm font-semibold text-gray-300 mb-3">🔧 Trabajos ({clientJobs.length})</p>
-            {clientJobs.length === 0 ? (
-              <p className="text-sm text-gray-500">Sin trabajos registrados</p>
-            ) : (
+          {clientJobs.length > 0 && (
+            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">🔧 Historial de Trabajos</h3>
               <div className="space-y-2">
                 {clientJobs.map((j, i) => {
                   const paid = j.payments?.reduce((s, p) => s + p.amount, 0) || 0
+                  const pending = j.total_charged - paid
                   return (
-                    <div key={i} className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
+                    <div key={i} className="flex justify-between items-center text-sm py-2 border-b border-white/5 last:border-0">
                       <div>
-                        <p className="text-sm text-gray-300">{j.type} — {j.services?.[0]?.description || 'Trabajo'}</p>
+                        <p className="text-gray-300">{j.type}</p>
                         <p className="text-xs text-gray-500">{fmtDate(j.date)}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-medium text-gray-200">{fmt(j.total_charged)}</p>
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${
-                          j.payment_status === 'paid' ? 'bg-green-900/50 text-green-400' :
-                          j.payment_status === 'partial' ? 'bg-yellow-900/50 text-yellow-400' :
-                          'bg-red-900/50 text-red-400'
-                        }`}>
-                          {j.payment_status === 'paid' ? '✅ Pagado' : j.payment_status === 'partial' ? `⏳ Debe ${fmt(j.total_charged - paid)}` : '⏳ Pendiente'}
-                        </span>
+                        <p className="text-gray-200">{fmt(j.total_charged)}</p>
+                        {pending > 0 && <p className="text-xs text-yellow-400">Debe: {fmt(pending)}</p>}
                       </div>
                     </div>
                   )
                 })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Recent Events */}
+          {/* Events */}
           {clientEvents.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <p className="text-sm font-semibold text-gray-300 mb-3">🕐 Eventos Recientes</p>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">📋 Eventos Relacionados</h3>
               <div className="space-y-2">
                 {clientEvents.slice(0, 10).map((e, i) => (
                   <div key={i} className="flex justify-between items-center text-sm py-1 border-b border-white/5 last:border-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${e.type === 'income' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                        {e.type === 'income' ? '↑' : '↓'}
-                      </span>
-                      <span className="text-gray-300">{e.category}</span>
+                    <div>
+                      <p className="text-gray-300">{e.category}</p>
+                      <p className="text-xs text-gray-500">{fmtDate(e.timestamp)}</p>
                     </div>
-                    <div className="text-right">
-                      <span className={`font-medium ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>{fmt(e.amount)}</span>
-                      <span className="text-gray-500 text-xs ml-2">{fmtDate(e.timestamp)}</span>
-                    </div>
+                    <span className={`font-medium ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
+                      {e.type === 'income' ? '+' : '-'}{fmt(e.amount)}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
           )}
-
-          {/* Deactivate */}
-          <button onClick={toggleActive} className="w-full py-3 rounded-xl text-sm font-medium bg-red-900/30 text-red-400 border border-red-800/30 hover:bg-red-900/50 transition-colors">
-            {selectedClient.active ? '🚫 Desactivar Cliente' : '✅ Reactivar Cliente'}
-          </button>
         </div>
       </div>
     )

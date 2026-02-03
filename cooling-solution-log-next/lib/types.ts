@@ -35,6 +35,7 @@ export interface Client {
   type: 'residential' | 'commercial'
   notes?: string
   created_at: number
+  updated_at?: number
   active: boolean
 }
 
@@ -164,7 +165,7 @@ export interface Reminder {
   created_at: number
 }
 
-// ========== BATCH 3: INVOICING ==========
+// ========== INVOICING ==========
 
 export interface InvoiceItem {
   description: string
@@ -192,7 +193,7 @@ export interface Invoice {
   status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled'
   issue_date: number
   due_date?: number
-  expiration_date?: number  // for quotes
+  expiration_date?: number
   paid_date?: number
   paid_method?: string
   created_at: number
@@ -218,4 +219,19 @@ export interface JobTemplate {
   active: boolean
   created_at: number
   updated_at: number
+}
+
+// ========== CLIENT PHOTOS ==========
+
+export interface ClientPhoto {
+  id?: number
+  client_id?: number
+  client_name?: string
+  job_id?: number
+  invoice_id?: number
+  category: 'before' | 'after' | 'diagnostic' | 'receipt' | 'other'
+  description?: string
+  photo_data: string  // base64
+  timestamp: number
+  created_at: number
 }

@@ -7,6 +7,7 @@ import {
   generatePLReport,
   generateARReport,
   generatePaymentMethodReport,
+  generatePhotoReport,
   generateInvoiceNumber
 } from '@/lib/pdfGenerator'
 
@@ -57,6 +58,58 @@ function getDateRange(period: string, periodLabel?: string): { startDate: number
   return { startDate, endDate }
 }
 
+// ============ ROBUST JSON EXTRACTOR ============
+function extractJSON(text: string, command: string): any {
+  const upperText = text.toUpperCase()
+  const upperCmd = command.toUpperCase()
+  const idx = upperText.indexOf(upperCmd)
+  if (idx === -1) return null
+  
+  const after = text.slice(idx + command.length)
+  const start = after.indexOf('{')
+  if (start === -1) return null
+  
+  let depth = 0
+  let inString = false
+  let escaped = false
+  
+  for (let i = start; i < after.length; i++) {
+    const c = after[i]
+    
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    
+    if (c === '\\') {
+      escaped = true
+      continue
+    }
+    
+    if (c === '"') {
+      inString = !inString
+      continue
+    }
+    
+    if (inString) continue
+    
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) {
+        const jsonStr = after.slice(start, i + 1)
+        try {
+          return JSON.parse(jsonStr)
+        } catch (e) {
+          console.error('JSON parse error:', e, jsonStr)
+          return null
+        }
+      }
+    }
+  }
+  return null
+}
+
 export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', content: '¡Hola! ¿Qué quieres registrar? Escribe, dicta 🎤 o envía fotos 📷' }
@@ -98,13 +151,9 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     setIsOnline(navigator.onLine)
     const goOnline = () => {
       setIsOnline(true)
-      console.log('🌐 Online — processing sync queue')
-      processSyncQueue()
+      if (driveConnectedRef.current) syncToDrive()
     }
-    const goOffline = () => {
-      setIsOnline(false)
-      console.log('📴 Offline')
-    }
+    const goOffline = () => setIsOnline(false)
     window.addEventListener('online', goOnline)
     window.addEventListener('offline', goOffline)
     return () => {
@@ -113,11 +162,10 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     }
   }, [])
 
-  // Check pending sync count
   const updatePendingCount = useCallback(async () => {
     try {
-      const count = await db.sync_queue.where('status').equals('pending').count()
-      setPendingSyncCount(count)
+      const pending = await db.sync_queue.where('status').equals('pending').count()
+      setPendingSyncCount(pending)
     } catch { setPendingSyncCount(0) }
   }, [])
 
@@ -126,56 +174,6 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     const interval = setInterval(updatePendingCount, 30000)
     return () => clearInterval(interval)
   }, [updatePendingCount])
-
-  // ============ SYNC QUEUE PROCESSING ============
-  const processSyncQueue = useCallback(async () => {
-    if (!driveConnectedRef.current || syncingRef.current || !navigator.onLine) return
-    const pending = await db.sync_queue.where('status').equals('pending').toArray()
-    if (pending.length === 0) return
-
-    console.log(`☁️ Processing ${pending.length} pending syncs`)
-    syncingRef.current = true
-    setSyncing(true)
-
-    try {
-      const events = await db.events.toArray()
-      const clients = await db.clients.toArray()
-      const jobs = await db.jobs.toArray()
-      const employees = await db.employees.toArray()
-      const vehicles = await db.vehicles.toArray()
-      const contracts = await db.contracts.toArray()
-      const notes = await db.notes.toArray()
-      const appointments = await db.appointments.toArray()
-      const reminders = await db.reminders.toArray()
-      const invoices = await db.invoices.toArray()
-
-      const res = await fetch('/api/sync/drive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices })
-      })
-
-      if (res.ok) {
-        await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
-        const synced = await db.sync_queue.where('status').equals('synced').toArray()
-        if (synced.length > 10) {
-          const toDelete = synced.slice(0, synced.length - 5).map(s => s.id!)
-          await db.sync_queue.bulkDelete(toDelete)
-        }
-        const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
-        setLastSync(time)
-        setPendingSyncCount(0)
-        console.log('☁️ Queue processed, synced at', time)
-      } else {
-        console.error('☁️ Queue sync failed')
-      }
-    } catch (e) {
-      console.error('☁️ Queue sync error:', e)
-    } finally {
-      syncingRef.current = false
-      setSyncing(false)
-    }
-  }, [])
 
   // ============ GOOGLE DRIVE SYNC ============
   const checkDriveConnection = useCallback(async () => {
@@ -213,11 +211,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const appointments = await db.appointments.toArray()
       const reminders = await db.reminders.toArray()
       const invoices = await db.invoices.toArray()
+      const job_templates = await db.job_templates.toArray()
+      const client_photos = await db.client_photos.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_photos })
       })
 
       if (res.ok) {
@@ -247,93 +247,71 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const { data } = await res.json()
       if (!data) { alert('No hay backup en Google Drive'); return }
 
-      if (data.events?.length) {
-        const localIds = new Set((await db.events.toArray()).map(e => e.id))
-        const newItems = data.events.filter((e: any) => !localIds.has(e.id))
-        if (newItems.length) await db.events.bulkAdd(newItems)
-      }
-      if (data.clients?.length) {
-        const localIds = new Set((await db.clients.toArray()).map(c => c.id))
-        const newItems = data.clients.filter((c: any) => !localIds.has(c.id))
-        if (newItems.length) await db.clients.bulkAdd(newItems)
-      }
-      if (data.jobs?.length) {
-        const localIds = new Set((await db.jobs.toArray()).map(j => j.id))
-        const newItems = data.jobs.filter((j: any) => !localIds.has(j.id))
-        if (newItems.length) await db.jobs.bulkAdd(newItems)
-      }
-      if (data.notes?.length) {
-        const localIds = new Set((await db.notes.toArray()).map(n => n.id))
-        const newItems = data.notes.filter((n: any) => !localIds.has(n.id))
-        if (newItems.length) await db.notes.bulkAdd(newItems)
-      }
-      if (data.appointments?.length) {
-        const localIds = new Set((await db.appointments.toArray()).map(a => a.id))
-        const newItems = data.appointments.filter((a: any) => !localIds.has(a.id))
-        if (newItems.length) await db.appointments.bulkAdd(newItems)
-      }
-      if (data.reminders?.length) {
-        const localIds = new Set((await db.reminders.toArray()).map(r => r.id))
-        const newItems = data.reminders.filter((r: any) => !localIds.has(r.id))
-        if (newItems.length) await db.reminders.bulkAdd(newItems)
-      }
-      if (data.invoices?.length) {
-        const localIds = new Set((await db.invoices.toArray()).map(i => i.id))
-        const newItems = data.invoices.filter((i: any) => !localIds.has(i.id))
-        if (newItems.length) await db.invoices.bulkAdd(newItems)
+      // Merge logic for all tables
+      const mergeArray = async (table: any, items: any[]) => {
+        if (!items?.length) return
+        const local = await table.toArray()
+        const localMap = new Map(local.map((item: any) => [item.id, item]))
+        
+        for (const item of items) {
+          const existing = localMap.get(item.id) as any
+          if (!existing) {
+            await table.add(item)
+          } else {
+            const existingTime = existing.updated_at || existing.created_at || existing.timestamp || 0
+            const newTime = (item as any).updated_at || (item as any).created_at || (item as any).timestamp || 0
+            if (newTime > existingTime) {
+              await table.put(item)
+            }
+          }
+        }
       }
 
-      setLastSync(new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' }))
-      alert('✅ Datos restaurados desde Google Drive')
+      await mergeArray(db.events, data.events)
+      await mergeArray(db.clients, data.clients)
+      await mergeArray(db.jobs, data.jobs)
+      await mergeArray(db.notes, data.notes)
+      await mergeArray(db.appointments, data.appointments)
+      await mergeArray(db.reminders, data.reminders)
+      await mergeArray(db.invoices, data.invoices)
+      await mergeArray(db.job_templates, data.job_templates)
+      await mergeArray(db.client_photos, data.client_photos)
+
+      alert('✅ Datos restaurados')
+      contextLoadedRef.current = false // Reload context
     } catch (e) {
       console.error('Restore error:', e)
-      alert('❌ Error restaurando datos')
+      alert('Error al restaurar')
     } finally {
       setSyncing(false)
     }
   }, [])
 
-  // On mount: check Drive + URL params
-  useEffect(() => {
-    checkDriveConnection()
-    const params = new URLSearchParams(window.location.search)
-    const gs = params.get('google')
-    if (gs === 'connected') {
-      setDriveConnected(true)
-      driveConnectedRef.current = true
-      setMessages(prev => [...prev, { role: 'assistant', content: '✅ Google Drive conectado. Respaldo automático activado.' }])
-      window.history.replaceState({}, '', window.location.pathname)
-    } else if (gs?.startsWith('error')) {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error conectando Google Drive. Intenta de nuevo.' }])
-      window.history.replaceState({}, '', window.location.pathname)
-    }
-  }, [checkDriveConnection])
+  useEffect(() => { checkDriveConnection() }, [checkDriveConnection])
 
-  // ============ SPEECH - FIXED (no duplicates) ============
+  // ============ SPEECH RECOGNITION ============
   useEffect(() => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return
-    const recognition = new SR()
+    if (typeof window === 'undefined') return
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) return
+
+    const recognition = new SpeechRecognition()
+    recognition.continuous = true
+    recognition.interimResults = true
     recognition.lang = 'es-PR'
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.maxAlternatives = 1
 
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0]?.[0]?.transcript || ''
-      if (transcript.trim()) {
-        setInput(prev => {
-          const existing = prev.trim()
-          return existing ? existing + ' ' + transcript.trim() : transcript.trim()
-        })
+      let transcript = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript
       }
-    }
-
-    recognition.onerror = (e: any) => {
-      if (e.error !== 'no-speech' && e.error !== 'aborted') {
-        console.error('Speech error:', e.error)
-        setIsListening(false)
-      }
+      setInput(prev => {
+        const parts = prev.split(' ')
+        if (parts.length > 1 && !event.results[event.results.length - 1].isFinal) {
+          return parts.slice(0, -1).join(' ') + ' ' + transcript
+        }
+        return prev + ' ' + transcript
+      })
     }
 
     recognition.onend = () => {
@@ -372,21 +350,33 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     }
   }, [])
 
-  // ============ CONTEXTO ============
+  // ============ CONTEXTO COMPLETO ============
   useEffect(() => {
     const load = async () => {
       if (contextLoadedRef.current) return
       contextLoadedRef.current = true
       try {
-        const events = await db.events.orderBy('timestamp').reverse().limit(50).toArray()
-        const jobs = await db.jobs.orderBy('date').reverse().limit(20).toArray()
         let ctx = ''
+        
+        // Events (últimos 50)
+        const events = await db.events.orderBy('timestamp').reverse().limit(50).toArray()
         if (events.length > 0) {
-          ctx += 'EVENTOS:\n' + events.map(e => {
+          ctx += 'EVENTOS RECIENTES:\n' + events.map(e => {
             const d = new Date(e.timestamp).toLocaleDateString('es-PR')
-            return `[${d}] ${e.type} ${e.category || e.subtype} $${e.amount} (${e.payment_method || 'N/A'}) ${e.vendor || e.client || e.note || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}`
+            return `[${d}] ${e.type} ${e.category} $${e.amount} ${e.vendor || e.client || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}`
           }).join('\n')
         }
+
+        // Clientes
+        const clients = await db.clients.where('active').equals(1).toArray()
+        if (clients.length > 0) {
+          ctx += '\n\nCLIENTES:\n' + clients.map(c => 
+            `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}`
+          ).join('\n')
+        }
+
+        // Jobs
+        const jobs = await db.jobs.orderBy('date').reverse().limit(20).toArray()
         if (jobs.length > 0) {
           ctx += '\n\nTRABAJOS:\n' + jobs.map(j => {
             const d = new Date(j.date).toLocaleDateString('es-PR')
@@ -395,32 +385,81 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }).join('\n')
         }
 
-        // Add appointments context
-        try {
-          const appts = await db.appointments.where('status').equals('scheduled').toArray()
-          if (appts.length > 0) {
-            ctx += '\n\nCITAS PROGRAMADAS:\n' + appts.map(a => {
-              const d = new Date(a.date)
-              return `[${d.toLocaleDateString('es-PR')} ${d.toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })}] ${a.title} ${a.client_name ? '- ' + a.client_name : ''} ${a.location ? '@ ' + a.location : ''}`
-            }).join('\n')
-          }
-        } catch {}
+        // Citas programadas
+        const appts = await db.appointments.where('status').equals('scheduled').toArray()
+        if (appts.length > 0) {
+          ctx += '\n\nCITAS PROGRAMADAS:\n' + appts.map(a => {
+            const d = new Date(a.date)
+            return `[${d.toLocaleDateString('es-PR')} ${d.toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })}] ${a.title} ${a.client_name ? '- ' + a.client_name : ''} ${a.location ? '@ ' + a.location : ''}`
+          }).join('\n')
+        }
 
-        // Add reminders context
-        try {
-          const rems = await db.reminders.where('completed').equals(0).toArray()
-          if (rems.length > 0) {
-            ctx += '\n\nRECORDATORIOS PENDIENTES:\n' + rems.map(r => {
-              const d = new Date(r.due_date)
-              return `[${d.toLocaleDateString('es-PR')}] ${r.text} (${r.priority})`
-            }).join('\n')
-          }
-        } catch {}
+        // Recordatorios pendientes
+        const rems = await db.reminders.where('completed').equals(0).toArray()
+        if (rems.length > 0) {
+          ctx += '\n\nRECORDATORIOS PENDIENTES:\n' + rems.map(r => {
+            const d = new Date(r.due_date)
+            return `[${d.toLocaleDateString('es-PR')}] ${r.text} (${r.priority})`
+          }).join('\n')
+        }
+
+        // Facturas
+        const invoices = await db.invoices.toArray()
+        if (invoices.length > 0) {
+          const pending = invoices.filter(i => i.status !== 'paid' && i.status !== 'cancelled')
+          ctx += '\n\nFACTURAS PENDIENTES:\n' + pending.map(i => 
+            `[${i.invoice_number}] ${i.client_name} | $${i.total} | Status: ${i.status}`
+          ).join('\n')
+        }
+
+        // Notas (últimas 10)
+        const notes = await db.notes.orderBy('timestamp').reverse().limit(10).toArray()
+        if (notes.length > 0) {
+          ctx += '\n\nNOTAS RECIENTES:\n' + notes.map(n => 
+            `[${new Date(n.timestamp).toLocaleDateString('es-PR')}] ${n.title || 'Sin título'}: ${n.content.substring(0, 100)}...`
+          ).join('\n')
+        }
+
+        // Templates
+        const templates = await db.job_templates.where('active').equals(1).toArray()
+        if (templates.length > 0) {
+          ctx += '\n\nTEMPLATES DISPONIBLES:\n' + templates.map(t => {
+            const itemsStr = t.items.map(i => `${i.description}(${i.quantity}x$${i.unit_price})`).join(', ')
+            const total = t.items.reduce((s, i) => s + (i.quantity * i.unit_price), 0)
+            return `[${t.name}] Cliente: ${t.client_name || 'N/A'} | Items: ${itemsStr} | Total: $${total.toFixed(2)}`
+          }).join('\n')
+        }
+
+        // Fotos por cliente
+        const photos = await db.client_photos.toArray()
+        if (photos.length > 0) {
+          const photosByClient: Record<string, number> = {}
+          photos.forEach(p => {
+            const name = p.client_name || 'Sin cliente'
+            photosByClient[name] = (photosByClient[name] || 0) + 1
+          })
+          ctx += '\n\nFOTOS POR CLIENTE:\n' + Object.entries(photosByClient).map(([name, count]) => 
+            `${name}: ${count} foto(s)`
+          ).join('\n')
+        }
 
         dbContextRef.current = ctx
-        const total = events.length + jobs.length
-        if (total > 0) {
-          setMessages(prev => [...prev, { role: 'assistant', content: `✅ ${events.length} eventos + ${jobs.length} trabajos cargados.` }])
+        
+        // Summary message
+        const counts = {
+          events: events.length,
+          clients: clients.length,
+          invoices: invoices.length,
+          templates: templates.length,
+          appts: appts.length,
+          rems: rems.length
+        }
+        
+        if (Object.values(counts).some(v => v > 0)) {
+          setMessages(prev => [...prev, { 
+            role: 'assistant', 
+            content: `✅ Contexto cargado: ${counts.events} eventos, ${counts.clients} clientes, ${counts.invoices} facturas, ${counts.templates} templates, ${counts.appts} citas, ${counts.rems} recordatorios` 
+          }])
         }
       } catch (e) { console.error('Context error:', e) }
     }
@@ -448,191 +487,252 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     stopListening()
 
     const userContent = hasText ? input.trim() : '📷 Foto adjunta'
-    const userMessage: ChatMessage = { role: 'user', content: userContent, photos: hasPhotos ? [...pendingPhotos] : undefined }
-    const updatedMessages = [...messages, userMessage]
-    setMessages(updatedMessages)
+    const userPhotos = [...pendingPhotos]
+
+    setMessages(prev => [...prev, { role: 'user', content: userContent, photos: userPhotos.length ? userPhotos : undefined }])
     setInput('')
     setPendingPhotos([])
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'
     setLoading(true)
-    if (!navigator.onLine) {
-      await db.sync_queue.add({ timestamp: Date.now(), status: 'pending' } as any)
-      setLoading(false)
-      return
-    }
 
     try {
-      const apiMessages = [...updatedMessages]
-      if (dbContextRef.current) {
-        apiMessages.unshift(
-          { role: 'user', content: `CONTEXTO_DB:\n${dbContextRef.current}` },
-          { role: 'assistant', content: 'Tengo el contexto.' }
-        )
+      // Build context message
+      const contextMsg = dbContextRef.current ? `\n\n[CONTEXTO_DB]\n${dbContextRef.current}\n[/CONTEXTO_DB]` : ''
+      const fullContent = userContent + contextMsg
+
+      const payload = {
+        messages: [
+          ...messages.filter(m => m.role !== 'assistant' || !m.content.startsWith('✅')).slice(-10),
+          { role: 'user', content: fullContent, photos: userPhotos.length ? userPhotos : undefined }
+        ]
       }
 
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: apiMessages.map(m => ({ role: m.role, content: m.content, photos: m.photos })) })
+        body: JSON.stringify(payload)
       })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
       const data = await response.json()
 
-      // ====== REPORTS ======
-      if (data?.type === 'GENERATE_PL') {
-        const { period, periodLabel } = data.payload || {}
-        const { startDate, endDate } = getDateRange(period || 'month', periodLabel)
-        generatePLReport(await db.events.toArray(), await db.jobs.toArray(), startDate, endDate, periodLabel || 'este mes')
-        setMessages(prev => [...prev, { role: 'assistant', content: `✅ P&L: ${periodLabel || period}` }])
-        return
-      }
-      if (data?.type === 'GENERATE_AR') {
-        generateARReport(await db.jobs.toArray(), await db.clients.toArray())
-        setMessages(prev => [...prev, { role: 'assistant', content: '✅ Cuentas por Cobrar generado' }])
-        return
-      }
-      if (data?.type === 'GENERATE_PAYMENT_REPORT') {
-        const { paymentMethod, period } = data.payload || {}
-        const { startDate, endDate } = getDateRange(period || 'month')
-        generatePaymentMethodReport(await db.events.toArray(), paymentMethod, startDate, endDate)
-        setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte ${paymentMethod}` }])
-        return
-      }
-      if (data?.type === 'GENERATE_PDF') {
-        const { category, period } = data.payload || {}
-        const { startDate, endDate } = getDateRange(period || 'month')
-        generateCategoryReport(await db.events.toArray(), category || 'general', startDate, endDate)
-        setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte: ${category} (${period})` }])
+      // ====== HANDLE RESPONSE TYPES ======
+      
+      if (data.type === 'GENERATE_PL') {
+        const { period, periodLabel } = data.payload
+        const { startDate, endDate } = getDateRange(period, periodLabel)
+        const events = await db.events.toArray()
+        generatePLReport(events, startDate, endDate, periodLabel || 'este mes')
+        setMessages(prev => [...prev, { role: 'assistant', content: `✅ P&L generado para ${periodLabel || 'este mes'}` }])
         return
       }
 
-      const assistantText = (data?.type === 'TEXT' ? (data.text || '') : '') || ''
+      if (data.type === 'GENERATE_AR') {
+        const invoices = await db.invoices.toArray()
+        generateARReport(invoices)
+        setMessages(prev => [...prev, { role: 'assistant', content: '✅ Reporte de cuentas por cobrar generado' }])
+        return
+      }
+
+      if (data.type === 'GENERATE_PDF') {
+        const { category, period, type, payment_method } = data.payload || {}
+        const { startDate, endDate } = getDateRange(period || 'month')
+        const events = await db.events.toArray()
+        
+        if (payment_method) {
+          generatePaymentMethodReport(events, payment_method, startDate, endDate)
+          setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de ${payment_method} generado` }])
+        } else if (type === 'income') {
+          generateCategoryReport(events.filter(e => e.type === 'income'), 'ingresos', startDate, endDate)
+          setMessages(prev => [...prev, { role: 'assistant', content: '✅ Reporte de ingresos generado' }])
+        } else if (type === 'expense') {
+          generateCategoryReport(events.filter(e => e.type === 'expense'), 'gastos', startDate, endDate)
+          setMessages(prev => [...prev, { role: 'assistant', content: '✅ Reporte de gastos generado' }])
+        } else {
+          generateCategoryReport(events, category || 'general', startDate, endDate)
+          setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de ${category || 'general'} generado` }])
+        }
+        return
+      }
+
+      if (data.type === 'GENERATE_PAYMENT_REPORT') {
+        const { paymentMethod, period } = data.payload
+        const { startDate, endDate } = getDateRange(period)
+        const events = await db.events.toArray()
+        generatePaymentMethodReport(events, paymentMethod, startDate, endDate)
+        setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de ${paymentMethod} generado` }])
+        return
+      }
+
+      // ====== GENERATE_PHOTO_REPORT ======
+      if (data.type === 'GENERATE_PHOTO_REPORT') {
+        const { client_name, job_description } = data.payload || {}
+        const photos = await db.client_photos.toArray()
+        const clientPhotos = photos.filter(p => 
+          p.client_name?.toLowerCase().includes((client_name || '').toLowerCase())
+        )
+        if (clientPhotos.length === 0) {
+          setMessages(prev => [...prev, { role: 'assistant', content: `❌ No hay fotos guardadas para ${client_name || 'este cliente'}` }])
+        } else {
+          generatePhotoReport(clientPhotos, client_name || 'Cliente', job_description)
+          setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de fotos generado para ${client_name} (${clientPhotos.length} fotos)` }])
+        }
+        return
+      }
+
+      // ====== TEXT RESPONSE - PARSE COMMANDS ======
+      const assistantText = data.text || data.error || 'Sin respuesta'
+
+      // ====== SAVE_EVENT ======
+      const eventData = extractJSON(assistantText, 'SAVE_EVENT:')
+      if (eventData) {
+        try {
+          await db.events.add({
+            timestamp: eventData.timestamp || Date.now(),
+            type: eventData.type,
+            status: 'completed',
+            subtype: eventData.subtype,
+            category: eventData.category,
+            amount: eventData.amount,
+            payment_method: eventData.payment_method,
+            vendor: eventData.vendor,
+            client: eventData.client,
+            vehicle_id: eventData.vehicle_id,
+            note: eventData.note,
+            expense_type: eventData.expense_type || 'business'
+          })
+          const cleanText = assistantText.replace(/SAVE_EVENT:\s*\{[^}]*\}/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${eventData.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${eventData.amount}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_EVENT error:', e) }
+      }
+
+      // ====== SAVE_CLIENT ======
+      const clientData = extractJSON(assistantText, 'SAVE_CLIENT:')
+      if (clientData) {
+        try {
+          const now = Date.now()
+          await db.clients.add({
+            first_name: clientData.first_name || '',
+            last_name: clientData.last_name || '',
+            phone: clientData.phone,
+            email: clientData.email,
+            address: clientData.address,
+            type: clientData.type || 'residential',
+            notes: clientData.notes,
+            active: true,
+            created_at: now,
+            updated_at: now
+          })
+          const cleanText = assistantText.replace(/SAVE_CLIENT:\s*\{[^}]*\}/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Cliente creado: ${clientData.first_name} ${clientData.last_name}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_CLIENT error:', e) }
+      }
 
       // ====== SAVE_NOTE ======
-      const noteMatch = assistantText.match(/SAVE_NOTE:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (noteMatch) {
+      const noteData = extractJSON(assistantText, 'SAVE_NOTE:')
+      if (noteData) {
         try {
-          const nd = JSON.parse(noteMatch[1])
           const now = Date.now()
           await db.notes.add({
             timestamp: now,
-            title: nd.title || undefined,
-            content: nd.content || '',
+            title: noteData.title || '',
+            content: noteData.content || '',
+            tags: noteData.tags,
             updated_at: now
           })
-          const clean = assistantText.replace(/SAVE_NOTE:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Nota guardada: ${nd.title || nd.content.substring(0, 40)}` }])
+          const cleanText = assistantText.replace(/SAVE_NOTE:\s*\{[^}]*\}/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Nota guardada: ${noteData.title || noteData.content?.substring(0, 30)}` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_NOTE error:', e) }
       }
 
       // ====== SAVE_APPOINTMENT ======
-      const apptMatch = assistantText.match(/SAVE_APPOINTMENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (apptMatch) {
+      const apptData = extractJSON(assistantText, 'SAVE_APPOINTMENT:')
+      if (apptData) {
         try {
-          const ad = JSON.parse(apptMatch[1])
-          const apptDate = new Date(ad.date).getTime()
+          const apptDate = new Date(apptData.date).getTime()
           const now = Date.now()
           await db.appointments.add({
             timestamp: now,
             date: apptDate,
-            title: ad.title || 'Cita',
-            client_name: ad.client_name || undefined,
-            location: ad.location || undefined,
-            notes: ad.notes || undefined,
+            title: apptData.title || 'Cita',
+            client_name: apptData.client_name,
+            location: apptData.location,
+            notes: apptData.notes,
             status: 'scheduled',
-            reminder_minutes: ad.reminder_minutes || 60,
+            reminder_minutes: apptData.reminder_minutes || 60,
             created_at: now
           })
-          // Update context with new appointment
-          dbContextRef.current += `\n[CITA] ${new Date(apptDate).toLocaleDateString('es-PR')} ${new Date(apptDate).toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })} ${ad.title} ${ad.client_name || ''}`
-          const clean = assistantText.replace(/SAVE_APPOINTMENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Cita: ${ad.title} - ${new Date(apptDate).toLocaleDateString('es-PR')}` }])
+          dbContextRef.current += `\n[CITA] ${new Date(apptDate).toLocaleDateString('es-PR')} ${apptData.title}`
+          const cleanText = assistantText.replace(/SAVE_APPOINTMENT:\s*\{[^}]*\}/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Cita: ${apptData.title} - ${new Date(apptDate).toLocaleDateString('es-PR')}` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_APPOINTMENT error:', e) }
       }
 
       // ====== SAVE_REMINDER ======
-      const remMatch = assistantText.match(/SAVE_REMINDER:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (remMatch) {
+      const remData = extractJSON(assistantText, 'SAVE_REMINDER:')
+      if (remData) {
         try {
-          const rd = JSON.parse(remMatch[1])
-          const dueDate = new Date(rd.due_date).getTime()
+          const dueDate = new Date(remData.due_date).getTime()
           const now = Date.now()
           await db.reminders.add({
             timestamp: now,
-            text: rd.text || '',
+            text: remData.text || '',
             due_date: dueDate,
             completed: false,
-            priority: rd.priority || 'normal',
+            priority: remData.priority || 'normal',
             created_at: now
           })
-          const clean = assistantText.replace(/SAVE_REMINDER:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Recordatorio: ${rd.text}` }])
+          const cleanText = assistantText.replace(/SAVE_REMINDER:\s*\{[^}]*\}/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Recordatorio: ${remData.text}` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_REMINDER error:', e) }
-      }
-
-      // Helper: extract complete JSON from text (handles nested arrays/objects)
-      const extractJSON = (text: string, cmd: string): any => {
-        const idx = text.toUpperCase().indexOf(cmd.toUpperCase())
-        if (idx === -1) return null
-        const after = text.slice(idx + cmd.length)
-        const start = after.indexOf('{')
-        if (start === -1) return null
-        let depth = 0, inStr = false, esc = false
-        for (let i = start; i < after.length; i++) {
-          const c = after[i]
-          if (esc) { esc = false; continue }
-          if (c === '\\') { esc = true; continue }
-          if (c === '"') { inStr = !inStr; continue }
-          if (inStr) continue
-          if (c === '{') depth++
-          else if (c === '}') { 
-            depth--
-            if (depth === 0) { 
-              try { return JSON.parse(after.slice(start, i + 1)) } 
-              catch { return null } 
-            } 
-          }
-        }
-        return null
       }
 
       // ====== SAVE_INVOICE ======
       const invoiceData = extractJSON(assistantText, 'SAVE_INVOICE:')
       if (invoiceData) {
         try {
-          const id = invoiceData
           const now = Date.now()
-          const items = (id.items || []).map((i: any) => ({ description: i.description, quantity: i.quantity || 1, unit_price: i.unit_price || 0, total: i.total || (i.quantity || 1) * (i.unit_price || 0) }))
+          const items = (invoiceData.items || []).map((i: any) => ({
+            description: i.description,
+            quantity: i.quantity || 1,
+            unit_price: i.unit_price || 0,
+            total: i.total || (i.quantity || 1) * (i.unit_price || 0)
+          }))
           const subtotal = items.reduce((s: number, i: any) => s + i.total, 0)
-          const taxRate = id.tax_rate || 0
+          const taxRate = invoiceData.tax_rate || 0
           const taxAmount = subtotal * (taxRate / 100)
+          
           await db.invoices.add({
             invoice_number: generateInvoiceNumber('invoice'),
             type: 'invoice',
-            client_name: id.client_name || '',
-            client_phone: id.client_phone || undefined,
-            client_email: id.client_email || undefined,
-            client_address: id.client_address || undefined,
+            client_name: invoiceData.client_name || '',
+            client_phone: invoiceData.client_phone,
+            client_email: invoiceData.client_email,
+            client_address: invoiceData.client_address,
             items,
             subtotal,
             tax_rate: taxRate,
             tax_amount: taxAmount,
             total: subtotal + taxAmount,
-            notes: id.notes || undefined,
+            notes: invoiceData.notes,
             status: 'draft',
             issue_date: now,
-            due_date: now + (id.due_days || 30) * 86400000,
+            due_date: now + (invoiceData.due_days || 30) * 86400000,
             created_at: now,
             updated_at: now
           })
-          const clean = assistantText.replace(/SAVE_INVOICE:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Factura creada para ${id.client_name} — ${formatCurrency(subtotal + taxAmount)}. Ve a 🧾 Facturas para preview y enviar.` }])
+          
+          console.log('✅ Invoice saved:', invoiceData.client_name, 'items:', items.length, 'total:', subtotal + taxAmount)
+          const cleanText = assistantText.replace(/SAVE_INVOICE:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Factura creada para ${invoiceData.client_name} — ${formatCurrency(subtotal + taxAmount)}. Ve a 🧾 Facturas para ver.` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_INVOICE error:', e) }
@@ -642,137 +742,133 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const quoteData = extractJSON(assistantText, 'SAVE_QUOTE:')
       if (quoteData) {
         try {
-          const qd = quoteData
           const now = Date.now()
-          const items = (qd.items || []).map((i: any) => ({ description: i.description, quantity: i.quantity || 1, unit_price: i.unit_price || 0, total: i.total || (i.quantity || 1) * (i.unit_price || 0) }))
+          const items = (quoteData.items || []).map((i: any) => ({
+            description: i.description,
+            quantity: i.quantity || 1,
+            unit_price: i.unit_price || 0,
+            total: i.total || (i.quantity || 1) * (i.unit_price || 0)
+          }))
           const subtotal = items.reduce((s: number, i: any) => s + i.total, 0)
-          const taxRate = qd.tax_rate || 0
+          const taxRate = quoteData.tax_rate || 0
           const taxAmount = subtotal * (taxRate / 100)
+          
           await db.invoices.add({
             invoice_number: generateInvoiceNumber('quote'),
             type: 'quote',
-            client_name: qd.client_name || '',
-            client_phone: qd.client_phone || undefined,
-            client_email: qd.client_email || undefined,
-            client_address: qd.client_address || undefined,
+            client_name: quoteData.client_name || '',
+            client_phone: quoteData.client_phone,
+            client_email: quoteData.client_email,
+            client_address: quoteData.client_address,
             items,
             subtotal,
             tax_rate: taxRate,
             tax_amount: taxAmount,
             total: subtotal + taxAmount,
-            notes: qd.notes || undefined,
+            notes: quoteData.notes,
             status: 'draft',
             issue_date: now,
-            expiration_date: now + (qd.valid_days || 15) * 86400000,
+            expiration_date: now + (quoteData.valid_days || 15) * 86400000,
             created_at: now,
             updated_at: now
           })
-          const clean = assistantText.replace(/SAVE_QUOTE:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Cotización creada para ${qd.client_name} — ${formatCurrency(subtotal + taxAmount)}. Ve a 🧾 Facturas > Cotizaciones para preview.` }])
+          
+          const cleanText = assistantText.replace(/SAVE_QUOTE:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Cotización creada para ${quoteData.client_name} — ${formatCurrency(subtotal + taxAmount)}` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_QUOTE error:', e) }
       }
 
-      // ====== SAVE_EVENT ======
-      const saveMatch = assistantText.match(/SAVE_EVENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (saveMatch) {
+      // ====== SAVE_JOB_TEMPLATE ======
+      const templateData = extractJSON(assistantText, 'SAVE_JOB_TEMPLATE:')
+      if (templateData) {
         try {
-          const ed = JSON.parse(saveMatch[1])
-          const pm = String(ed.payment_method || '').trim().toLowerCase().replace(/\s+/g, '_')
-          const saved = {
-            timestamp: Date.now(), type: (ed.type || 'expense') as 'expense' | 'income',
-            status: 'completed' as const, subtype: ed.subtype || '', category: ed.category || '',
-            amount: Number(ed.amount || 0), payment_method: pm, vendor: ed.vendor || '',
-            vehicle_id: ed.vehicle_id || '', client: ed.client || '',
-            note: ed.note || ed.description || '', raw_text: assistantText,
-            photo: userMessage.photos?.[0],
-            expense_type: (ed.expense_type || 'business') as 'personal' | 'business'
-          }
-          await db.events.add(saved)
-          dbContextRef.current = `[${new Date().toLocaleDateString('es-PR')}] ${saved.type} ${saved.category} $${saved.amount} (${pm}) ${saved.vendor || saved.client} ${saved.expense_type === 'personal' ? '[PERSONAL]' : ''}\n` + dbContextRef.current
-          const clean = assistantText.replace(/SAVE_EVENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          const personalTag = saved.expense_type === 'personal' ? ' [Personal]' : ''
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ ${saved.type === 'income' ? 'Ingreso' : 'Gasto'}: ${saved.category} $${saved.amount}${personalTag}` }])
+          const now = Date.now()
+          const items = (templateData.items || []).map((i: any) => ({
+            description: i.description,
+            quantity: i.quantity || 1,
+            unit_price: i.unit_price || 0
+          }))
+          
+          await db.job_templates.add({
+            name: templateData.name || '',
+            client_name: templateData.client_name,
+            client_id: templateData.client_id,
+            items,
+            notes: templateData.notes,
+            default_tax_rate: templateData.default_tax_rate || 0,
+            active: true,
+            created_at: now,
+            updated_at: now
+          })
+          
+          const cleanText = assistantText.replace(/SAVE_JOB_TEMPLATE:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Template guardado: ${templateData.name}` }])
           syncToDrive()
           return
-        } catch (e) { console.error('SAVE_EVENT error:', e); setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error guardando.' }]); return }
+        } catch (e) { console.error('SAVE_JOB_TEMPLATE error:', e) }
+      }
+
+      // ====== SAVE_PHOTO ======
+      const photoData = extractJSON(assistantText, 'SAVE_PHOTO:')
+      if (photoData && userPhotos.length > 0) {
+        try {
+          const now = Date.now()
+          for (const photo of userPhotos) {
+            await db.client_photos.add({
+              client_name: photoData.client_name,
+              client_id: photoData.client_id,
+              job_id: photoData.job_id,
+              category: photoData.category || 'other',
+              description: photoData.description,
+              photo_data: photo,
+              timestamp: now,
+              created_at: now
+            })
+          }
+          const cleanText = assistantText.replace(/SAVE_PHOTO:\s*\{[^}]*\}/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${userPhotos.length} foto(s) guardada(s) para ${photoData.client_name}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_PHOTO error:', e) }
       }
 
       // ====== SAVE_JOB ======
-      const jobMatch = assistantText.match(/SAVE_JOB:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (jobMatch) {
+      const jobData = extractJSON(assistantText, 'SAVE_JOB:')
+      if (jobData) {
         try {
-          const jd = JSON.parse(jobMatch[1])
-          let clientId = 0
-          if (jd.client_name) {
-            const parts = jd.client_name.split(' ')
-            const existing = await db.clients.where('first_name').equals(parts[0]).first()
-            if (existing?.id) { clientId = existing.id }
-            else { clientId = await db.clients.add({ first_name: parts[0], last_name: parts.slice(1).join(' '), type: 'residential', active: true, created_at: Date.now() }) as number }
-          }
+          const now = Date.now()
           await db.jobs.add({
-            client_id: clientId, date: Date.now(), type: jd.type || 'maintenance', status: 'completed',
-            services: jd.services || [], materials: jd.materials || [], employees: jd.employees || [],
-            subtotal_services: (jd.services || []).reduce((s: number, sv: any) => s + (sv.total || 0), 0),
-            subtotal_materials: (jd.materials || []).reduce((s: number, m: any) => s + ((m.unit_price || 0) * (m.quantity || 0)), 0),
-            total_charged: jd.total_charged || 0, payment_status: jd.payment_status || 'pending',
-            payments: jd.payments || [], balance_due: jd.balance_due || jd.total_charged || 0, created_at: Date.now()
+            client_id: jobData.client_id || 0,
+            date: now,
+            type: jobData.type || 'service',
+            status: 'completed',
+            services: jobData.services || [],
+            materials: jobData.materials || [],
+            employees: [],
+            subtotal_services: 0,
+            subtotal_materials: 0,
+            total_charged: jobData.total_charged || 0,
+            payment_status: jobData.payment_status || 'pending',
+            payments: jobData.payments || [],
+            balance_due: jobData.balance_due || jobData.total_charged || 0,
+            notes: jobData.notes,
+            created_at: now
           })
-          if (jd.deposit > 0) {
-            await db.events.add({ timestamp: Date.now(), type: 'income', status: 'completed', category: 'Depósito', amount: jd.deposit, payment_method: jd.deposit_method || 'cash', client: jd.client_name, note: 'Depósito trabajo', raw_text: assistantText })
-          }
-          const clean = assistantText.replace(/SAVE_JOB:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Trabajo: ${jd.client_name} $${jd.total_charged}` }])
+          const cleanText = assistantText.replace(/SAVE_JOB:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Trabajo registrado: $${jobData.total_charged}` }])
           syncToDrive()
           return
-        } catch (e) { console.error('SAVE_JOB error:', e); setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error guardando trabajo.' }]); return }
+        } catch (e) { console.error('SAVE_JOB error:', e) }
       }
 
-      // ====== SAVE_PAYMENT ======
-      const payMatch = assistantText.match(/SAVE_PAYMENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (payMatch) {
-        try {
-          const pd = JSON.parse(payMatch[1])
-          await db.events.add({ timestamp: Date.now(), type: 'income', status: 'completed', category: 'Cobro', amount: pd.amount, payment_method: String(pd.method || 'cash').toLowerCase().replace(/\s+/g, '_'), client: pd.client_name || '', note: pd.job_reference || '', raw_text: assistantText })
-          if (pd.client_name) {
-            const parts = pd.client_name.split(' ')
-            const client = await db.clients.where('first_name').equals(parts[0]).first()
-            if (client?.id) {
-              const pendingJobs = await db.jobs.where('client_id').equals(client.id).filter(j => j.payment_status !== 'paid').toArray()
-              if (pendingJobs.length > 0) {
-                const job = pendingJobs[0]
-                const updPayments = [...job.payments, { date: Date.now(), amount: pd.amount, method: pd.method || 'cash' }]
-                const totalPaid = updPayments.reduce((s, p) => s + p.amount, 0)
-                const bal = job.total_charged - totalPaid
-                await db.jobs.update(job.id!, { payments: updPayments, balance_due: Math.max(0, bal), payment_status: bal <= 0 ? 'paid' : 'partial' })
-              }
-            }
-          }
-          const clean = assistantText.replace(/SAVE_PAYMENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Cobro: $${pd.amount} de ${pd.client_name}` }])
-          syncToDrive()
-          return
-        } catch (e) { console.error('SAVE_PAYMENT error:', e); return }
-      }
+      // ====== NO COMMAND - Just text ======
+      setMessages(prev => [...prev, { role: 'assistant', content: assistantText }])
 
-      // ====== SAVE_EMPLOYEE_PAYMENT ======
-      const empMatch = assistantText.match(/SAVE_EMPLOYEE_PAYMENT:\s*(\{[\s\S]*?\})\s*(?:\n|$)/i)
-      if (empMatch) {
-        try {
-          const ep = JSON.parse(empMatch[1])
-          await db.events.add({ timestamp: Date.now(), type: 'expense', status: 'completed', subtype: 'payroll', category: 'Nómina', amount: ep.net, payment_method: String(ep.payment_method || 'cash').toLowerCase().replace(/\s+/g, '_'), note: `${ep.employee_name} ${ep.days}d×$${ep.daily_rate}=$${ep.gross}-${ep.retention}ret=$${ep.net} | ${ep.job_reference || ''}`, raw_text: assistantText })
-          const clean = assistantText.replace(/SAVE_EMPLOYEE_PAYMENT:\s*\{[\s\S]*?\}\s*/i, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: clean || `✅ Nómina: ${ep.employee_name} $${ep.net}` }])
-          syncToDrive()
-          return
-        } catch (e) { console.error('EMP_PAY error:', e); return }
-      }
-
-      setMessages(prev => [...prev, { role: 'assistant', content: assistantText || '...' }])
-    } catch (error) {
-      console.error('API error:', error)
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión.' }])
+    } catch (error: any) {
+      console.error('handleSend error:', error)
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error: ' + (error?.message || 'Intenta de nuevo') }])
     } finally {
       setLoading(false)
     }
@@ -819,6 +915,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
             <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Facturas</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('templates') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Templates</button>
             <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
             <button onClick={() => { setShowMenu(false); onNavigate('notes') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📝 Notas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
@@ -826,13 +923,15 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={async () => {
               setShowMenu(false)
               const d = new Date()
-              generatePLReport(await db.events.toArray(), await db.jobs.toArray(), new Date(d.getFullYear(), d.getMonth(), 1).getTime(), Date.now(), 'este mes')
-              setMessages(prev => [...prev, { role: 'assistant', content: '✅ P&L del mes' }])
+              const events = await db.events.toArray()
+              generatePLReport(events, new Date(d.getFullYear(), d.getMonth(), 1).getTime(), Date.now(), 'este mes')
+              setMessages(prev => [...prev, { role: 'assistant', content: '✅ P&L del mes generado' }])
             }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📈 P&L del Mes</button>
             <button onClick={async () => {
               setShowMenu(false)
-              generateARReport(await db.jobs.toArray(), await db.clients.toArray())
-              setMessages(prev => [...prev, { role: 'assistant', content: '✅ Cuentas por Cobrar' }])
+              const invoices = await db.invoices.toArray()
+              generateARReport(invoices)
+              setMessages(prev => [...prev, { role: 'assistant', content: '✅ Cuentas por Cobrar generado' }])
             }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💰 ¿Quién me Debe?</button>
 
             {/* Drive Section */}
