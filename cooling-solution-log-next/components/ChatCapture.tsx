@@ -510,7 +510,33 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const data = await response.json()
 
       // ====== HANDLE RESPONSE TYPES ======
-      
+      // ====== HANDLE SAVE_EVENT DIRECTO DEL API ======
+if (data.type === 'SAVE_EVENT' && data.payload) {
+  try {
+    await db.events.add({
+      timestamp: data.payload.timestamp || Date.now(),
+      type: data.payload.type,
+      status: 'completed',
+      subtype: data.payload.subtype,
+      category: data.payload.category,
+      amount: data.payload.amount,
+      payment_method: data.payload.payment_method,
+      vendor: data.payload.vendor,
+      client: data.payload.client,
+      vehicle_id: data.payload.vehicle_id,
+      note: data.payload.note,
+      expense_type: data.payload.expense_type || 'business'
+    })
+    setMessages(prev => [...prev, { 
+      role: 'assistant', 
+      content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}` 
+    }])
+    syncToDrive()
+    return
+  } catch (e) {
+    console.error('SAVE_EVENT error:', e)
+  }
+}
       if (data.type === 'GENERATE_PL') {
         const { period, periodLabel } = data.payload
         const { startDate, endDate } = getDateRange(period, periodLabel)

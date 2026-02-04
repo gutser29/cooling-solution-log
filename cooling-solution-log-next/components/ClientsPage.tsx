@@ -39,7 +39,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [editForm, setEditForm] = useState<Partial<Client>>({})
   const [filter, setFilter] = useState<'all' | 'residential' | 'commercial'>('all')
   
-  // Upload states
   const [showPhotoUpload, setShowPhotoUpload] = useState(false)
   const [showDocUpload, setShowDocUpload] = useState(false)
   const [photoCategory, setPhotoCategory] = useState<'before' | 'after' | 'diagnostic' | 'other'>('other')
@@ -51,10 +50,18 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const photoInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
 
+  // ========== ARREGLADO: Query de clientes con boolean ==========
   const loadClients = useCallback(async () => {
-    const all = await db.clients.where('active').equals(1).toArray()
-    setClients(all.sort((a, b) => (a.first_name + a.last_name).localeCompare(b.first_name + b.last_name)))
-    setLoading(false)
+    try {
+      const all = await db.clients.toArray()
+      const active = all.filter(c => c.active === true)
+      setClients(active.sort((a, b) => (a.first_name + a.last_name).localeCompare(b.first_name + b.last_name)))
+    } catch (error) {
+      console.error('Error loading clients:', error)
+      setClients([])
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { loadClients() }, [loadClients])
@@ -72,7 +79,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     ).sort((a, b) => b.timestamp - a.timestamp)
     setClientEvents(related)
     
-    // Load photos
     const photos = await db.client_photos.toArray()
     const clientPhotosFiltered = photos.filter(p => 
       p.client_id === client.id || 
@@ -80,7 +86,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
     setClientPhotos(clientPhotosFiltered)
     
-    // Load documents
     const docs = await db.client_documents.toArray()
     const clientDocsFiltered = docs.filter(d => 
       d.client_id === client.id || 
@@ -110,21 +115,26 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
 
   const saveEdit = async () => {
     if (!selectedClient?.id || !editForm) return
-    await db.clients.update(selectedClient.id, {
-      first_name: editForm.first_name || selectedClient.first_name,
-      last_name: editForm.last_name || selectedClient.last_name,
-      phone: editForm.phone || '',
-      email: editForm.email || '',
-      address: editForm.address || '',
-      type: editForm.type || selectedClient.type,
-      notes: editForm.notes || '',
-      updated_at: Date.now()
-    })
-    const updated = await db.clients.get(selectedClient.id)
-    if (updated) {
-      setSelectedClient(updated)
-      setViewMode('detail')
-      loadClients()
+    try {
+      await db.clients.update(selectedClient.id, {
+        first_name: editForm.first_name || selectedClient.first_name,
+        last_name: editForm.last_name || selectedClient.last_name,
+        phone: editForm.phone || '',
+        email: editForm.email || '',
+        address: editForm.address || '',
+        type: editForm.type || selectedClient.type,
+        notes: editForm.notes || '',
+        updated_at: Date.now()
+      })
+      const updated = await db.clients.get(selectedClient.id)
+      if (updated) {
+        setSelectedClient(updated)
+        setViewMode('detail')
+        loadClients()
+      }
+    } catch (error) {
+      console.error('Error saving client:', error)
+      alert('Error al guardar cliente')
     }
   }
 
@@ -133,21 +143,27 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       alert('El nombre es requerido')
       return
     }
-    const now = Date.now()
-    await db.clients.add({
-      first_name: editForm.first_name || '',
-      last_name: editForm.last_name || '',
-      phone: editForm.phone || '',
-      email: editForm.email || '',
-      address: editForm.address || '',
-      type: editForm.type || 'residential',
-      notes: editForm.notes || '',
-      active: true,
-      created_at: now,
-      updated_at: now
-    })
-    setViewMode('list')
-    loadClients()
+    try {
+      const now = Date.now()
+      await db.clients.add({
+        first_name: editForm.first_name || '',
+        last_name: editForm.last_name || '',
+        phone: editForm.phone || '',
+        email: editForm.email || '',
+        address: editForm.address || '',
+        type: editForm.type || 'residential',
+        notes: editForm.notes || '',
+        active: true,
+        created_at: now,
+        updated_at: now
+      })
+      setViewMode('list')
+      loadClients()
+      alert('✅ Cliente creado')
+    } catch (error) {
+      console.error('Error creating client:', error)
+      alert('Error al crear cliente')
+    }
   }
 
   const toggleActive = async () => {
@@ -167,7 +183,17 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     generatePhotoReport(clientPhotos, clientName)
   }
 
-  // ========== UPLOAD PHOTO ==========
+  // ========== NUEVO: Generar PDF de lista de clientes ==========
+  const handleGenerateClientListPDF = async () => {
+    try {
+      const { generateClientListPDF } = await import('@/lib/pdfGenerator')
+      generateClientListPDF(clients)
+    } catch (error) {
+      console.error('Error generating client list PDF:', error)
+      alert('Error al generar PDF')
+    }
+  }
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedClient || !e.target.files?.length) return
     const file = e.target.files[0]
@@ -189,7 +215,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       created_at: now
     })
     
-    // Reload photos
     const photos = await db.client_photos.toArray()
     const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
     setClientPhotos(photos.filter(p => p.client_id === selectedClient.id || p.client_name?.toLowerCase().includes(clientName)))
@@ -201,7 +226,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     alert('✅ Foto guardada')
   }
 
-  // ========== UPLOAD DOCUMENT ==========
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedClient || !e.target.files?.length) return
     const file = e.target.files[0]
@@ -225,7 +249,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       created_at: now
     })
     
-    // Reload docs
     const docs = await db.client_documents.toArray()
     const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
     setClientDocs(docs.filter(d => d.client_id === selectedClient.id || d.client_name?.toLowerCase().includes(clientName)))
@@ -238,7 +261,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     alert('✅ Documento guardado')
   }
 
-  // ========== VIEW DOCUMENT ==========
   const viewDocument = (doc: ClientDocument) => {
     const link = document.createElement('a')
     link.href = doc.file_data
@@ -256,7 +278,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     return matchSearch && matchFilter
   })
 
-  // ========== LIST VIEW ==========
   if (viewMode === 'list') {
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100">
@@ -266,6 +287,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <h1 className="text-xl font-bold">👥 Clientes</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={handleGenerateClientListPDF} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium">📄 PDF</button>
             <button onClick={startNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">+ Nuevo</button>
             <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
           </div>
@@ -327,7 +349,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
   }
 
-  // ========== NEW/EDIT VIEW ==========
   if (viewMode === 'new' || viewMode === 'edit') {
     const isNew = viewMode === 'new'
     return (
@@ -387,7 +408,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
   }
 
-  // ========== DETAIL VIEW ==========
   if (viewMode === 'detail' && selectedClient) {
     const totalJobs = clientJobs.length
     const totalCharged = clientJobs.reduce((s, j) => s + j.total_charged, 0)
@@ -405,7 +425,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
-          {/* Client Info */}
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
             <h2 className="text-xl font-bold text-gray-100 mb-2">{selectedClient.first_name} {selectedClient.last_name}</h2>
             <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
@@ -417,7 +436,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">"{selectedClient.notes}"</p>}
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
               <p className="text-2xl font-bold text-gray-200">{totalJobs}</p>
@@ -433,7 +451,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => setShowPhotoUpload(true)} className="bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-3 border border-white/5 text-center transition-colors">
               <span className="text-2xl">📷</span>
@@ -445,7 +462,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </button>
           </div>
 
-          {/* Photo Report Button */}
           {clientPhotos.length > 0 && (
             <button onClick={handleGeneratePhotoReport} className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors">
               <div className="flex items-center gap-3">
@@ -459,7 +475,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </button>
           )}
 
-          {/* Photos Preview */}
           {clientPhotos.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">📷 Fotos ({clientPhotos.length})</h3>
@@ -479,7 +494,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           )}
 
-          {/* Documents */}
           {clientDocs.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">📄 Documentos ({clientDocs.length})</h3>
@@ -498,7 +512,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           )}
 
-          {/* Jobs */}
           {clientJobs.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">🔧 Trabajos</h3>
@@ -523,7 +536,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           )}
 
-          {/* Events */}
           {clientEvents.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">📋 Eventos</h3>
@@ -544,7 +556,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
           )}
         </div>
 
-        {/* Photo Upload Modal */}
         {showPhotoUpload && (
           <>
             <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowPhotoUpload(false)} />
@@ -573,7 +584,6 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
           </>
         )}
 
-        {/* Document Upload Modal */}
         {showDocUpload && (
           <>
             <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowDocUpload(false)} />

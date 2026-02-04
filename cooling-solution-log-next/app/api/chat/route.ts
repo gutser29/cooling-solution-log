@@ -53,6 +53,41 @@ export async function POST(request: Request) {
 
     const lastMsg = messages[messages.length - 1]
     const userText = (lastMsg.content || '').toLowerCase()
+    // ====== PATTERN MATCHING PARA GASTOS COMUNES ======
+const gastoMatch = userText.match(/(?:gast[eéo]|pagu[eé])\s+(?:\$)?(\d+(?:\.\d+)?)\s+(?:en|de|por)\s+(\w+)/i)
+
+if (gastoMatch) {
+  const [_, amount, item] = gastoMatch
+  
+  const categoryMap: Record<string, { category: string, subtype: string }> = {
+    'gasolina': { category: 'Gasolina', subtype: 'gas' },
+    'gas': { category: 'Gasolina', subtype: 'gas' },
+    'comida': { category: 'Comida', subtype: 'food' },
+    'almuerzo': { category: 'Comida', subtype: 'food' },
+    'desayuno': { category: 'Comida', subtype: 'food' },
+    'cena': { category: 'Comida', subtype: 'food' },
+    'peaje': { category: 'Peajes', subtype: 'toll' },
+    'peajes': { category: 'Peajes', subtype: 'toll' },
+    'materiales': { category: 'Materiales', subtype: 'materials' },
+    'herramientas': { category: 'Herramientas', subtype: 'tools' }
+  }
+  
+  const itemLower = item.toLowerCase()
+  const catInfo = categoryMap[itemLower] || { category: 'Gastos', subtype: 'other' }
+  
+  return NextResponse.json({
+    type: 'SAVE_EVENT',
+    payload: {
+      type: 'expense',
+      subtype: catInfo.subtype,
+      category: catInfo.category,
+      amount: parseFloat(amount),
+      vendor: item,
+      expense_type: 'business',
+      timestamp: Date.now()
+    }
+  })
+}
 
     // ====== 1) DETECCIÓN DE REPORTES (bypass Claude - SOLO P&L y AR) ======
     // IMPORTANTE: Solo interceptamos P&L y cuentas por cobrar
@@ -133,8 +168,19 @@ Categorías gasto: Gasolina, Comida, Materiales, Herramientas, Seguros, Peajes, 
 Categorías ingreso: Servicio, Instalación, Reparación, Mantenimiento, Emergencia, Contrato
 
 ## SAVE_CLIENT (Crear cliente nuevo)
-Cuando diga "nuevo cliente", "agregar cliente", "cliente nuevo":
-SAVE_CLIENT:{"first_name":"José","last_name":"Rivera","phone":"787-555-1234","email":"jose@email.com","address":"Bayamón, PR","type":"residential","notes":"Referido por María"}
+Cuando diga "nuevo cliente", "agregar cliente", "crea un cliente", "añade cliente":
+
+IMPORTANTE: 
+- Si SOLO dice "nuevo cliente" sin dar datos → PREGUNTA nombre y teléfono
+- Si da nombre completo → crea cliente con ese nombre
+- Si da solo nombre → PREGUNTA apellido (opcional) y teléfono
+
+Ejemplos:
+"nuevo cliente Juan Rivera 787-555-1234" → Crear directo
+"nuevo cliente farmacia caridad" → Crear con first_name="Farmacia Caridad", type="commercial"
+"nuevo cliente" → PREGUNTAR: "¿Cómo se llama el cliente?"
+
+SAVE_CLIENT:{"first_name":"José","last_name":"Rivera","phone":"787-555-1234","email":"jose@email.com","address":"Bayamón, PR","type":"residential","notes":""}
 
 type: "residential" o "commercial"
 
