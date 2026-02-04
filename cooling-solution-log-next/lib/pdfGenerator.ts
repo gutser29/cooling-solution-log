@@ -6,9 +6,9 @@ import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument } f
 const COMPANY_NAME = 'Cooling Solution'
 const COMPANY_SLOGAN = '"Donde tu confort es nuestra prioridad"'
 const COMPANY_ADDRESS = 'PO BOX 168'
-const COMPANY_CITY = 'Toa Alta, Puerto Rico 00954'
+const COMPANY_CITY = 'Toa Alta, PR 00954'
 const COMPANY_PHONE = '939-425-6081'
-const COMPANY_EMAIL = 'Sergio.gutierrez@coolingsolutionpr.com'
+const COMPANY_EMAIL = 'sergio.gutierrez@coolingsolutionpr.com'
 
 // ============ LOGO BASE64 ============
 const LOGO_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAfQAAAH0CAYAAADL1t+KAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAEtmlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSfvu78nIGlkPSdXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQnPz4KPHg6eG1wbWV0YSB4bWxuczp4PSdhZG9iZTpuczptZXRhLyc+CjxyZGY6UkRGIHhtbG5zOnJkZj0naHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyc+CgogPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9JycKICB4bWxuczpBdHRyaWI9J2h0dHA6Ly9ucy5hdHRyaWJ1dGlvbi5jb20vYWRzLzEuMC8nPgogIDxBdHRyaWI6QWRzPgogICA8cmRmOlNlcT4KICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0nUmVzb3VyY2UnPgogICAgIDxBdHRyaWI6Q3JlYXRlZD4yMDI1LTA2LTA4PC9BdHRyaWI6Q3JlYXRlZD4KICAgICA8QXR0cmliOkV4dElkPmIwYmY4Mjc0LTJlMmEtNGNlYy05M2FiLTZiZTc5ZDE4YWQ2YjwvQXR0cmliOkV4dElkPgogICAgIDxBdHRyaWI6RmJJZD41MjUyNjU5MTQxNzk1ODA8L0F0dHJpYjpGYklkPgogICAgIDxBdHRyaWI6VG91Y2hUeXBlPjI8L0F0dHJpYjpUb3VjaFR5cGU+CiAgICA8L3JkZjpsaT4KICAgPC9yZGY6U2VxPgogIDwvQXR0cmliOkFkcz4KIDwvcmRmOkRlc2NyaXB0aW9uPgoKIDxyZGY6RGVzY3JpcHRpb24gcmRmOmFib3V0PScnCiAgeG1sbnM6ZGM9J2h0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvJz4KICA8ZGM6dGl0bGU+CiAgIDxyZGY6QWx0PgogICAgPHJkZjpsaSB4bWw6bGFuZz0neC1kZWZhdWx0Jz5Db29saW5nIFNvbHV0aW9uIC0gMTwvcmRmOmxpPgogICA8L3JkZjpBbHQ+CiAgPC9kYzp0aXRsZT4KIDwvcmRmOkRlc2NyaXB0aW9uPgoKIDxyZGY6RGVzY3JpcHRp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"
@@ -57,7 +57,7 @@ export function generateInvoiceNumber(type: 'invoice' | 'quote'): string {
   return `${prefix}-${yr}${mo}-${rand}`
 }
 
-// ============ INVOICE PDF ============
+// ============ INVOICE PDF - ESTILO ANTHROPIC ============
 export function generateInvoicePDF(invoice: Invoice): Blob {
   const doc = new jsPDF()
   const pageW = doc.internal.pageSize.getWidth()
@@ -67,129 +67,138 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   const marginL = 20
   const marginR = 20
 
-  // === TITLE ===
+  // === TITLE (grande, arriba izquierda) ===
   doc.setFontSize(32)
   doc.setTextColor(30, 30, 30)
   doc.text(title, marginL, 28)
 
-  // === LOGO ===
+  // === LOGO (arriba derecha) ===
   try {
-    doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 14, 40, 17)
+    doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 35, 12, 35, 15)
   } catch { }
 
-  // === INVOICE META ===
-  let y = 38
+  // === INVOICE META (debajo del título) ===
+  let y = 40
   doc.setFontSize(10)
   doc.setTextColor(30, 30, 30)
   
   doc.setFont('helvetica', 'bold')
-  doc.text(isQuote ? 'Quote number' : 'Invoice number', marginL, y)
+  doc.text('Invoice number', marginL, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(invoice.invoice_number, marginL + 40, y)
+  doc.text(invoice.invoice_number, marginL + 35, y)
   
   y += 6
   doc.setFont('helvetica', 'bold')
   doc.text('Date of issue', marginL, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(formatDate(invoice.issue_date), marginL + 40, y)
+  doc.text(formatDate(invoice.issue_date), marginL + 35, y)
   
   y += 6
   if (invoice.due_date && !isQuote) {
     doc.setFont('helvetica', 'bold')
     doc.text('Date due', marginL, y)
     doc.setFont('helvetica', 'normal')
-    doc.text(formatDate(invoice.due_date), marginL + 40, y)
+    doc.text(formatDate(invoice.due_date), marginL + 35, y)
   }
   if (isQuote && invoice.expiration_date) {
     doc.setFont('helvetica', 'bold')
     doc.text('Valid until', marginL, y)
     doc.setFont('helvetica', 'normal')
-    doc.text(formatDate(invoice.expiration_date), marginL + 40, y)
+    doc.text(formatDate(invoice.expiration_date), marginL + 35, y)
   }
 
-  // === COMPANY INFO & BILL TO ===
-  y = 65
-  const colMid = pageW / 2 + 5
+  // === COMPANY INFO (izquierda) & BILL TO (derecha) - EN PARALELO ===
+  y = 68
+  const colRight = 110
 
-  doc.setFontSize(9)
-  doc.setTextColor(80, 80, 80)
-  doc.text(COMPANY_NAME, marginL, y)
-  doc.text(COMPANY_ADDRESS, marginL, y + 4)
-  doc.text(COMPANY_CITY, marginL, y + 8)
-  doc.text(COMPANY_PHONE, marginL, y + 12)
-  doc.text(COMPANY_EMAIL, marginL, y + 16)
-
+  // Company info (izquierda)
+  doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(30, 30, 30)
-  doc.text('Bill to', colMid, y)
+  doc.text(COMPANY_NAME, marginL, y)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(60, 60, 60)
+  doc.text(COMPANY_ADDRESS, marginL, y + 5)
+  doc.text(COMPANY_CITY, marginL, y + 10)
+  doc.text(COMPANY_PHONE, marginL, y + 15)
+  doc.text(COMPANY_EMAIL, marginL, y + 20)
+
+  // Bill to (derecha)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(30, 30, 30)
+  doc.text('Bill to', colRight, y)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(60, 60, 60)
   let billY = y + 5
-  doc.text(invoice.client_name, colMid, billY)
-  if (invoice.client_address) { billY += 5; doc.text(invoice.client_address, colMid, billY) }
-  if (invoice.client_phone) { billY += 5; doc.text(invoice.client_phone, colMid, billY) }
-  if (invoice.client_email) { billY += 5; doc.text(invoice.client_email, colMid, billY) }
+  doc.text(invoice.client_name, colRight, billY)
+  if (invoice.client_address) { billY += 5; doc.text(invoice.client_address, colRight, billY) }
+  if (invoice.client_phone) { billY += 5; doc.text(invoice.client_phone, colRight, billY) }
+  if (invoice.client_email) { billY += 5; doc.text(invoice.client_email, colRight, billY) }
 
   // === ITEMS TABLE ===
-  y = 100
-  doc.setDrawColor(200, 200, 200)
+  y = 105
+  
+  // Header de tabla
+  doc.setDrawColor(220, 220, 220)
   doc.setLineWidth(0.3)
   doc.line(marginL, y, pageW - marginR, y)
   
-  y += 8
-  doc.setFontSize(10)
-  doc.setTextColor(100, 100, 100)
+  y += 6
+  doc.setFontSize(9)
+  doc.setTextColor(80, 80, 80)
   doc.text('Description', marginL, y)
-  doc.text('Qty', pageW - marginR - 65, y, { align: 'right' })
-  doc.text('Unit price', pageW - marginR - 30, y, { align: 'right' })
+  doc.text('Qty', pageW - marginR - 55, y, { align: 'right' })
+  doc.text('Unit price', pageW - marginR - 25, y, { align: 'right' })
   doc.text('Amount', pageW - marginR, y, { align: 'right' })
   
-  y += 4
+  y += 3
   doc.line(marginL, y, pageW - marginR, y)
   
-  y += 8
+  // Rows
+  y += 7
+  doc.setFontSize(10)
   doc.setTextColor(30, 30, 30)
   invoice.items.forEach((item) => {
     doc.text(item.description, marginL, y)
-    doc.text(String(item.quantity), pageW - marginR - 65, y, { align: 'right' })
-    doc.text(formatCurrency(item.unit_price), pageW - marginR - 30, y, { align: 'right' })
+    doc.text(String(item.quantity), pageW - marginR - 55, y, { align: 'right' })
+    doc.text(formatCurrency(item.unit_price), pageW - marginR - 25, y, { align: 'right' })
     doc.text(formatCurrency(item.total), pageW - marginR, y, { align: 'right' })
-    y += 8
+    y += 7
   })
 
-  // === TOTALS ===
-  y += 8
-  const totalsLabelX = pageW - marginR - 50
+  // === TOTALS (derecha, estilo Anthropic) ===
+  y += 10
+  const labelX = pageW - marginR - 60
+  const valueX = pageW - marginR
   
+  doc.setFontSize(10)
   doc.setTextColor(60, 60, 60)
-  doc.text('Subtotal', totalsLabelX, y, { align: 'right' })
-  doc.text(formatCurrency(invoice.subtotal), pageW - marginR, y, { align: 'right' })
+  
+  doc.text('Subtotal', labelX, y)
+  doc.text(formatCurrency(invoice.subtotal), valueX, y, { align: 'right' })
   
   if (invoice.tax_rate > 0) {
     y += 6
-    doc.text(`Tax (${invoice.tax_rate}%)`, totalsLabelX, y, { align: 'right' })
-    doc.text(formatCurrency(invoice.tax_amount), pageW - marginR, y, { align: 'right' })
+    doc.text(`Tax (${invoice.tax_rate}%)`, labelX, y)
+    doc.text(formatCurrency(invoice.tax_amount), valueX, y, { align: 'right' })
   }
   
   y += 6
-  doc.text('Total', totalsLabelX, y, { align: 'right' })
-  doc.text(formatCurrency(invoice.total), pageW - marginR, y, { align: 'right' })
+  doc.text('Total', labelX, y)
+  doc.text(formatCurrency(invoice.total), valueX, y, { align: 'right' })
   
   y += 6
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(30, 30, 30)
-  doc.text('Amount due', totalsLabelX, y, { align: 'right' })
-  doc.text(`${formatCurrency(invoice.total)} USD`, pageW - marginR, y, { align: 'right' })
+  doc.text('Amount due', labelX, y)
+  doc.text(`${formatCurrency(invoice.total)} USD`, valueX, y, { align: 'right' })
   doc.setFont('helvetica', 'normal')
 
   // === NOTES ===
   if (invoice.notes) {
-    y += 18
+    y += 20
     doc.setFontSize(9)
     doc.setTextColor(80, 80, 80)
-    doc.text('Notes:', marginL, y)
-    y += 5
-    doc.setTextColor(60, 60, 60)
     const lines = doc.splitTextToSize(invoice.notes, pageW - marginL - marginR)
     doc.text(lines, marginL, y)
   }
@@ -204,15 +213,19 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     doc.setFont('helvetica', 'normal')
   }
 
-  // === FOOTER ===
-  doc.setDrawColor(200, 200, 200)
+  // === FOOTER (línea, eslogan centrado, página) ===
+  doc.setDrawColor(220, 220, 220)
   doc.setLineWidth(0.3)
   doc.line(marginL, pageH - 22, pageW - marginR, pageH - 22)
+  
   doc.setFontSize(9)
-  doc.setTextColor(100, 100, 100)
+  doc.setTextColor(0, 150, 150)
+  doc.setFont('helvetica', 'italic')
   doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 14, { align: 'center' })
-  doc.setTextColor(150, 150, 150)
-  doc.text('Page 1 of 1', pageW - marginR, pageH - 8, { align: 'right' })
+  doc.setFont('helvetica', 'normal')
+  
+  doc.setTextColor(120, 120, 120)
+  doc.text('Page 1 of 1', pageW - marginR, pageH - 6, { align: 'right' })
 
   return doc.output('blob')
 }
