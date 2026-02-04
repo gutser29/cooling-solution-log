@@ -605,8 +605,8 @@ export function generatePhotoReport(
   addHeader(currentPage)
 
   let y = 70
-  const imgWidth = 80
-  const imgHeight = 60
+  const imgWidth = 170
+  const imgHeight = 130
 
   // Iterar por cada fecha
   sortedDates.forEach((dateKey, dateIndex) => {
@@ -658,66 +658,55 @@ export function generatePhotoReport(
       doc.setFont('helvetica', 'normal')
       y += 6
 
-      let x = marginL
       catPhotos.forEach((photo, idx) => {
         // Check si necesitamos nueva página
-        if (y > pageH - 85) {
+        if (y > pageH - 160) {
           addFooter(currentPage, sortedDates.length)
           doc.addPage()
           currentPage++
           addHeader(currentPage)
           y = 70
-          x = marginL
         }
 
-        // Añadir imagen
+        // Añadir imagen centrada
+        const imgX = (pageW - imgWidth) / 2
         try {
-          doc.addImage(photo.photo_data, 'JPEG', x, y, imgWidth, imgHeight)
+          doc.addImage(photo.photo_data, 'JPEG', imgX, y, imgWidth, imgHeight)
           
           // Borde sutil
           doc.setDrawColor(220, 220, 220)
           doc.setLineWidth(0.3)
-          doc.rect(x, y, imgWidth, imgHeight)
+          doc.rect(imgX, y, imgWidth, imgHeight)
         } catch {
           doc.setDrawColor(200, 200, 200)
-          doc.rect(x, y, imgWidth, imgHeight)
-          doc.setFontSize(8)
+          doc.rect(imgX, y, imgWidth, imgHeight)
+          doc.setFontSize(10)
           doc.setTextColor(150, 150, 150)
-          doc.text('Imagen no disponible', x + 15, y + 30)
+          doc.text('Imagen no disponible', imgX + 50, y + 65)
         }
 
         // Descripción
-        let descY = y + imgHeight + 3
+        let descY = y + imgHeight + 4
         if (photo.description) {
-          doc.setFontSize(8)
+          doc.setFontSize(9)
           doc.setTextColor(40, 40, 40)
           const descLines = doc.splitTextToSize(photo.description, imgWidth)
-          doc.text(descLines.slice(0, 2), x, descY)
-          descY += descLines.slice(0, 2).length * 3
+          doc.text(descLines.slice(0, 2), imgX, descY)
+          descY += descLines.slice(0, 2).length * 4
         }
 
         // Equipo/ubicación si existe
         if (photo.equipment_type || photo.location) {
-          doc.setFontSize(7)
+          doc.setFontSize(8)
           doc.setTextColor(100, 100, 100)
           const info = [photo.equipment_type, photo.location].filter(Boolean).join(' | ')
-          doc.text(info, x, descY + 2)
+          doc.text(info, imgX, descY + 3)
         }
 
-        // Mover a siguiente posición (2 por fila)
-        if ((idx + 1) % 2 === 0) {
-          x = marginL
-          y += imgHeight + 18
-        } else {
-          x = marginL + imgWidth + 10
-        }
+        // 1 imagen por fila para máxima calidad
+        y += imgHeight + 25
       })
 
-      // Si número impar, mover a siguiente fila
-      if (catPhotos.length % 2 !== 0) {
-        y += imgHeight + 18
-      }
-      
       y += 5 // Espacio entre categorías
     })
 
