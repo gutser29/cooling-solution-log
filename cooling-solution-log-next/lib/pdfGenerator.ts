@@ -48,6 +48,25 @@ function getCategoryLabel(cat: string): string {
   return labels[cat] || cat.toUpperCase()
 }
 
+// Extraer base64 puro y formato de imagen
+function parseBase64Image(dataUrl: string): { data: string; format: string } {
+  // Si ya es base64 puro (sin prefijo)
+  if (!dataUrl.startsWith('data:')) {
+    return { data: dataUrl, format: 'JPEG' }
+  }
+  
+  // Extraer formato del prefijo
+  const matches = dataUrl.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/i)
+  if (matches) {
+    const format = matches[1].toUpperCase() === 'JPG' ? 'JPEG' : matches[1].toUpperCase()
+    return { data: matches[2], format: format === 'WEBP' ? 'JPEG' : format }
+  }
+  
+  // Fallback: quitar prefijo genérico
+  const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+  return { data: base64Data, format: 'JPEG' }
+}
+
 export function generateInvoiceNumber(type: 'invoice' | 'quote'): string {
   const prefix = type === 'invoice' ? 'CS-INV' : 'CS-COT'
   const d = new Date()
@@ -671,7 +690,8 @@ export function generatePhotoReport(
         // Añadir imagen centrada
         const imgX = (pageW - imgWidth) / 2
         try {
-          doc.addImage(photo.photo_data, 'JPEG', imgX, y, imgWidth, imgHeight)
+          const { data, format } = parseBase64Image(photo.photo_data)
+          doc.addImage(data, format, imgX, y, imgWidth, imgHeight, undefined, 'FAST')
           
           // Borde sutil
           doc.setDrawColor(220, 220, 220)

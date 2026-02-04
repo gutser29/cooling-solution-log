@@ -11,16 +11,20 @@ interface ClientsPageProps {
 
 type ViewMode = 'list' | 'detail' | 'edit' | 'new'
 
-const compressImage = (base64: string, maxWidth = 1800): Promise<string> => {
+const compressImage = (base64: string, maxWidth = 2000): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => {
       const canvas = document.createElement('canvas')
       let { width, height } = img
       if (width > maxWidth) { height = (height * maxWidth) / width; width = maxWidth }
-      canvas.width = width; canvas.height = height
-      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
-      resolve(canvas.toDataURL('image/jpeg', 0.92))
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')!
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/png'))
     }
     img.src = base64
   })
