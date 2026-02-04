@@ -11,7 +11,7 @@ interface ClientsPageProps {
 
 type ViewMode = 'list' | 'detail' | 'edit' | 'new'
 
-const compressImage = (base64: string, maxWidth = 1024): Promise<string> => {
+const compressImage = (base64: string, maxWidth = 1800): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => {
@@ -20,7 +20,7 @@ const compressImage = (base64: string, maxWidth = 1024): Promise<string> => {
       if (width > maxWidth) { height = (height * maxWidth) / width; width = maxWidth }
       canvas.width = width; canvas.height = height
       canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
-      resolve(canvas.toDataURL('image/jpeg', 0.8))
+      resolve(canvas.toDataURL('image/jpeg', 0.92))
     }
     img.src = base64
   })
@@ -656,7 +656,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                   <input value={photoLocation} onChange={e => setPhotoLocation(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Techo, Cuarto frío, etc." />
                 </div>
               </div>
-              <input ref={photoInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} className="hidden" />
+              <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
               <div className="flex gap-2">
                 <button onClick={() => setShowPhotoUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
                 <button onClick={() => photoInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📷 Tomar/Seleccionar</button>
