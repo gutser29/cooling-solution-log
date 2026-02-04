@@ -53,41 +53,58 @@ export async function POST(request: Request) {
 
     const lastMsg = messages[messages.length - 1]
     const userText = (lastMsg.content || '').toLowerCase()
-    // ====== PATTERN MATCHING PARA GASTOS COMUNES ======
-const gastoMatch = userText.match(/(?:gast[eéo]|pagu[eé])\s+(?:\$)?(\d+(?:\.\d+)?)\s+(?:en|de|por)\s+(\w+)/i)
 
-if (gastoMatch) {
-  const [_, amount, item] = gastoMatch
-  
-  const categoryMap: Record<string, { category: string, subtype: string }> = {
-    'gasolina': { category: 'Gasolina', subtype: 'gas' },
-    'gas': { category: 'Gasolina', subtype: 'gas' },
-    'comida': { category: 'Comida', subtype: 'food' },
-    'almuerzo': { category: 'Comida', subtype: 'food' },
-    'desayuno': { category: 'Comida', subtype: 'food' },
-    'cena': { category: 'Comida', subtype: 'food' },
-    'peaje': { category: 'Peajes', subtype: 'toll' },
-    'peajes': { category: 'Peajes', subtype: 'toll' },
-    'materiales': { category: 'Materiales', subtype: 'materials' },
-    'herramientas': { category: 'Herramientas', subtype: 'tools' }
-  }
-  
-  const itemLower = item.toLowerCase()
-  const catInfo = categoryMap[itemLower] || { category: 'Gastos', subtype: 'other' }
-  
-  return NextResponse.json({
-    type: 'SAVE_EVENT',
-    payload: {
-      type: 'expense',
-      subtype: catInfo.subtype,
-      category: catInfo.category,
-      amount: parseFloat(amount),
-      vendor: item,
-      expense_type: 'business',
-      timestamp: Date.now()
+    // ====== PATTERN MATCHING PARA GASTOS ======
+    const gastoMatch = userText.match(/(?:gast[eéo]|pagu[eé])\s+(?:\$)?(\d+(?:\.\d+)?)\s+(?:en|de|por)\s+(\w+)/i)
+
+    if (gastoMatch) {
+      const [_, amount, item] = gastoMatch
+      
+      // Detectar método de pago
+      let paymentMethod = 'cash'
+      if (userText.includes('capital one') || userText.includes('capital')) paymentMethod = 'capital_one'
+      else if (userText.includes('chase')) paymentMethod = 'chase_visa'
+      else if (userText.includes('ath')) paymentMethod = 'ath_movil'
+      else if (userText.includes('sams') || userText.includes('sam')) paymentMethod = 'sams_mastercard'
+      else if (userText.includes('efectivo')) paymentMethod = 'cash'
+      
+      // Detectar vehículo
+      let vehicleId = undefined
+      if (userText.includes('van') || userText.includes('camioneta')) vehicleId = 'van'
+      else if (userText.includes('carro') || userText.includes('car')) vehicleId = 'car'
+      else if (userText.includes('truck') || userText.includes('pickup')) vehicleId = 'truck'
+      
+      const categoryMap: Record<string, { category: string, subtype: string }> = {
+        'gasolina': { category: 'Gasolina', subtype: 'gas' },
+        'gas': { category: 'Gasolina', subtype: 'gas' },
+        'comida': { category: 'Comida', subtype: 'food' },
+        'almuerzo': { category: 'Comida', subtype: 'food' },
+        'desayuno': { category: 'Comida', subtype: 'food' },
+        'cena': { category: 'Comida', subtype: 'food' },
+        'peaje': { category: 'Peajes', subtype: 'toll' },
+        'peajes': { category: 'Peajes', subtype: 'toll' },
+        'materiales': { category: 'Materiales', subtype: 'materials' },
+        'herramientas': { category: 'Herramientas', subtype: 'tools' }
+      }
+      
+      const itemLower = item.toLowerCase()
+      const catInfo = categoryMap[itemLower] || { category: 'Gastos', subtype: 'other' }
+      
+      return NextResponse.json({
+        type: 'SAVE_EVENT',
+        payload: {
+          type: 'expense',
+          subtype: catInfo.subtype,
+          category: catInfo.category,
+          amount: parseFloat(amount),
+          vendor: item,
+          payment_method: paymentMethod,
+          vehicle_id: vehicleId,
+          expense_type: 'business',
+          timestamp: Date.now()
+        }
+      })
     }
-  })
-}
 
     // ====== 1) DETECCIÓN DE REPORTES (bypass Claude - SOLO P&L y AR) ======
     // IMPORTANTE: Solo interceptamos P&L y cuentas por cobrar

@@ -935,6 +935,25 @@ if (data.type === 'SAVE_EVENT' && data.payload) {
           <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 overflow-hidden border border-white/10">
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
+            <button 
+  onClick={() => { 
+    setShowMenu(false); 
+    onNavigate('expenses'); 
+  }}
+  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
+>
+  💵 Gastos
+</button>
+
+<button 
+  onClick={() => { 
+    setShowMenu(false); 
+    onNavigate('templates'); 
+  }}
+  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
+>
+  📋 Templates
+</button>
             <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Facturas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('templates') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Templates</button>
             <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
@@ -954,7 +973,24 @@ if (data.type === 'SAVE_EVENT' && data.payload) {
               generateARReport(invoices)
               setMessages(prev => [...prev, { role: 'assistant', content: '✅ Cuentas por Cobrar generado' }])
             }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💰 ¿Quién me Debe?</button>
-
+<button 
+  onClick={() => { 
+    setShowMenu(false); 
+    onNavigate('expenses'); 
+  }}
+  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
+>
+  💵 Gastos
+</button>
+<button 
+  onClick={() => { 
+    setShowMenu(false); 
+    onNavigate('templates'); 
+  }}
+  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
+>
+  📋 Templates
+</button>
             {/* Drive Section */}
             <div className="border-t border-white/10">
               {driveConnected ? (
