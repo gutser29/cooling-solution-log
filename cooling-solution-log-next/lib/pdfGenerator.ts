@@ -48,25 +48,6 @@ function getCategoryLabel(cat: string): string {
   return labels[cat] || cat.toUpperCase()
 }
 
-// Extraer base64 puro y formato de imagen
-function parseBase64Image(dataUrl: string): { data: string; format: string } {
-  // Si ya es base64 puro (sin prefijo)
-  if (!dataUrl.startsWith('data:')) {
-    return { data: dataUrl, format: 'JPEG' }
-  }
-  
-  // Extraer formato del prefijo
-  const matches = dataUrl.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/i)
-  if (matches) {
-    const format = matches[1].toUpperCase() === 'JPG' ? 'JPEG' : matches[1].toUpperCase()
-    return { data: matches[2], format: format === 'WEBP' ? 'JPEG' : format }
-  }
-  
-  // Fallback: quitar prefijo genérico
-  const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-  return { data: base64Data, format: 'JPEG' }
-}
-
 export function generateInvoiceNumber(type: 'invoice' | 'quote'): string {
   const prefix = type === 'invoice' ? 'CS-INV' : 'CS-COT'
   const d = new Date()
@@ -552,13 +533,6 @@ export function generatePhotoReport(
 
   // === HEADER ===
   const addHeader = (pageNum: number) => {
-    // Logo marca de agua (semi-transparente en esquina)
-    try {
-      doc.setGState(new (doc as any).GState({ opacity: 0.1 }))
-      doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - 60, 5, 50, 21)
-      doc.setGState(new (doc as any).GState({ opacity: 1 }))
-    } catch { }
-
     // Logo principal
     try {
       doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17)
@@ -602,13 +576,6 @@ export function generatePhotoReport(
 
   // === FOOTER ===
   const addFooter = (pageNum: number, totalPages: number) => {
-    // Marca de agua diagonal
-    doc.setGState(new (doc as any).GState({ opacity: 0.05 }))
-    doc.setFontSize(60)
-    doc.setTextColor(0, 150, 150)
-    doc.text(COMPANY_NAME, pageW / 2, pageH / 2, { align: 'center', angle: 45 })
-    doc.setGState(new (doc as any).GState({ opacity: 1 }))
-
     doc.setDrawColor(200, 200, 200)
     doc.setLineWidth(0.3)
     doc.line(marginL, pageH - 18, pageW - marginR, pageH - 18)
@@ -690,8 +657,8 @@ export function generatePhotoReport(
         // Añadir imagen centrada
         const imgX = (pageW - imgWidth) / 2
         try {
-          const { data, format } = parseBase64Image(photo.photo_data)
-          doc.addImage(data, format, imgX, y, imgWidth, imgHeight, undefined, 'FAST')
+          // Usar dataURL completo para preservar colores
+          doc.addImage(photo.photo_data, imgX, y, imgWidth, imgHeight)
           
           // Borde sutil
           doc.setDrawColor(220, 220, 220)
