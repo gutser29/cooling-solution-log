@@ -229,10 +229,13 @@ export interface ClientPhoto {
   client_name?: string
   job_id?: number
   invoice_id?: number
-  category: 'before' | 'after' | 'diagnostic' | 'receipt' | 'other'
+  category: 'before' | 'after' | 'diagnostic' | 'receipt' | 'equipment' | 'area' | 'other'
   description?: string
-  photo_data: string  // base64
+  photo_data: string
   timestamp: number
+  visit_date?: number
+  location?: string
+  equipment_type?: string
   created_at: number
 }
 
@@ -242,13 +245,16 @@ export interface ClientDocument {
   id?: number
   client_id?: number
   client_name?: string
+  employee_id?: number
+  employee_name?: string
   job_id?: number
   invoice_id?: number
-  doc_type: 'contract' | 'permit' | 'warranty' | 'manual' | 'receipt' | 'other'
+  doc_type: 'contract' | 'permit' | 'warranty' | 'manual' | 'receipt' | 'agreement' | 'other'
   file_name: string
-  file_type: string  // pdf, doc, jpg, etc.
-  file_data: string  // base64
+  file_type: string
+  file_data: string
   description?: string
+  expiration_date?: number
   timestamp: number
   created_at: number
 }

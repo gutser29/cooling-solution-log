@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
-import { generatePhotoReport } from '@/lib/pdfGenerator'
+import { generatePhotoReport, generateDocumentListPDF } from '@/lib/pdfGenerator'
 import type { Client, Job, EventRecord, ClientPhoto, ClientDocument } from '@/lib/types'
 
 interface ClientsPageProps {
@@ -41,16 +41,18 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   
   const [showPhotoUpload, setShowPhotoUpload] = useState(false)
   const [showDocUpload, setShowDocUpload] = useState(false)
-  const [photoCategory, setPhotoCategory] = useState<'before' | 'after' | 'diagnostic' | 'other'>('other')
+  const [photoCategory, setPhotoCategory] = useState<'before' | 'after' | 'diagnostic' | 'equipment' | 'area' | 'other'>('other')
   const [photoDesc, setPhotoDesc] = useState('')
-  const [docType, setDocType] = useState<'contract' | 'permit' | 'warranty' | 'manual' | 'receipt' | 'other'>('other')
+  const [photoEquipment, setPhotoEquipment] = useState('')
+  const [photoLocation, setPhotoLocation] = useState('')
+  const [docType, setDocType] = useState<'contract' | 'permit' | 'warranty' | 'manual' | 'receipt' | 'agreement' | 'other'>('other')
   const [docDesc, setDocDesc] = useState('')
   const [docName, setDocName] = useState('')
+  const [docExpiration, setDocExpiration] = useState('')
   
   const photoInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
 
-  // ========== ARREGLADO: Query de clientes con boolean ==========
   const loadClients = useCallback(async () => {
     try {
       const all = await db.clients.toArray()
@@ -83,14 +85,14 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     const clientPhotosFiltered = photos.filter(p => 
       p.client_id === client.id || 
       p.client_name?.toLowerCase().includes(clientName)
-    )
+    ).sort((a, b) => b.timestamp - a.timestamp)
     setClientPhotos(clientPhotosFiltered)
     
     const docs = await db.client_documents.toArray()
     const clientDocsFiltered = docs.filter(d => 
       d.client_id === client.id || 
       d.client_name?.toLowerCase().includes(clientName)
-    )
+    ).sort((a, b) => b.timestamp - a.timestamp)
     setClientDocs(clientDocsFiltered)
   }
 
@@ -183,7 +185,15 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     generatePhotoReport(clientPhotos, clientName)
   }
 
-  // ========== NUEVO: Generar PDF de lista de clientes ==========
+  const handleGenerateDocReport = () => {
+    if (!selectedClient || clientDocs.length === 0) {
+      alert('No hay documentos para este cliente')
+      return
+    }
+    const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`
+    generateDocumentListPDF(clientDocs, clientName)
+  }
+
   const handleGenerateClientListPDF = async () => {
     try {
       const { generateClientListPDF } = await import('@/lib/pdfGenerator')
@@ -210,17 +220,22 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
       category: photoCategory,
       description: photoDesc,
+      equipment_type: photoEquipment || undefined,
+      location: photoLocation || undefined,
       photo_data: compressed,
       timestamp: now,
+      visit_date: now,
       created_at: now
     })
     
     const photos = await db.client_photos.toArray()
     const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
-    setClientPhotos(photos.filter(p => p.client_id === selectedClient.id || p.client_name?.toLowerCase().includes(clientName)))
+    setClientPhotos(photos.filter(p => p.client_id === selectedClient.id || p.client_name?.toLowerCase().includes(clientName)).sort((a, b) => b.timestamp - a.timestamp))
     
     setShowPhotoUpload(false)
     setPhotoDesc('')
+    setPhotoEquipment('')
+    setPhotoLocation('')
     setPhotoCategory('other')
     if (photoInputRef.current) photoInputRef.current.value = ''
     alert('✅ Foto guardada')
@@ -245,17 +260,19 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       file_type: fileType,
       file_data: b64,
       description: docDesc,
+      expiration_date: docExpiration ? new Date(docExpiration).getTime() : undefined,
       timestamp: now,
       created_at: now
     })
     
     const docs = await db.client_documents.toArray()
     const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
-    setClientDocs(docs.filter(d => d.client_id === selectedClient.id || d.client_name?.toLowerCase().includes(clientName)))
+    setClientDocs(docs.filter(d => d.client_id === selectedClient.id || d.client_name?.toLowerCase().includes(clientName)).sort((a, b) => b.timestamp - a.timestamp))
     
     setShowDocUpload(false)
     setDocDesc('')
     setDocName('')
+    setDocExpiration('')
     setDocType('other')
     if (docInputRef.current) docInputRef.current.value = ''
     alert('✅ Documento guardado')
@@ -268,8 +285,27 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     link.click()
   }
 
+  const deletePhoto = async (photoId: number) => {
+    if (!confirm('¿Eliminar esta foto?')) return
+    await db.client_photos.delete(photoId)
+    setClientPhotos(prev => prev.filter(p => p.id !== photoId))
+  }
+
+  const deleteDoc = async (docId: number) => {
+    if (!confirm('¿Eliminar este documento?')) return
+    await db.client_documents.delete(docId)
+    setClientDocs(prev => prev.filter(d => d.id !== docId))
+  }
+
   const fmt = (n: number) => `$${n.toFixed(2)}`
   const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { month: 'short', day: 'numeric', year: 'numeric' })
+
+  const getCategoryIcon = (cat: string) => {
+    const icons: Record<string, string> = {
+      before: '📷', after: '✅', diagnostic: '🔍', equipment: '⚙️', area: '📐', other: '📎'
+    }
+    return icons[cat] || '📷'
+  }
 
   const filtered = clients.filter(c => {
     const name = `${c.first_name} ${c.last_name}`.toLowerCase()
@@ -278,6 +314,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     return matchSearch && matchFilter
   })
 
+  // ========== LIST VIEW ==========
   if (viewMode === 'list') {
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100">
@@ -349,6 +386,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
   }
 
+  // ========== NEW/EDIT VIEW ==========
   if (viewMode === 'new' || viewMode === 'edit') {
     const isNew = viewMode === 'new'
     return (
@@ -408,6 +446,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     )
   }
 
+  // ========== DETAIL VIEW ==========
   if (viewMode === 'detail' && selectedClient) {
     const totalJobs = clientJobs.length
     const totalCharged = clientJobs.reduce((s, j) => s + j.total_charged, 0)
@@ -425,6 +464,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
+          {/* Client Info */}
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
             <h2 className="text-xl font-bold text-gray-100 mb-2">{selectedClient.first_name} {selectedClient.last_name}</h2>
             <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
@@ -436,6 +476,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">"{selectedClient.notes}"</p>}
           </div>
 
+          {/* Stats */}
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
               <p className="text-2xl font-bold text-gray-200">{totalJobs}</p>
@@ -451,6 +492,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           </div>
 
+          {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => setShowPhotoUpload(true)} className="bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-3 border border-white/5 text-center transition-colors">
               <span className="text-2xl">📷</span>
@@ -462,56 +504,83 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </button>
           </div>
 
+          {/* Photo Report Button */}
           {clientPhotos.length > 0 && (
             <button onClick={handleGeneratePhotoReport} className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors">
               <div className="flex items-center gap-3">
                 <span className="text-2xl">📸</span>
                 <div className="text-left">
                   <p className="text-sm font-medium text-gray-200">Reporte de Fotos</p>
-                  <p className="text-xs text-gray-500">{clientPhotos.length} foto(s)</p>
+                  <p className="text-xs text-gray-500">{clientPhotos.length} foto(s) - Agrupadas por fecha</p>
                 </div>
               </div>
               <span className="text-blue-400 text-sm font-medium">PDF →</span>
             </button>
           )}
 
+          {/* Document Report Button */}
+          {clientDocs.length > 0 && (
+            <button onClick={handleGenerateDocReport} className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">📋</span>
+                <div className="text-left">
+                  <p className="text-sm font-medium text-gray-200">Lista de Documentos</p>
+                  <p className="text-xs text-gray-500">{clientDocs.length} documento(s)</p>
+                </div>
+              </div>
+              <span className="text-blue-400 text-sm font-medium">PDF →</span>
+            </button>
+          )}
+
+          {/* Photos Section */}
           {clientPhotos.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">📷 Fotos ({clientPhotos.length})</h3>
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {clientPhotos.slice(0, 6).map((photo, i) => (
-                  <div key={i} className="flex-shrink-0">
-                    <img src={photo.photo_data} alt={photo.description || 'Foto'} className="w-20 h-20 object-cover rounded-lg" />
-                    <p className="text-[10px] text-gray-500 mt-1 text-center capitalize">{photo.category}</p>
+              <div className="grid grid-cols-3 gap-2">
+                {clientPhotos.slice(0, 9).map((photo) => (
+                  <div key={photo.id} className="relative group">
+                    <img src={photo.photo_data} alt={photo.description || 'Foto'} className="w-full h-20 object-cover rounded-lg" />
+                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1 rounded">
+                      {getCategoryIcon(photo.category)}
+                    </div>
+                    <button 
+                      onClick={() => photo.id && deletePhoto(photo.id)}
+                      className="absolute top-1 right-1 bg-red-500/80 text-white text-xs w-5 h-5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    >×</button>
+                    <p className="text-[10px] text-gray-500 mt-1 truncate">{fmtDate(photo.timestamp)}</p>
                   </div>
                 ))}
-                {clientPhotos.length > 6 && (
-                  <div className="flex-shrink-0 w-20 h-20 bg-[#0b1220] rounded-lg flex items-center justify-center">
-                    <span className="text-gray-400 text-sm">+{clientPhotos.length - 6}</span>
-                  </div>
-                )}
               </div>
+              {clientPhotos.length > 9 && (
+                <p className="text-xs text-gray-500 mt-2 text-center">+{clientPhotos.length - 9} más...</p>
+              )}
             </div>
           )}
 
+          {/* Documents Section */}
           {clientDocs.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">📄 Documentos ({clientDocs.length})</h3>
               <div className="space-y-2">
-                {clientDocs.map((doc, i) => (
-                  <button key={i} onClick={() => viewDocument(doc)} className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#0b1220] transition-colors text-left">
+                {clientDocs.map((doc) => (
+                  <div key={doc.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#0b1220] transition-colors group">
                     <span className="text-xl">{doc.file_type === 'pdf' ? '📕' : '📄'}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-gray-200 truncate">{doc.file_name}</p>
                       <p className="text-xs text-gray-500 capitalize">{doc.doc_type} • {fmtDate(doc.timestamp)}</p>
                     </div>
-                    <span className="text-blue-400 text-xs">Descargar</span>
-                  </button>
+                    <button onClick={() => viewDocument(doc)} className="text-blue-400 text-xs">Descargar</button>
+                    <button 
+                      onClick={() => doc.id && deleteDoc(doc.id)}
+                      className="text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                    >Eliminar</button>
+                  </div>
                 ))}
               </div>
             </div>
           )}
 
+          {/* Jobs Section */}
           {clientJobs.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">🔧 Trabajos</h3>
@@ -536,6 +605,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           )}
 
+          {/* Events Section */}
           {clientEvents.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <h3 className="text-sm font-semibold text-gray-300 mb-3">📋 Eventos</h3>
@@ -556,17 +626,18 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
           )}
         </div>
 
+        {/* Photo Upload Modal */}
         {showPhotoUpload && (
           <>
             <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowPhotoUpload(false)} />
-            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4">
+            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4 max-h-[80vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-200">📷 Añadir Foto</h3>
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">Categoría</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['before', 'after', 'diagnostic', 'other'] as const).map(cat => (
+                <div className="grid grid-cols-3 gap-2">
+                  {(['before', 'after', 'diagnostic', 'equipment', 'area', 'other'] as const).map(cat => (
                     <button key={cat} onClick={() => setPhotoCategory(cat)} className={`py-2 rounded-lg text-xs ${photoCategory === cat ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
-                      {cat === 'before' ? 'Antes' : cat === 'after' ? 'Después' : cat === 'diagnostic' ? 'Diagnóstico' : 'Otro'}
+                      {cat === 'before' ? '📷 Antes' : cat === 'after' ? '✅ Después' : cat === 'diagnostic' ? '🔍 Diagnóstico' : cat === 'equipment' ? '⚙️ Equipo' : cat === 'area' ? '📐 Área' : '📎 Otro'}
                     </button>
                   ))}
                 </div>
@@ -575,42 +646,57 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                 <label className="text-xs text-gray-400 mb-1 block">Descripción</label>
                 <input value={photoDesc} onChange={e => setPhotoDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Ej: Compresor antes de reparación" />
               </div>
-              <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Equipo (opcional)</label>
+                  <input value={photoEquipment} onChange={e => setPhotoEquipment(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Compresor, Filtro, etc." />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Ubicación (opcional)</label>
+                  <input value={photoLocation} onChange={e => setPhotoLocation(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Techo, Cuarto frío, etc." />
+                </div>
+              </div>
+              <input ref={photoInputRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} className="hidden" />
               <div className="flex gap-2">
                 <button onClick={() => setShowPhotoUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
-                <button onClick={() => photoInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📷 Seleccionar</button>
+                <button onClick={() => photoInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📷 Tomar/Seleccionar</button>
               </div>
             </div>
           </>
         )}
 
+        {/* Document Upload Modal */}
         {showDocUpload && (
           <>
             <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowDocUpload(false)} />
-            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4">
+            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4 max-h-[80vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-200">📄 Añadir Documento</h3>
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {(['contract', 'permit', 'warranty', 'manual', 'receipt', 'other'] as const).map(t => (
+                  {(['contract', 'permit', 'warranty', 'manual', 'receipt', 'agreement', 'other'] as const).map(t => (
                     <button key={t} onClick={() => setDocType(t)} className={`py-2 rounded-lg text-xs ${docType === t ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
-                      {t === 'contract' ? 'Contrato' : t === 'permit' ? 'Permiso' : t === 'warranty' ? 'Garantía' : t === 'manual' ? 'Manual' : t === 'receipt' ? 'Recibo' : 'Otro'}
+                      {t === 'contract' ? 'Contrato' : t === 'permit' ? 'Permiso' : t === 'warranty' ? 'Garantía' : t === 'manual' ? 'Manual' : t === 'receipt' ? 'Recibo' : t === 'agreement' ? 'Acuerdo' : 'Otro'}
                     </button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="text-xs text-gray-400 mb-1 block">Nombre</label>
+                <label className="text-xs text-gray-400 mb-1 block">Nombre del documento</label>
                 <input value={docName} onChange={e => setDocName(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Contrato mantenimiento 2025" />
               </div>
               <div>
-                <label className="text-xs text-gray-400 mb-1 block">Descripción</label>
-                <input value={docDesc} onChange={e => setDocDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Notas..." />
+                <label className="text-xs text-gray-400 mb-1 block">Descripción (opcional)</label>
+                <input value={docDesc} onChange={e => setDocDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Notas adicionales..." />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Fecha de vencimiento (opcional)</label>
+                <input type="date" value={docExpiration} onChange={e => setDocExpiration(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" />
               </div>
               <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt" onChange={handleDocUpload} className="hidden" />
               <div className="flex gap-2">
                 <button onClick={() => setShowDocUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
-                <button onClick={() => docInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📄 Seleccionar</button>
+                <button onClick={() => docInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📄 Seleccionar Archivo</button>
               </div>
             </div>
           </>
