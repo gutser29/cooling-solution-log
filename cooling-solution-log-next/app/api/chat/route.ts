@@ -42,6 +42,207 @@ function extractJSON(text: string, command: string): any {
   return null
 }
 
+// ============ DETECTAR MONTO EN TEXTO ============
+function extractAmount(text: string): number | null {
+  // Buscar patrones de monto: $45, 45 pesos, 45.50, etc.
+  const patterns = [
+    /\$\s*(\d+(?:\.\d{1,2})?)/,           // $45, $ 45.50
+    /(\d+(?:\.\d{1,2})?)\s*(?:pesos|dolar|dollars?)/i,  // 45 pesos
+    /(\d+(?:\.\d{1,2})?)\s+(?:de|en|por)/,  // 45 de gas
+    /(?:gast[eéo]|pagu[eé]|ech[eé]|pus[ei]|tanqu(?:eé|ié|ie|ee))\s+(\d+(?:\.\d{1,2})?)/i,  // gasté 45
+    /(?:de|por|en)\s+(\d+(?:\.\d{1,2})?)/,  // de 45, por 45
+    /^(\d+(?:\.\d{1,2})?)\s/,              // Empieza con número: "45 de gas"
+    /(\d+(?:\.\d{1,2})?)/                   // Cualquier número (último recurso)
+  ]
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match && match[1]) {
+      const amount = parseFloat(match[1])
+      if (amount > 0 && amount < 50000) return amount  // Sanity check
+    }
+  }
+  return null
+}
+
+// ============ DETECTAR CATEGORÍA ============
+function extractCategory(text: string): { category: string, subtype: string } | null {
+  const lower = text.toLowerCase()
+  
+  const categories: Record<string, { keywords: string[], category: string, subtype: string }> = {
+    gas: {
+      keywords: ['gasolina', 'gas', 'tanqu', 'full', 'lleno', 'eché', 'eche', 'shell', 'puma', 'total', 'texaco', 'gulf'],
+      category: 'Gasolina',
+      subtype: 'gas'
+    },
+    food: {
+      keywords: ['comida', 'almuerzo', 'desayuno', 'cena', 'lonch', 'lunch', 'restaurante', 'mcdonalds', 'burger', 'pollo', 'pizza', 'café', 'coffee'],
+      category: 'Comida',
+      subtype: 'food'
+    },
+    materials: {
+      keywords: ['materiales', 'material', 'home depot', 'homedepot', 'ferretería', 'ferreteria', 'lowes', 'lowe'],
+      category: 'Materiales',
+      subtype: 'materials'
+    },
+    tools: {
+      keywords: ['herramienta', 'tool', 'taladro', 'drill'],
+      category: 'Herramientas',
+      subtype: 'tools'
+    },
+    toll: {
+      keywords: ['peaje', 'autoexpreso', 'autopista'],
+      category: 'Peajes',
+      subtype: 'toll'
+    },
+    maintenance: {
+      keywords: ['mantenimiento', 'aceite', 'oil change', 'goma', 'tire', 'freno', 'brake'],
+      category: 'Mantenimiento',
+      subtype: 'maintenance'
+    }
+  }
+  
+  for (const [key, data] of Object.entries(categories)) {
+    for (const keyword of data.keywords) {
+      if (lower.includes(keyword)) {
+        return { category: data.category, subtype: data.subtype }
+      }
+    }
+  }
+  
+  return null
+}
+
+// ============ DETECTAR MÉTODO DE PAGO ============
+function extractPaymentMethod(text: string): string {
+  const lower = text.toLowerCase()
+  
+  // Capital One variations
+  if (lower.includes('capital') || lower.includes('cápital') || lower.includes('capitalone') || lower.includes('capital one') || lower.includes('capita')) {
+    return 'capital_one'
+  }
+  
+  // Chase variations
+  if (lower.includes('chase') || lower.includes('cheis')) {
+    return 'chase_visa'
+  }
+  
+  // ATH variations
+  if (lower.includes('ath') || lower.includes('athm') || lower.includes('eitiach') || lower.includes('ati') || lower.includes('a t h')) {
+    return 'ath_movil'
+  }
+  
+  // Sam's MC variations
+  if (lower.includes('sam') || lower.includes('sams') || lower.includes('mastercard') || lower.includes('sam\'s')) {
+    return 'sams_mastercard'
+  }
+  
+  // PayPal
+  if (lower.includes('paypal') || lower.includes('pay pal')) {
+    return 'paypal'
+  }
+  
+  // Cash/Efectivo
+  if (lower.includes('efectivo') || lower.includes('cash') || lower.includes('efetivo')) {
+    return 'cash'
+  }
+  
+  // Business card generic
+  if (lower.includes('business') || lower.includes('bisnes') || lower.includes('tarjeta del negocio')) {
+    return 'capital_one'  // Default business card
+  }
+  
+  // Si menciona "tarjeta" sin especificar, no asumimos
+  if (lower.includes('tarjeta') || lower.includes('card')) {
+    return 'card_unknown'
+  }
+  
+  return 'cash'  // Default
+}
+
+// ============ DETECTAR VEHÍCULO ============
+function extractVehicle(text: string): string | undefined {
+  const lower = text.toLowerCase()
+  
+  if (lower.includes('van') || lower.includes('camioneta') || lower.includes('transit')) return 'van'
+  if (lower.includes('f150') || lower.includes('f-150') || lower.includes('pickup') || lower.includes('truck')) return 'truck'
+  if (lower.includes('carro') || lower.includes('car') || lower.includes('caro')) return 'car'
+  
+  return undefined
+}
+
+// ============ DETECTAR SI ES PERSONAL ============
+function isPersonalExpense(text: string): boolean {
+  const lower = text.toLowerCase()
+  return lower.includes('personal') || lower.includes('pa la casa') || lower.includes('para la casa') || lower.includes('mío') || lower.includes('mio')
+}
+
+// ============ DETECTAR VENDOR/LUGAR ============
+function extractVendor(text: string): string | undefined {
+  const lower = text.toLowerCase()
+  
+  const vendors: Record<string, string> = {
+    'shell': 'Shell',
+    'puma': 'Puma',
+    'total': 'Total',
+    'texaco': 'Texaco',
+    'gulf': 'Gulf',
+    'home depot': 'Home Depot',
+    'homedepot': 'Home Depot',
+    'lowes': 'Lowes',
+    'lowe': 'Lowes',
+    'walmart': 'Walmart',
+    'costco': 'Costco',
+    'sam\'s': 'Sam\'s Club',
+    'sams': 'Sam\'s Club',
+    'mcdonalds': 'McDonalds',
+    'mcdonald': 'McDonalds',
+    'burger king': 'Burger King',
+    'wendy': 'Wendys',
+    'subway': 'Subway',
+    'popeyes': 'Popeyes',
+    'church': 'Church\'s',
+    'kfc': 'KFC',
+    'pizza hut': 'Pizza Hut',
+    'domino': 'Dominos',
+    'starbucks': 'Starbucks',
+  }
+  
+  for (const [key, value] of Object.entries(vendors)) {
+    if (lower.includes(key)) return value
+  }
+  
+  return undefined
+}
+
+// ============ ES UN GASTO? ============
+function isExpenseIntent(text: string): boolean {
+  const lower = text.toLowerCase()
+  
+  const expenseKeywords = [
+    'gast', 'pagu', 'pag ', 'ech', 'pus', 'tanqu', 'llen', 'compr',
+    'gasolina', 'gas', 'comida', 'almuerzo', 'material', 'peaje',
+    'de gas', 'de gasolina', 'de comida', 'de material',
+    'en gas', 'en gasolina', 'en comida',
+    '$', 'pesos', 'dolar'
+  ]
+  
+  // También si tiene número + categoría conocida
+  const hasAmount = extractAmount(text) !== null
+  const hasCategory = extractCategory(text) !== null
+  
+  if (hasAmount && hasCategory) return true
+  
+  for (const keyword of expenseKeywords) {
+    if (lower.includes(keyword)) {
+      // Verificar que también tenga un número
+      if (hasAmount) return true
+    }
+  }
+  
+  return false
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json()
@@ -52,95 +253,92 @@ export async function POST(request: Request) {
     }
 
     const lastMsg = messages[messages.length - 1]
-    const userText = (lastMsg.content || '').toLowerCase()
+    const userText = lastMsg.content || ''
+    const userTextLower = userText.toLowerCase()
 
-    // ====== PATTERN MATCHING PARA GASTOS ======
-    const gastoMatch = userText.match(/(?:gast[eéo]|pagu[eé])\s+(?:\$)?(\d+(?:\.\d+)?)\s+(?:en|de|por)\s+(\w+)/i)
-
-    if (gastoMatch) {
-      const [_, amount, item] = gastoMatch
+    // ====== DETECCIÓN INTELIGENTE DE GASTOS ======
+    if (isExpenseIntent(userText)) {
+      const amount = extractAmount(userText)
+      const categoryInfo = extractCategory(userText)
+      const paymentMethod = extractPaymentMethod(userText)
+      const vehicleId = extractVehicle(userText)
+      const vendor = extractVendor(userText)
+      const isPersonal = isPersonalExpense(userText)
       
-      // Detectar método de pago
-      let paymentMethod = 'cash'
-      if (userText.includes('capital one') || userText.includes('capital')) paymentMethod = 'capital_one'
-      else if (userText.includes('chase')) paymentMethod = 'chase_visa'
-      else if (userText.includes('ath')) paymentMethod = 'ath_movil'
-      else if (userText.includes('sams') || userText.includes('sam')) paymentMethod = 'sams_mastercard'
-      else if (userText.includes('efectivo')) paymentMethod = 'cash'
-      
-      // Detectar vehículo
-      let vehicleId = undefined
-      if (userText.includes('van') || userText.includes('camioneta')) vehicleId = 'van'
-      else if (userText.includes('carro') || userText.includes('car')) vehicleId = 'car'
-      else if (userText.includes('truck') || userText.includes('pickup')) vehicleId = 'truck'
-      
-      const categoryMap: Record<string, { category: string, subtype: string }> = {
-        'gasolina': { category: 'Gasolina', subtype: 'gas' },
-        'gas': { category: 'Gasolina', subtype: 'gas' },
-        'comida': { category: 'Comida', subtype: 'food' },
-        'almuerzo': { category: 'Comida', subtype: 'food' },
-        'desayuno': { category: 'Comida', subtype: 'food' },
-        'cena': { category: 'Comida', subtype: 'food' },
-        'peaje': { category: 'Peajes', subtype: 'toll' },
-        'peajes': { category: 'Peajes', subtype: 'toll' },
-        'materiales': { category: 'Materiales', subtype: 'materials' },
-        'herramientas': { category: 'Herramientas', subtype: 'tools' }
+      // Si tenemos monto y categoría, guardar directo
+      if (amount && categoryInfo) {
+        // Si el método de pago es desconocido, preguntar
+        if (paymentMethod === 'card_unknown') {
+          return NextResponse.json({
+            type: 'TEXT',
+            text: `📝 Voy a registrar ${categoryInfo.category} por $${amount.toFixed(2)}. ¿Con qué tarjeta pagaste? (Capital One, Chase, ATH, Sam's MC, efectivo)`
+          })
+        }
+        
+        return NextResponse.json({
+          type: 'SAVE_EVENT',
+          payload: {
+            type: 'expense',
+            subtype: categoryInfo.subtype,
+            category: categoryInfo.category,
+            amount: amount,
+            vendor: vendor || categoryInfo.category,
+            payment_method: paymentMethod,
+            vehicle_id: vehicleId,
+            expense_type: isPersonal ? 'personal' : 'business',
+            timestamp: Date.now()
+          }
+        })
       }
       
-      const itemLower = item.toLowerCase()
-      const catInfo = categoryMap[itemLower] || { category: 'Gastos', subtype: 'other' }
+      // Si tenemos monto pero no categoría
+      if (amount && !categoryInfo) {
+        return NextResponse.json({
+          type: 'TEXT',
+          text: `💰 Veo $${amount.toFixed(2)}. ¿En qué lo gastaste? (gasolina, comida, materiales, etc.)`
+        })
+      }
       
-      return NextResponse.json({
-        type: 'SAVE_EVENT',
-        payload: {
-          type: 'expense',
-          subtype: catInfo.subtype,
-          category: catInfo.category,
-          amount: parseFloat(amount),
-          vendor: item,
-          payment_method: paymentMethod,
-          vehicle_id: vehicleId,
-          expense_type: 'business',
-          timestamp: Date.now()
-        }
-      })
+      // Si tenemos categoría pero no monto
+      if (!amount && categoryInfo) {
+        return NextResponse.json({
+          type: 'TEXT',
+          text: `📝 ${categoryInfo.category}. ¿Cuánto fue?`
+        })
+      }
     }
 
-    // ====== 1) DETECCIÓN DE REPORTES (bypass Claude - SOLO P&L y AR) ======
-    // IMPORTANTE: Solo interceptamos P&L y cuentas por cobrar
-    // Todo lo demás (facturas, clientes, reportes de categoría) va a Claude
-
-    // P&L Report
-    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') || 
-        (userText.includes('perdida') && userText.includes('ganancia')) ||
-        (userText.includes('pérdida') && userText.includes('ganancia'))) {
+    // ====== P&L Report ======
+    if (userTextLower.includes('p&l') || userTextLower.includes('p & l') || userTextLower.includes('profit') || 
+        (userTextLower.includes('perdida') && userTextLower.includes('ganancia')) ||
+        (userTextLower.includes('pérdida') && userTextLower.includes('ganancia'))) {
       let period: 'week' | 'month' | 'year' = 'month'
       let periodLabel = 'este mes'
-      if (userText.includes('semana') || userText.includes('week')) { period = 'week'; periodLabel = 'esta semana' }
-      else if (userText.includes('año') || userText.includes('ano') || userText.includes('year') || userText.includes('anual')) { period = 'year'; periodLabel = 'este año' }
-      else if (userText.includes('enero')) { period = 'month'; periodLabel = 'enero' }
-      else if (userText.includes('febrero')) { period = 'month'; periodLabel = 'febrero' }
-      else if (userText.includes('marzo')) { period = 'month'; periodLabel = 'marzo' }
-      else if (userText.includes('abril')) { period = 'month'; periodLabel = 'abril' }
-      else if (userText.includes('mayo')) { period = 'month'; periodLabel = 'mayo' }
-      else if (userText.includes('junio')) { period = 'month'; periodLabel = 'junio' }
-      else if (userText.includes('julio')) { period = 'month'; periodLabel = 'julio' }
-      else if (userText.includes('agosto')) { period = 'month'; periodLabel = 'agosto' }
-      else if (userText.includes('septiembre') || userText.includes('sept')) { period = 'month'; periodLabel = 'septiembre' }
-      else if (userText.includes('octubre')) { period = 'month'; periodLabel = 'octubre' }
-      else if (userText.includes('noviembre') || userText.includes('nov')) { period = 'month'; periodLabel = 'noviembre' }
-      else if (userText.includes('diciembre') || userText.includes('dic')) { period = 'month'; periodLabel = 'diciembre' }
+      if (userTextLower.includes('semana') || userTextLower.includes('week')) { period = 'week'; periodLabel = 'esta semana' }
+      else if (userTextLower.includes('año') || userTextLower.includes('ano') || userTextLower.includes('year') || userTextLower.includes('anual')) { period = 'year'; periodLabel = 'este año' }
+      else if (userTextLower.includes('enero')) { period = 'month'; periodLabel = 'enero' }
+      else if (userTextLower.includes('febrero')) { period = 'month'; periodLabel = 'febrero' }
+      else if (userTextLower.includes('marzo')) { period = 'month'; periodLabel = 'marzo' }
+      else if (userTextLower.includes('abril')) { period = 'month'; periodLabel = 'abril' }
+      else if (userTextLower.includes('mayo')) { period = 'month'; periodLabel = 'mayo' }
+      else if (userTextLower.includes('junio')) { period = 'month'; periodLabel = 'junio' }
+      else if (userTextLower.includes('julio')) { period = 'month'; periodLabel = 'julio' }
+      else if (userTextLower.includes('agosto')) { period = 'month'; periodLabel = 'agosto' }
+      else if (userTextLower.includes('septiembre') || userTextLower.includes('sept')) { period = 'month'; periodLabel = 'septiembre' }
+      else if (userTextLower.includes('octubre')) { period = 'month'; periodLabel = 'octubre' }
+      else if (userTextLower.includes('noviembre') || userTextLower.includes('nov')) { period = 'month'; periodLabel = 'noviembre' }
+      else if (userTextLower.includes('diciembre') || userTextLower.includes('dic')) { period = 'month'; periodLabel = 'diciembre' }
 
       return NextResponse.json({ type: 'GENERATE_PL', payload: { period, periodLabel } })
     }
 
-    // Cuentas por cobrar - solo keywords específicos
-    if (userText.includes('quien me debe') || userText.includes('quién me debe') || 
-        userText.includes('cuentas por cobrar') || userText.includes('me deben dinero')) {
+    // ====== Cuentas por cobrar ======
+    if (userTextLower.includes('quien me debe') || userTextLower.includes('quién me debe') || 
+        userTextLower.includes('cuentas por cobrar') || userTextLower.includes('me deben dinero')) {
       return NextResponse.json({ type: 'GENERATE_AR' })
     }
 
-    // ====== 2) TODO LO DEMÁS VA A CLAUDE ======
+    // ====== TODO LO DEMÁS VA A CLAUDE ======
     const now = new Date()
     const todayStr = now.toLocaleDateString('es-PR', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -291,7 +489,7 @@ Ejemplo: "hazme la factura de farmacia caridad"
 - El usuario puede dictar por voz - interpreta errores fonéticos
 - "cápital wan" = Capital One, "eitiach" = ATH, etc.`
 
-    // ====== 3) MENSAJES MULTIMODAL ======
+    // ====== MENSAJES MULTIMODAL ======
     const anthropicMessages = messages.map((m, idx) => {
       const isLast = idx === messages.length - 1
       if (isLast && m.role === 'user' && m.photos && m.photos.length > 0) {
@@ -310,7 +508,7 @@ Ejemplo: "hazme la factura de farmacia caridad"
       return { role: m.role as 'user' | 'assistant', content: text }
     })
 
-    // ====== 4) LLAMADA A ANTHROPIC ======
+    // ====== LLAMADA A ANTHROPIC ======
     const response = await client.messages.create({
       model: usedModel,
       max_tokens: 1500,
@@ -324,13 +522,13 @@ Ejemplo: "hazme la factura de farmacia caridad"
       .join('\n')
       .trim()
 
-    // ====== 5) DETECTAR GENERATE_PDF EN RESPUESTA (usando extractJSON) ======
+    // ====== DETECTAR GENERATE_PDF EN RESPUESTA ======
     const pdfPayload = extractJSON(text, 'GENERATE_PDF:')
     if (pdfPayload) {
       return NextResponse.json({ type: 'GENERATE_PDF', payload: pdfPayload })
     }
 
-    // ====== 6) DETECTAR GENERATE_PHOTO_REPORT ======
+    // ====== DETECTAR GENERATE_PHOTO_REPORT ======
     const photoReportPayload = extractJSON(text, 'GENERATE_PHOTO_REPORT:')
     if (photoReportPayload) {
       return NextResponse.json({ type: 'GENERATE_PHOTO_REPORT', payload: photoReportPayload })
