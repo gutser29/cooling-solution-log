@@ -189,11 +189,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   }, [])
 
   const syncToDrive = useCallback(async () => {
-    await db.sync_queue.add({ timestamp: Date.now(), status: 'pending', retries: 0 })
-    updatePendingCount()
-
-    if (!driveConnectedRef.current || syncingRef.current) return
+    // No añadir a cola si no está conectado o ya está sincronizando
+    if (!driveConnectedRef.current || syncingRef.current) {
+      console.log('⏭️ Sync skipped - not connected or already syncing')
+      return
+    }
+    
     if (!navigator.onLine) {
+      // Solo añadir a cola si está offline
+      await db.sync_queue.add({ timestamp: Date.now(), status: 'pending', retries: 0 })
+      updatePendingCount()
       console.log('📴 Offline — queued for later')
       return
     }
@@ -221,8 +226,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       })
 
       if (res.ok) {
-        const pending = await db.sync_queue.where('status').equals('pending').toArray()
-        await Promise.all(pending.map(p => db.sync_queue.update(p.id!, { status: 'synced' })))
+        // Limpiar TODA la cola de sync (borrar, no solo marcar)
+        await db.sync_queue.clear()
         const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
         setLastSync(time)
         setPendingSyncCount(0)
@@ -230,9 +235,15 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       } else {
         const err = await res.json()
         console.error('Sync failed:', err)
+        // Añadir a cola solo si falló
+        await db.sync_queue.add({ timestamp: Date.now(), status: 'pending', retries: 0 })
+        updatePendingCount()
       }
     } catch (e) {
       console.error('Sync error:', e)
+      // Añadir a cola solo si hubo error
+      await db.sync_queue.add({ timestamp: Date.now(), status: 'pending', retries: 0 })
+      updatePendingCount()
     } finally {
       syncingRef.current = false
       setSyncing(false)
