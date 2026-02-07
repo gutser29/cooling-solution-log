@@ -297,7 +297,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
     const recognition = new SpeechRecognition()
     recognition.continuous = true
-    recognition.interimResults = false  // Desactivado para evitar repetición
+    recognition.interimResults = false
     recognition.lang = 'es-PR'
 
     recognition.onresult = (event: any) => {
@@ -511,32 +511,33 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
       // ====== HANDLE RESPONSE TYPES ======
       // ====== HANDLE SAVE_EVENT DIRECTO DEL API ======
-if (data.type === 'SAVE_EVENT' && data.payload) {
-  try {
-    await db.events.add({
-      timestamp: data.payload.timestamp || Date.now(),
-      type: data.payload.type,
-      status: 'completed',
-      subtype: data.payload.subtype,
-      category: data.payload.category,
-      amount: data.payload.amount,
-      payment_method: data.payload.payment_method,
-      vendor: data.payload.vendor,
-      client: data.payload.client,
-      vehicle_id: data.payload.vehicle_id,
-      note: data.payload.note,
-      expense_type: data.payload.expense_type || 'business'
-    })
-    setMessages(prev => [...prev, { 
-      role: 'assistant', 
-      content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}` 
-    }])
-    syncToDrive()
-    return
-  } catch (e) {
-    console.error('SAVE_EVENT error:', e)
-  }
-}
+      if (data.type === 'SAVE_EVENT' && data.payload) {
+        try {
+          await db.events.add({
+            timestamp: data.payload.timestamp || Date.now(),
+            type: data.payload.type,
+            status: 'completed',
+            subtype: data.payload.subtype,
+            category: data.payload.category,
+            amount: data.payload.amount,
+            payment_method: data.payload.payment_method,
+            vendor: data.payload.vendor,
+            client: data.payload.client,
+            vehicle_id: data.payload.vehicle_id,
+            note: data.payload.note,
+            expense_type: data.payload.expense_type || 'business'
+          })
+          setMessages(prev => [...prev, { 
+            role: 'assistant', 
+            content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}` 
+          }])
+          syncToDrive()
+          return
+        } catch (e) {
+          console.error('SAVE_EVENT error:', e)
+        }
+      }
+
       if (data.type === 'GENERATE_PL') {
         const { period, periodLabel } = data.payload
         const { startDate, endDate } = getDateRange(period, periodLabel)
@@ -928,38 +929,20 @@ if (data.type === 'SAVE_EVENT' && data.payload) {
         <button onClick={() => setShowMenu(!showMenu)} className="text-3xl w-10 h-10 flex items-center justify-center">☰</button>
       </div>
 
-      {/* MENU - FIXED position, dark theme */}
+      {/* MENU - FIXED position, dark theme - SIN DUPLICADOS */}
       {showMenu && (
         <>
           <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowMenu(false)} />
           <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 overflow-hidden border border-white/10">
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
-            <button 
-  onClick={() => { 
-    setShowMenu(false); 
-    onNavigate('expenses'); 
-  }}
-  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
->
-  💵 Gastos
-</button>
-
-<button 
-  onClick={() => { 
-    setShowMenu(false); 
-    onNavigate('templates'); 
-  }}
-  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
->
-  📋 Templates
-</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('expenses') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💵 Gastos</button>
             <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Facturas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('templates') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Templates</button>
             <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
             <button onClick={() => { setShowMenu(false); onNavigate('notes') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📝 Notas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
-            <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Historial</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📜 Historial</button>
             <button onClick={async () => {
               setShowMenu(false)
               const d = new Date()
@@ -973,24 +956,7 @@ if (data.type === 'SAVE_EVENT' && data.payload) {
               generateARReport(invoices)
               setMessages(prev => [...prev, { role: 'assistant', content: '✅ Cuentas por Cobrar generado' }])
             }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💰 ¿Quién me Debe?</button>
-<button 
-  onClick={() => { 
-    setShowMenu(false); 
-    onNavigate('expenses'); 
-  }}
-  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
->
-  💵 Gastos
-</button>
-<button 
-  onClick={() => { 
-    setShowMenu(false); 
-    onNavigate('templates'); 
-  }}
-  className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5"
->
-  📋 Templates
-</button>
+
             {/* Drive Section */}
             <div className="border-t border-white/10">
               {driveConnected ? (

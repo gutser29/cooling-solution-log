@@ -1,10 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { db } from '@/lib/db'
 
 interface ExpensesPageProps {
   onNavigate: (page: string) => void
+}
+
+const compressImage = (base64: string, maxWidth = 1024): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      let { width, height } = img
+      if (width > maxWidth) { height = (height * maxWidth) / width; width = maxWidth }
+      canvas.width = width; canvas.height = height
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/jpeg', 0.8))
+    }
+    img.src = base64
+  })
 }
 
 export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
@@ -15,6 +30,9 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
   const [vendor, setVendor] = useState('')
   const [expenseType, setExpenseType] = useState<'business' | 'personal'>('business')
   const [notes, setNotes] = useState('')
+  const [receiptPhoto, setReceiptPhoto] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const categories = ['Gasolina', 'Comida', 'Materiales', 'Herramientas', 'Peajes', 'Mantenimiento', 'Seguros', 'Nómina', 'Otros']
   
@@ -29,15 +47,34 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     { value: 'check', label: 'Cheque' }
   ]
 
+  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    const b64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsDataURL(file)
+    })
+    
+    const compressed = await compressImage(b64)
+    setReceiptPhoto(compressed)
+    
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const handleSave = async () => {
     if (!amount || parseFloat(amount) <= 0) {
       alert('Ingresa un monto válido')
       return
     }
 
+    setSaving(true)
+
     try {
       const now = Date.now()
       
+      // Guardar el gasto
       await db.events.add({
         timestamp: now,
         type: 'expense',
@@ -49,8 +86,20 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
         vehicle_id: vehicleId,
         vendor: vendor || undefined,
         note: notes || undefined,
-        expense_type: expenseType
+        expense_type: expenseType,
+        photo: receiptPhoto || undefined
       })
+
+      // Si hay foto del recibo, guardarla también en client_photos
+      if (receiptPhoto) {
+        await db.client_photos.add({
+          category: 'receipt',
+          description: `Recibo: ${category} - $${amount} ${vendor ? `@ ${vendor}` : ''}`,
+          photo_data: receiptPhoto,
+          timestamp: now,
+          created_at: now
+        })
+      }
 
       alert('✅ Gasto guardado')
       
@@ -62,10 +111,13 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
       setVendor('')
       setNotes('')
       setExpenseType('business')
+      setReceiptPhoto(null)
       
     } catch (error) {
       console.error('Error saving expense:', error)
       alert('Error al guardar gasto')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -73,7 +125,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     <div className="min-h-screen bg-[#0b1220] text-gray-100">
       <div className="sticky top-0 z-30 bg-gradient-to-r from-red-600 to-orange-600 text-white p-4 shadow-lg flex justify-between items-center">
         <div className="flex items-center gap-3">
-          <button onClick={() => onNavigate('dashboard')} className="text-lg">←</button>
+          <button onClick={() => onNavigate('chat')} className="text-lg">←</button>
           <h1 className="text-xl font-bold">💵 Añadir Gasto</h1>
         </div>
         <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
@@ -181,6 +233,42 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
             </div>
           </div>
 
+          {/* Foto del Recibo */}
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">📸 Foto del Recibo (opcional)</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handlePhotoSelect}
+              className="hidden"
+            />
+            
+            {receiptPhoto ? (
+              <div className="relative">
+                <img 
+                  src={receiptPhoto} 
+                  alt="Recibo" 
+                  className="w-full max-h-48 object-contain rounded-lg border border-white/10"
+                />
+                <button
+                  onClick={() => setReceiptPhoto(null)}
+                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full bg-[#0b1220] border border-dashed border-white/20 rounded-lg py-6 text-center hover:bg-[#1a2332] transition-colors"
+              >
+                <span className="text-2xl block mb-1">📷</span>
+                <span className="text-sm text-gray-400">Toca para subir foto del recibo</span>
+              </button>
+            )}
+          </div>
+
           {/* Notas */}
           <div>
             <label className="text-xs text-gray-400 mb-1 block">Notas</label>
@@ -196,15 +284,16 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
         {/* Botón Guardar */}
         <button
           onClick={handleSave}
-          className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-xl py-4 text-lg font-bold shadow-lg"
+          disabled={saving || !amount}
+          className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-xl py-4 text-lg font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          ✅ Guardar Gasto
+          {saving ? '⏳ Guardando...' : '✅ Guardar Gasto'}
         </button>
 
         {/* Info */}
         <div className="bg-blue-900/20 border border-blue-900/50 rounded-xl p-3 text-sm text-blue-300">
           <p className="font-medium mb-1">💡 Tip</p>
-          <p className="text-xs opacity-80">También puedes añadir gastos por voz diciendo: "gasté $40 en gasolina con capital one en la van"</p>
+          <p className="text-xs opacity-80">También puedes añadir gastos por voz en el Chat diciendo: "gasté $40 en gasolina con capital one en la van"</p>
         </div>
       </div>
     </div>

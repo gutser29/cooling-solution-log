@@ -1,126 +1,216 @@
-import { useEffect, useState } from 'react'
+'use client'
+
+import { useState, useEffect } from 'react'
 import { db } from '@/lib/db'
-import type { EventRecord, EventType, EventStatus } from '@/lib/types'
+import type { EventRecord } from '@/lib/types'
 
-export default function HistoryPage({ onNavigate }: { onNavigate: (page: string) => void }) {
+interface HistoryPageProps {
+  onNavigate: (page: string) => void
+}
 
+export default function HistoryPage({ onNavigate }: HistoryPageProps) {
   const [events, setEvents] = useState<EventRecord[]>([])
-  const [filterType, setFilterType] = useState<EventType | 'all'>('all')
-  const [filterStatus, setFilterStatus] = useState<EventStatus | 'all'>('all')
-
-  // ✅ NUEVO: stats de DB
-  const [dbStats, setDbStats] = useState<any>(null)
-
-  const loadEvents = async () => {
-    const query = db.events.orderBy('timestamp').reverse()
-    const allEvents = await query.toArray()
-
-    // Filtros
-    let filtered = allEvents
-    if (filterType !== 'all') filtered = filtered.filter((e) => e.type === filterType)
-    if (filterStatus !== 'all') filtered = filtered.filter((e) => e.status === filterStatus)
-
-    setEvents(filtered)
-  }
-
-  // ✅ NUEVO: cargar conteos de tablas
-  const loadDbStats = async () => {
-    const stats = {
-      events: await db.events.count(),
-      clients: await db.clients.count(),
-      employees: await db.employees.count(),
-      jobs: await db.jobs.count(),
-      vehicles: await db.vehicles.count(),
-      contracts: await db.contracts.count(),
-    }
-    setDbStats(stats)
-  }
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState<'all' | 'expense' | 'income'>('all')
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [categories, setCategories] = useState<string[]>([])
 
   useEffect(() => {
     loadEvents()
-    loadDbStats() // ✅ NUEVO
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterType, filterStatus])
+  }, [])
 
-  const toggleStatus = async (id: number, current: EventStatus) => {
-    await db.events.update(id, {
-      status: current === 'pending' ? 'completed' : 'pending',
+  const loadEvents = async () => {
+    try {
+      const allEvents = await db.events.orderBy('timestamp').reverse().toArray()
+      setEvents(allEvents)
+      
+      // Get unique categories
+      const uniqueCats = [...new Set(allEvents.map(e => e.category).filter(Boolean))]
+      setCategories(uniqueCats as string[])
+    } catch (error) {
+      console.error('Error loading events:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Eliminar este registro?')) return
+    
+    try {
+      await db.events.delete(id)
+      setEvents(prev => prev.filter(e => e.id !== id))
+    } catch (error) {
+      console.error('Error deleting event:', error)
+      alert('Error al eliminar')
+    }
+  }
+
+  const filteredEvents = events.filter(e => {
+    if (filter !== 'all' && e.type !== filter) return false
+    if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
+    return true
+  })
+
+  const formatDate = (ts: number) => {
+    const d = new Date(ts)
+    return d.toLocaleDateString('es-PR', { 
+      weekday: 'short', 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     })
-    loadEvents()
-    loadDbStats() // ✅ NUEVO (para reflejar cambios si aplica)
+  }
+
+  const formatCurrency = (n: number) => `$${n.toFixed(2)}`
+
+  // Group by date
+  const groupedEvents: Record<string, EventRecord[]> = {}
+  filteredEvents.forEach(e => {
+    const dateKey = new Date(e.timestamp).toLocaleDateString('es-PR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    if (!groupedEvents[dateKey]) groupedEvents[dateKey] = []
+    groupedEvents[dateKey].push(e)
+  })
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#0b1220] text-white">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full mx-auto mb-3"></div>
+          <p className="text-gray-400">Cargando historial...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Historial</h1>
-
-      {/* ✅ NUEVO: debug box */}
-      {dbStats && (
-        <div className="bg-blue-50 p-3 rounded mb-4 text-xs">
-          <strong>📊 DB Status:</strong> Events: {dbStats.events} | Clients: {dbStats.clients} |
-          Employees: {dbStats.employees} | Jobs: {dbStats.jobs} | Vehicles: {dbStats.vehicles} |
-          Contracts: {dbStats.contracts}
+    <div className="min-h-screen bg-[#0b1220] text-gray-100">
+      {/* Header */}
+      <div className="sticky top-0 z-30 bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4 shadow-lg flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <button onClick={() => onNavigate('chat')} className="text-lg">←</button>
+          <h1 className="text-xl font-bold">📜 Historial</h1>
         </div>
-      )}
-
-      {/* Filtros */}
-      <div className="flex gap-2 mb-4">
-        <select
-          className="border rounded px-2 py-1"
-          value={filterType}
-          onChange={(e) => setFilterType(e.target.value as any)}
-        >
-          <option value="all">Todos los tipos</option>
-          <option value="expense">Gasto</option>
-          <option value="income">Ingreso</option>
-          <option value="note">Nota</option>
-        </select>
-
-        <select
-          className="border rounded px-2 py-1"
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value as any)}
-        >
-          <option value="all">Todos</option>
-          <option value="pending">Pendiente</option>
-          <option value="completed">Completado</option>
-        </select>
+        <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
       </div>
 
-      {/* Lista */}
-      <div className="space-y-2">
-        {events.map((e: any) => (
-          <div key={e.id} className="border rounded p-3 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">
-                {e.category ?? 'Sin categoría'} • {e.type} • {e.status}
-              </div>
-              <div className="text-xs opacity-70">
-                {e.timestamp ? new Date(e.timestamp).toLocaleString() : ''}
-              </div>
-              <div className="text-sm">
-                {typeof e.amount !== 'undefined' ? `Monto: $${e.amount}` : ''}
-              </div>
-              {e.vendor && <div className="text-sm">Vendor: {e.vendor}</div>}
-              {e.payment_method && <div className="text-sm">Pago: {e.payment_method}</div>}
-              {e.client && <div className="text-sm">Cliente: {e.client}</div>}
-              {e.note && <div className="text-sm">Nota: {e.note}</div>}
-              <div className="text-xs text-gray-500 mt-1">
-  DEBUG: payment_method = "{e.payment_method || 'VACÍO'}"
-</div>
+      {/* Filters */}
+      <div className="p-4 space-y-3">
+        {/* Type Filter */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setFilter('all')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+              filter === 'all' ? 'bg-blue-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'
+            }`}
+          >
+            Todos
+          </button>
+          <button
+            onClick={() => setFilter('expense')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+              filter === 'expense' ? 'bg-red-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'
+            }`}
+          >
+            Gastos
+          </button>
+          <button
+            onClick={() => setFilter('income')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+              filter === 'income' ? 'bg-green-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'
+            }`}
+          >
+            Ingresos
+          </button>
+        </div>
 
-            </div>
+        {/* Category Filter */}
+        {categories.length > 0 && (
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+            className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="all">Todas las categorías</option>
+            {categories.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+        )}
 
-            <button
-              className="border rounded px-2 py-1 text-xs whitespace-nowrap"
-              onClick={() => toggleStatus(e.id, e.status)}
-            >
-              Cambiar estado
-            </button>
+        {/* Summary */}
+        <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">Total registros:</span>
+            <span className="font-medium">{filteredEvents.length}</span>
           </div>
-        ))}
+          <div className="flex justify-between text-sm mt-1">
+            <span className="text-gray-400">Total monto:</span>
+            <span className="font-medium">
+              {formatCurrency(filteredEvents.reduce((sum, e) => sum + (e.type === 'income' ? e.amount : -e.amount), 0))}
+            </span>
+          </div>
+        </div>
+      </div>
 
-        {events.length === 0 && <div className="text-sm opacity-70">No hay eventos.</div>}
+      {/* Events List */}
+      <div className="px-4 pb-20">
+        {Object.entries(groupedEvents).length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <p className="text-4xl mb-2">📋</p>
+            <p>No hay registros</p>
+          </div>
+        ) : (
+          Object.entries(groupedEvents).map(([date, dayEvents]) => (
+            <div key={date} className="mb-4">
+              <h3 className="text-sm font-medium text-gray-400 mb-2 capitalize">{date}</h3>
+              <div className="space-y-2">
+                {dayEvents.map(e => (
+                  <div 
+                    key={e.id} 
+                    className="bg-[#111a2e] rounded-xl p-3 border border-white/5"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            e.type === 'income' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+                          }`}>
+                            {e.type === 'income' ? '↑ Ingreso' : '↓ Gasto'}
+                          </span>
+                          {e.expense_type === 'personal' && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-purple-900/50 text-purple-400">
+                              Personal
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-gray-200 font-medium mt-1">{e.category}</p>
+                        {e.vendor && <p className="text-xs text-gray-500">📍 {e.vendor}</p>}
+                        {e.payment_method && <p className="text-xs text-gray-500">💳 {e.payment_method}</p>}
+                        {e.note && <p className="text-xs text-gray-500 mt-1">📝 {e.note}</p>}
+                        <p className="text-xs text-gray-600 mt-1">
+                          {new Date(e.timestamp).toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-lg font-bold ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
+                          {e.type === 'income' ? '+' : '-'}{formatCurrency(e.amount)}
+                        </p>
+                        <button
+                          onClick={() => e.id && handleDelete(e.id)}
+                          className="text-xs text-red-400 hover:text-red-300 mt-2"
+                        >
+                          🗑️ Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   )

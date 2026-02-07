@@ -1,194 +1,269 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState } from 'react'
 import { db } from '@/lib/db'
-import type { EventRecord } from '@/lib/types'
 
 interface SearchPageProps {
   onNavigate: (page: string) => void
 }
 
-type Period = 'today' | 'week' | 'month' | 'year' | 'all'
+interface SearchResult {
+  type: 'event' | 'client' | 'invoice' | 'note' | 'appointment'
+  id: number
+  title: string
+  subtitle: string
+  amount?: number
+  date: number
+}
 
 export default function SearchPage({ onNavigate }: SearchPageProps) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<EventRecord[]>([])
-  const [period, setPeriod] = useState<Period>('month')
-  const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all')
-  const [total, setTotal] = useState(0)
+  const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
-const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [searched, setSearched] = useState(false)
 
-
-  const getDateRange = useCallback((p: Period): { start: number; end: number } => {
-    const now = Date.now()
-    const d = new Date()
-    switch (p) {
-      case 'today': return { start: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(), end: now }
-      case 'week': return { start: now - 7 * 86400000, end: now }
-      case 'month': return { start: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), end: now }
-      case 'year': return { start: new Date(d.getFullYear(), 0, 1).getTime(), end: now }
-      case 'all': return { start: 0, end: now }
-    }
-  }, [])
-
-  const search = useCallback(async () => {
+  const handleSearch = async () => {
+    if (!query.trim()) return
+    
     setLoading(true)
+    setSearched(true)
+    const q = query.toLowerCase()
+    const found: SearchResult[] = []
+
     try {
-      const { start, end } = getDateRange(period)
-      let events = await db.events
-        .where('timestamp')
-        .between(start, end)
-        .reverse()
-        .toArray()
+      // Search events
+      const events = await db.events.toArray()
+      events.forEach(e => {
+        const match = 
+          e.category?.toLowerCase().includes(q) ||
+          e.vendor?.toLowerCase().includes(q) ||
+          e.client?.toLowerCase().includes(q) ||
+          e.note?.toLowerCase().includes(q) ||
+          e.payment_method?.toLowerCase().includes(q)
+        
+        if (match) {
+          found.push({
+            type: 'event',
+            id: e.id!,
+            title: `${e.type === 'income' ? '💰' : '💸'} ${e.category}`,
+            subtitle: e.vendor || e.client || e.note || '',
+            amount: e.amount,
+            date: e.timestamp
+          })
+        }
+      })
 
-      // Type filter
-      if (typeFilter !== 'all') {
-        events = events.filter(e => e.type === typeFilter)
-      }
+      // Search clients
+      const clients = await db.clients.toArray()
+      clients.forEach(c => {
+        const match = 
+          c.first_name?.toLowerCase().includes(q) ||
+          c.last_name?.toLowerCase().includes(q) ||
+          c.phone?.toLowerCase().includes(q) ||
+          c.email?.toLowerCase().includes(q) ||
+          c.address?.toLowerCase().includes(q)
+        
+        if (match) {
+          found.push({
+            type: 'client',
+            id: c.id!,
+            title: `👤 ${c.first_name} ${c.last_name}`,
+            subtitle: c.phone || c.email || c.type,
+            date: c.created_at
+          })
+        }
+      })
 
-      // Text search
-      if (query.trim()) {
-        const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        events = events.filter(e => {
-          const searchable = [
-            e.category, e.subtype, e.vendor, e.client,
-            e.note, e.payment_method, e.vehicle_id
-          ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-          return searchable.includes(q)
-        })
-      }
+      // Search invoices
+      const invoices = await db.invoices.toArray()
+      invoices.forEach(i => {
+        const match = 
+          i.client_name?.toLowerCase().includes(q) ||
+          i.invoice_number?.toLowerCase().includes(q) ||
+          i.notes?.toLowerCase().includes(q)
+        
+        if (match) {
+          found.push({
+            type: 'invoice',
+            id: i.id!,
+            title: `🧾 ${i.invoice_number}`,
+            subtitle: i.client_name,
+            amount: i.total,
+            date: i.issue_date
+          })
+        }
+      })
 
-      setResults(events.slice(0, 100))
-      setTotal(events.reduce((s, e) => s + e.amount, 0))
-    } catch (e) {
-      console.error('Search error:', e)
+      // Search notes
+      const notes = await db.notes.toArray()
+      notes.forEach(n => {
+        const match = 
+          n.title?.toLowerCase().includes(q) ||
+          n.content?.toLowerCase().includes(q)
+        
+        if (match) {
+          found.push({
+            type: 'note',
+            id: n.id!,
+            title: `📝 ${n.title || 'Nota'}`,
+            subtitle: n.content.substring(0, 50) + '...',
+            date: n.timestamp
+          })
+        }
+      })
+
+      // Search appointments
+      const appts = await db.appointments.toArray()
+      appts.forEach(a => {
+        const match = 
+          a.title?.toLowerCase().includes(q) ||
+          a.client_name?.toLowerCase().includes(q) ||
+          a.location?.toLowerCase().includes(q) ||
+          a.notes?.toLowerCase().includes(q)
+        
+        if (match) {
+          found.push({
+            type: 'appointment',
+            id: a.id!,
+            title: `📅 ${a.title}`,
+            subtitle: a.client_name || a.location || '',
+            date: a.date
+          })
+        }
+      })
+
+      // Sort by date descending
+      found.sort((a, b) => b.date - a.date)
+      setResults(found)
+
+    } catch (error) {
+      console.error('Search error:', error)
     } finally {
       setLoading(false)
     }
-  }, [query, period, typeFilter, getDateRange])
+  }
 
-  // Debounced search
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(search, 200)
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [search])
+  const formatDate = (ts: number) => {
+    return new Date(ts).toLocaleDateString('es-PR', { 
+      month: 'short', 
+      day: 'numeric',
+      year: 'numeric'
+    })
+  }
 
-  const fmt = (n: number) => `$${n.toFixed(2)}`
-  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const formatCurrency = (n: number) => `$${n.toFixed(2)}`
 
-  const getPaymentLabel = (m: string | undefined) => {
-    if (!m || m.trim() === '') return ''
-    const labels: Record<string, string> = { cash: 'Efectivo', ath_movil: 'ATH Móvil', paypal: 'PayPal' }
-    const key = m.trim().toLowerCase()
-    return labels[key] || key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  const getTypeColor = (type: string) => {
+    switch (type) {
+      case 'event': return 'bg-blue-900/50 text-blue-400'
+      case 'client': return 'bg-green-900/50 text-green-400'
+      case 'invoice': return 'bg-yellow-900/50 text-yellow-400'
+      case 'note': return 'bg-purple-900/50 text-purple-400'
+      case 'appointment': return 'bg-orange-900/50 text-orange-400'
+      default: return 'bg-gray-900/50 text-gray-400'
+    }
+  }
+
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'event': return 'Evento'
+      case 'client': return 'Cliente'
+      case 'invoice': return 'Factura'
+      case 'note': return 'Nota'
+      case 'appointment': return 'Cita'
+      default: return type
+    }
   }
 
   return (
     <div className="min-h-screen bg-[#0b1220] text-gray-100">
       {/* Header */}
-      <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
-        <h1 className="text-xl font-bold">🔍 Buscar</h1>
-        <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬 Chat</button>
+      <div className="sticky top-0 z-30 bg-gradient-to-r from-cyan-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <button onClick={() => onNavigate('chat')} className="text-lg">←</button>
+          <h1 className="text-xl font-bold">🔍 Buscar</h1>
+        </div>
+        <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
       </div>
 
-      <div className="p-4 max-w-2xl mx-auto">
-        {/* Search Input */}
-        <input
-          type="text"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder="Buscar: subway, caridad, f150, sams..."
-          className="w-full bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-          autoFocus
-        />
+      {/* Search Input */}
+      <div className="p-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            placeholder="Buscar clientes, gastos, facturas, notas..."
+            className="flex-1 bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={handleSearch}
+            disabled={loading || !query.trim()}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium disabled:opacity-50"
+          >
+            {loading ? '⏳' : '🔍'}
+          </button>
+        </div>
 
-        {/* Period Filters */}
-        <div className="flex gap-2 mt-3 overflow-x-auto pb-1">
-          {([
-            ['today', 'Hoy'],
-            ['week', 'Semana'],
-            ['month', 'Mes'],
-            ['year', 'Año'],
-            ['all', 'Todo']
-          ] as [Period, string][]).map(([key, label]) => (
+        {/* Quick Searches */}
+        <div className="flex flex-wrap gap-2 mt-3">
+          {['gasolina', 'materiales', 'comida', 'pendiente'].map(term => (
             <button
-              key={key}
-              onClick={() => setPeriod(key)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                period === key
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-[#111a2e] text-gray-400 border border-white/10'
-              }`}
+              key={term}
+              onClick={() => { setQuery(term); }}
+              className="bg-[#111a2e] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-gray-400 hover:bg-[#1a2332]"
             >
-              {label}
+              {term}
             </button>
           ))}
         </div>
+      </div>
 
-        {/* Type Filter */}
-        <div className="flex gap-2 mt-2">
-          {([
-            ['all', 'Todos'],
-            ['expense', '↓ Gastos'],
-            ['income', '↑ Ingresos']
-          ] as ['all' | 'expense' | 'income', string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTypeFilter(key)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                typeFilter === key
-                  ? key === 'expense' ? 'bg-red-600/30 text-red-400 border border-red-500/30'
-                    : key === 'income' ? 'bg-green-600/30 text-green-400 border border-green-500/30'
-                    : 'bg-blue-600 text-white'
-                  : 'bg-[#111a2e] text-gray-400 border border-white/10'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Results Summary */}
-        <div className="flex justify-between items-center mt-4 mb-2 text-sm">
-          <span className="text-gray-400">{results.length} resultado{results.length !== 1 ? 's' : ''}</span>
-          <span className="font-medium text-gray-300">Total: {fmt(total)}</span>
-        </div>
-
-        {/* Results */}
+      {/* Results */}
+      <div className="px-4 pb-20">
         {loading ? (
-          <div className="text-center py-8 text-gray-500">Buscando...</div>
-        ) : results.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">No se encontraron resultados</div>
-        ) : (
-          <div className="space-y-1">
-            {results.map((e, i) => (
-              <div key={e.id || i} className="bg-[#111a2e] rounded-lg p-3 border border-white/5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${
-                      e.type === 'income' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                    }`}>
-                      {e.type === 'income' ? '↑' : '↓'}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm text-gray-200 truncate">{e.category || e.subtype || 'Sin categoría'}</p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {[e.vendor, e.client, e.note].filter(Boolean).join(' · ') || '—'}
-                      </p>
+          <div className="text-center py-12">
+            <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full mx-auto mb-3"></div>
+            <p className="text-gray-400">Buscando...</p>
+          </div>
+        ) : searched && results.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <p className="text-4xl mb-2">🔍</p>
+            <p>No se encontraron resultados para "{query}"</p>
+          </div>
+        ) : results.length > 0 ? (
+          <>
+            <p className="text-sm text-gray-400 mb-3">{results.length} resultado{results.length !== 1 ? 's' : ''}</p>
+            <div className="space-y-2">
+              {results.map((r, idx) => (
+                <div 
+                  key={`${r.type}-${r.id}-${idx}`}
+                  className="bg-[#111a2e] rounded-xl p-3 border border-white/5"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs px-2 py-0.5 rounded ${getTypeColor(r.type)}`}>
+                          {getTypeLabel(r.type)}
+                        </span>
+                        <span className="text-xs text-gray-500">{formatDate(r.date)}</span>
+                      </div>
+                      <p className="text-gray-200 font-medium">{r.title}</p>
+                      {r.subtitle && <p className="text-xs text-gray-500 mt-0.5">{r.subtitle}</p>}
                     </div>
-                  </div>
-                  <div className="text-right flex-shrink-0 ml-2">
-                    <p className={`font-medium text-sm ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>{fmt(e.amount)}</p>
-                    <p className="text-xs text-gray-500">{fmtDate(e.timestamp)}</p>
+                    {r.amount !== undefined && (
+                      <p className="text-lg font-bold text-gray-300">{formatCurrency(r.amount)}</p>
+                    )}
                   </div>
                 </div>
-                {e.payment_method && (
-                  <p className="text-xs text-gray-500 mt-1">💳 {getPaymentLabel(e.payment_method)}</p>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="text-center py-12 text-gray-500">
+            <p className="text-4xl mb-2">🔍</p>
+            <p>Escribe algo para buscar</p>
           </div>
         )}
       </div>
