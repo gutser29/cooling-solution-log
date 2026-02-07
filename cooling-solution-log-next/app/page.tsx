@@ -1,4 +1,3 @@
-
 'use client'
 
 import { useState } from 'react'
@@ -12,6 +11,7 @@ import JobTemplatesPage from '@/components/JobTemplatesPage'
 import ExpensesPage from '@/components/ExpensesPage'
 import HistoryPage from '@/components/HistoryPage'
 import SearchPage from '@/components/SearchPage'
+import ReceiptsPage from '@/components/ReceiptsPage'
 
 export default function Home() {
   const [currentPage, setCurrentPage] = useState('chat')
@@ -28,6 +28,7 @@ export default function Home() {
     case 'expenses': return <ExpensesPage onNavigate={navigate} />
     case 'history': return <HistoryPage onNavigate={navigate} />
     case 'search': return <SearchPage onNavigate={navigate} />
+    case 'receipts': return <ReceiptsPage onNavigate={navigate} />
     default: return <ChatCapture onNavigate={navigate} />
   }
 }

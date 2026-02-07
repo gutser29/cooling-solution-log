@@ -14,6 +14,7 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
   const [filter, setFilter] = useState<'all' | 'expense' | 'income'>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [categories, setCategories] = useState<string[]>([])
+  const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null)
 
   useEffect(() => {
     loadEvents()
@@ -40,6 +41,7 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
     try {
       await db.events.delete(id)
       setEvents(prev => prev.filter(e => e.id !== id))
+      setSelectedEvent(null)
     } catch (error) {
       console.error('Error deleting event:', error)
       alert('Error al eliminar')
@@ -51,17 +53,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
     if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
     return true
   })
-
-  const formatDate = (ts: number) => {
-    const d = new Date(ts)
-    return d.toLocaleDateString('es-PR', { 
-      weekday: 'short', 
-      month: 'short', 
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
 
   const formatCurrency = (n: number) => `$${n.toFixed(2)}`
 
@@ -169,7 +160,8 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                 {dayEvents.map(e => (
                   <div 
                     key={e.id} 
-                    className="bg-[#111a2e] rounded-xl p-3 border border-white/5"
+                    className="bg-[#111a2e] rounded-xl p-3 border border-white/5 cursor-pointer hover:bg-[#1a2332] transition-colors"
+                    onClick={() => setSelectedEvent(e)}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -182,6 +174,11 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                           {e.expense_type === 'personal' && (
                             <span className="text-xs px-2 py-0.5 rounded bg-purple-900/50 text-purple-400">
                               Personal
+                            </span>
+                          )}
+                          {e.photo && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-blue-900/50 text-blue-400">
+                              📷
                             </span>
                           )}
                         </div>
@@ -197,12 +194,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                         <p className={`text-lg font-bold ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
                           {e.type === 'income' ? '+' : '-'}{formatCurrency(e.amount)}
                         </p>
-                        <button
-                          onClick={() => e.id && handleDelete(e.id)}
-                          className="text-xs text-red-400 hover:text-red-300 mt-2"
-                        >
-                          🗑️ Eliminar
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -212,6 +203,94 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
           ))
         )}
       </div>
+
+      {/* Modal de Detalle */}
+      {selectedEvent && (
+        <>
+          <div className="fixed inset-0 bg-black/70 z-40" onClick={() => setSelectedEvent(null)} />
+          <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-[#111a2e] rounded-2xl z-50 max-h-[85vh] overflow-y-auto border border-white/10">
+            <div className="sticky top-0 bg-[#111a2e] p-4 border-b border-white/10 flex justify-between items-center">
+              <h2 className="text-lg font-bold">Detalle del Registro</h2>
+              <button onClick={() => setSelectedEvent(null)} className="text-gray-400 text-xl">✕</button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              {/* Info Principal */}
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className={`text-xs px-2 py-1 rounded ${
+                    selectedEvent.type === 'income' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+                  }`}>
+                    {selectedEvent.type === 'income' ? '↑ Ingreso' : '↓ Gasto'}
+                  </span>
+                  <h3 className="text-xl font-bold mt-2">{selectedEvent.category}</h3>
+                </div>
+                <p className={`text-2xl font-bold ${selectedEvent.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
+                  {selectedEvent.type === 'income' ? '+' : '-'}{formatCurrency(selectedEvent.amount)}
+                </p>
+              </div>
+
+              {/* Detalles */}
+              <div className="bg-[#0b1220] rounded-xl p-3 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Fecha:</span>
+                  <span>{new Date(selectedEvent.timestamp).toLocaleString('es-PR')}</span>
+                </div>
+                {selectedEvent.vendor && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Lugar:</span>
+                    <span>{selectedEvent.vendor}</span>
+                  </div>
+                )}
+                {selectedEvent.payment_method && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Método de pago:</span>
+                    <span>{selectedEvent.payment_method}</span>
+                  </div>
+                )}
+                {selectedEvent.vehicle_id && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Vehículo:</span>
+                    <span>{selectedEvent.vehicle_id}</span>
+                  </div>
+                )}
+                {selectedEvent.expense_type && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Tipo:</span>
+                    <span>{selectedEvent.expense_type === 'personal' ? '🏠 Personal' : '💼 Negocio'}</span>
+                  </div>
+                )}
+                {selectedEvent.note && (
+                  <div className="text-sm">
+                    <span className="text-gray-400 block mb-1">Nota:</span>
+                    <span className="text-gray-200">{selectedEvent.note}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Foto del Recibo */}
+              {selectedEvent.photo && (
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">📷 Foto del Recibo:</p>
+                  <img 
+                    src={selectedEvent.photo} 
+                    alt="Recibo" 
+                    className="w-full rounded-xl border border-white/10"
+                  />
+                </div>
+              )}
+
+              {/* Botón Eliminar */}
+              <button
+                onClick={() => selectedEvent.id && handleDelete(selectedEvent.id)}
+                className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-medium"
+              >
+                🗑️ Eliminar Registro
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

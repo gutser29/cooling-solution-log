@@ -937,7 +937,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
             <button onClick={() => { setShowMenu(false); onNavigate('expenses') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💵 Gastos</button>
-            <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Facturas</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('receipts') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🧾 Recibos</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('invoices') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📄 Facturas</button>
             <button onClick={() => { setShowMenu(false); onNavigate('templates') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📋 Templates</button>
             <button onClick={() => { setShowMenu(false); onNavigate('calendar') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📅 Calendario</button>
             <button onClick={() => { setShowMenu(false); onNavigate('notes') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📝 Notas</button>
