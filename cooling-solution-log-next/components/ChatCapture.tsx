@@ -132,6 +132,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const contextLoadedRef = useRef(false)
   const driveConnectedRef = useRef(false)
   const syncingRef = useRef(false)
+  // ====== NUEVO: Ref para fotos de recibos pendientes ======
+  const receiptPhotosRef = useRef<string[]>([])
 
   useEffect(() => { driveConnectedRef.current = driveConnected }, [driveConnected])
 
@@ -369,7 +371,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         if (events.length > 0) {
           ctx += 'EVENTOS RECIENTES:\n' + events.map(e => {
             const d = new Date(e.timestamp).toLocaleDateString('es-PR')
-            return `[${d}] ${e.type} ${e.category} $${e.amount} ${e.vendor || e.client || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}`
+            const hasPhoto = e.receipt_photos && e.receipt_photos.length > 0 ? ' 📷' : ''
+            return `[${d}] ${e.type} ${e.category} $${e.amount} ${e.vendor || e.client || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}${hasPhoto}`
           }).join('\n')
         }
 
@@ -495,6 +498,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     const userContent = hasText ? input.trim() : '📷 Foto adjunta'
     const userPhotos = [...pendingPhotos]
 
+    // ====== NUEVO: Guardar fotos para adjuntar al próximo SAVE_EVENT ======
+    if (userPhotos.length > 0) {
+      receiptPhotosRef.current = userPhotos
+    }
+
     setMessages(prev => [...prev, { role: 'user', content: userContent, photos: userPhotos.length ? userPhotos : undefined }])
     setInput('')
     setPendingPhotos([])
@@ -536,11 +544,14 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             client: data.payload.client,
             vehicle_id: data.payload.vehicle_id,
             note: data.payload.note,
-            expense_type: data.payload.expense_type || 'business'
+            expense_type: data.payload.expense_type || 'business',
+            receipt_photos: receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
           })
+          const hadPhotos = receiptPhotosRef.current.length > 0
+          receiptPhotosRef.current = [] // Limpiar después de usar
           setMessages(prev => [...prev, { 
             role: 'assistant', 
-            content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}` 
+            content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}${hadPhotos ? ' 📷 foto adjunta' : ''}` 
           }])
           syncToDrive()
           return
@@ -630,10 +641,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             client: eventData.client,
             vehicle_id: eventData.vehicle_id,
             note: eventData.note,
-            expense_type: eventData.expense_type || 'business'
+            expense_type: eventData.expense_type || 'business',
+            receipt_photos: receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
           })
+          const hadPhotos = receiptPhotosRef.current.length > 0
+          receiptPhotosRef.current = [] // Limpiar después de usar
           const cleanText = assistantText.replace(/SAVE_EVENT:\s*\{[^}]*\}/gi, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${eventData.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${eventData.amount}` }])
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${eventData.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${eventData.amount}${hadPhotos ? ' 📷 foto adjunta' : ''}` }])
           syncToDrive()
           return
         } catch (e) { console.error('SAVE_EVENT error:', e) }
@@ -860,6 +874,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
               created_at: now
             })
           }
+          receiptPhotosRef.current = [] // Limpiar porque ya se guardaron como client_photos
           const cleanText = assistantText.replace(/SAVE_PHOTO:\s*\{[^}]*\}/gi, '').trim()
           setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${userPhotos.length} foto(s) guardada(s) para ${photoData.client_name}` }])
           syncToDrive()

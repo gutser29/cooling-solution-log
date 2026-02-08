@@ -24,6 +24,7 @@ export interface EventRecord {
   metadata?: any
   expense_type?: 'personal' | 'business'
   location_id?: number
+  receipt_photos?: string[]
 }
 
 // ========== CLIENT LOCATIONS ==========

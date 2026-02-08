@@ -183,6 +183,16 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     loadClients()
   }
 
+  // ====== NUEVO: WhatsApp directo ======
+  const openWhatsApp = (phone: string, message?: string) => {
+    const cleanPhone = phone.replace(/\D/g, '')
+    if (!cleanPhone) return
+    const url = message 
+      ? `https://wa.me/1${cleanPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/1${cleanPhone}`
+    window.open(url, '_blank')
+  }
+
   const handleGeneratePhotoReport = () => {
     if (!selectedClient || clientPhotos.length === 0) {
       alert('No hay fotos para este cliente')
@@ -477,7 +487,13 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <button onClick={() => { setViewMode('list'); setSelectedClient(null) }} className="text-lg">←</button>
             <h1 className="text-xl font-bold">👤 {selectedClient.first_name}</h1>
           </div>
-          <button onClick={startEdit} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">✏️ Editar</button>
+          <div className="flex items-center gap-2">
+            {/* ====== NUEVO: WhatsApp directo ====== */}
+            {selectedClient.phone && (
+              <button onClick={() => openWhatsApp(selectedClient.phone!)} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">📱 WA</button>
+            )}
+            <button onClick={startEdit} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">✏️ Editar</button>
+          </div>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
@@ -487,8 +503,14 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
               {selectedClient.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
             </span>
-            {selectedClient.phone && <p className="text-sm text-gray-400 mt-3">📞 {selectedClient.phone}</p>}
-            {selectedClient.email && <p className="text-sm text-gray-400">✉️ {selectedClient.email}</p>}
+            {selectedClient.phone && (
+              <div className="flex items-center gap-2 mt-3">
+                <p className="text-sm text-gray-400">📞 {selectedClient.phone}</p>
+                <button onClick={() => openWhatsApp(selectedClient.phone!)} className="text-xs bg-green-600/20 text-green-400 px-2 py-0.5 rounded-lg border border-green-600/30 hover:bg-green-600/30">WhatsApp</button>
+                <a href={`tel:${selectedClient.phone}`} className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded-lg border border-blue-600/30 hover:bg-blue-600/30">Llamar</a>
+              </div>
+            )}
+            {selectedClient.email && <p className="text-sm text-gray-400 mt-1">✉️ {selectedClient.email}</p>}
             {selectedClient.address && <p className="text-sm text-gray-400">📍 {selectedClient.address}</p>}
             {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">&quot;{selectedClient.notes}&quot;</p>}
           </div>

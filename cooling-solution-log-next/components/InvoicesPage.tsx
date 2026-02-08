@@ -241,7 +241,23 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       updated_at: now
     })
     loadAll()
-    alert('✅ Cotización convertida a factura')
+    setTab('invoices')
+    setViewMode('list')
+    setSelected(null)
+    alert('✅ Cotización convertida a factura — revisa en Facturas')
+  }
+
+  // ====== NUEVO: WhatsApp directo ======
+  const sendWhatsApp = (inv: Invoice) => {
+    const phone = inv.client_phone?.replace(/\D/g, '') || ''
+    if (!phone) {
+      alert('Este cliente no tiene teléfono registrado')
+      return
+    }
+    const typeLabel = inv.type === 'quote' ? 'cotización' : 'factura'
+    const itemsList = inv.items.map(i => `• ${i.description}: ${fmt(i.total)}`).join('\n')
+    const text = `Hola ${inv.client_name},\n\nLe envío ${typeLabel} #${inv.invoice_number}:\n\n${itemsList}\n\n*Total: ${fmt(inv.total)}*\n\nCooling Solution\n939-425-6081\n"Donde tu confort es nuestra prioridad"`
+    window.open(`https://wa.me/1${phone}?text=${encodeURIComponent(text)}`, '_blank')
   }
 
   const statusLabel = (s: string) => {
@@ -495,6 +511,20 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
 
           {/* Actions */}
           <div className="space-y-2">
+            {/* ====== NUEVO: WhatsApp directo ====== */}
+            {selected.client_phone && (
+              <button onClick={() => sendWhatsApp(selected)} className="w-full py-3 rounded-xl text-sm font-medium bg-green-600 text-white flex items-center justify-center gap-2">
+                📱 Enviar por WhatsApp
+              </button>
+            )}
+
+            {/* ====== MEJORADO: Cotización → Factura más visible ====== */}
+            {isQuote && selected.status !== 'cancelled' && (
+              <button onClick={() => convertQuoteToInvoice(selected)} className="w-full py-3 rounded-xl text-sm font-medium bg-purple-600 text-white flex items-center justify-center gap-2">
+                🔄 Convertir a Factura
+              </button>
+            )}
+
             {selected.status === 'draft' && (
               <button onClick={() => updateStatus(selected, 'sent')} className="w-full py-3 rounded-xl text-sm font-medium bg-blue-600 text-white">
                 📤 Marcar como Enviada
@@ -511,11 +541,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                   ))}
                 </div>
               </div>
-            )}
-            {isQuote && selected.status !== 'cancelled' && (
-              <button onClick={() => convertQuoteToInvoice(selected)} className="w-full py-3 rounded-xl text-sm font-medium bg-purple-600 text-white">
-                🔄 Convertir a Factura
-              </button>
             )}
             {selected.status !== 'paid' && selected.status !== 'cancelled' && (
               <button onClick={() => updateStatus(selected, 'cancelled')} className="w-full py-3 rounded-xl text-sm font-medium bg-gray-800 text-gray-400 border border-white/10">
