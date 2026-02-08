@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
+import ConfirmDialog from './ConfirmDialog'
 import type { Appointment, Reminder, RecurringContract, Client } from '@/lib/types'
 
 interface CalendarPageProps {
@@ -16,24 +17,22 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [contractAlerts, setContractAlerts] = useState<{ contract: RecurringContract; clientName: string; daysUntil: number }[]>([])
   const [loading, setLoading] = useState(true)
+  const [confirmAction, setConfirmAction] = useState<{ show: boolean; title: string; message: string; action: () => void }>({ show: false, title: '', message: '', action: () => {} })
 
   const load = useCallback(async () => {
     const now = Date.now()
     const threeDays = 3 * 24 * 60 * 60 * 1000
 
-    // Appointments: upcoming + recent
     const allAppts = await db.appointments.orderBy('date').toArray()
     const upcoming = allAppts.filter(a => a.status === 'scheduled' && a.date >= now - 86400000)
     const pastWeek = allAppts.filter(a => a.status !== 'scheduled' && a.date >= now - 7 * 86400000)
     setAppointments([...upcoming, ...pastWeek].sort((a, b) => a.date - b.date))
 
-    // Reminders: active first
     const allReminders = await db.reminders.orderBy('due_date').toArray()
     const active = allReminders.filter(r => !r.completed).sort((a, b) => a.due_date - b.due_date)
     const completed = allReminders.filter(r => r.completed).sort((a, b) => b.due_date - a.due_date).slice(0, 10)
     setReminders([...active, ...completed])
 
-    // Contract alerts (next_service_due within 3 days)
     const contracts = await db.contracts.where('status').equals('active').toArray()
     const clients = await db.clients.toArray()
     const clientMap = new Map(clients.map(c => [c.id, `${c.first_name} ${c.last_name}`]))
@@ -61,12 +60,14 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
   const deleteReminder = async (r: Reminder) => {
     if (!r.id) return
     await db.reminders.delete(r.id)
+    setConfirmAction({ show: false, title: '', message: '', action: () => {} })
     load()
   }
 
   const cancelAppointment = async (a: Appointment) => {
     if (!a.id) return
     await db.appointments.update(a.id, { status: 'cancelled' })
+    setConfirmAction({ show: false, title: '', message: '', action: () => {} })
     load()
   }
 
@@ -78,7 +79,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
 
   const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { weekday: 'short', month: 'short', day: 'numeric' })
   const fmtTime = (ts: number) => new Date(ts).toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
-  const fmtFull = (ts: number) => `${fmtDate(ts)} ${fmtTime(ts)}`
 
   const isToday = (ts: number) => new Date(ts).toDateString() === new Date().toDateString()
   const isTomorrow = (ts: number) => {
@@ -93,7 +93,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
     return fmtDate(ts)
   }
 
-  // Group appointments by day
   const groupedAppts: { label: string; items: Appointment[] }[] = []
   appointments.forEach(a => {
     const label = getDayLabel(a.date)
@@ -112,7 +111,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
 
   return (
     <div className="min-h-screen bg-[#0b1220] text-gray-100">
-      {/* Header */}
       <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
         <div className="flex items-center gap-3">
           <button onClick={() => onNavigate('dashboard')} className="text-lg">←</button>
@@ -121,7 +119,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
         <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬 Chat</button>
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-white/10">
         {([
           { key: 'agenda' as Tab, label: '📅 Citas', count: appointments.filter(a => a.status === 'scheduled').length },
@@ -141,7 +138,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
       </div>
 
       <div className="p-4 max-w-2xl mx-auto space-y-4">
-        {/* Contract Alerts */}
         {contractAlerts.length > 0 && (
           <div className="bg-yellow-900/20 rounded-xl p-4 border border-yellow-700/30">
             <p className="text-sm font-semibold text-yellow-400 mb-2">⚠️ Contratos por Vencer</p>
@@ -163,7 +159,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
           </div>
         )}
 
-        {/* ========== AGENDA TAB ========== */}
         {tab === 'agenda' && (
           <>
             {groupedAppts.length === 0 ? (
@@ -201,7 +196,7 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
                           {a.status === 'scheduled' && (
                             <div className="flex gap-1 ml-2">
                               <button onClick={() => completeAppointment(a)} className="text-xs bg-green-900/30 text-green-400 px-2 py-1 rounded-lg">✅</button>
-                              <button onClick={() => cancelAppointment(a)} className="text-xs bg-red-900/30 text-red-400 px-2 py-1 rounded-lg">✕</button>
+                              <button onClick={() => setConfirmAction({ show: true, title: 'Cancelar Cita', message: `¿Cancelar "${a.title}"?`, action: () => cancelAppointment(a) })} className="text-xs bg-red-900/30 text-red-400 px-2 py-1 rounded-lg">✕</button>
                             </div>
                           )}
                           {a.status !== 'scheduled' && (
@@ -221,7 +216,6 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
           </>
         )}
 
-        {/* ========== REMINDERS TAB ========== */}
         {tab === 'reminders' && (
           <>
             {reminders.length === 0 ? (
@@ -254,7 +248,7 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
                           )}
                         </div>
                       </div>
-                      <button onClick={() => deleteReminder(r)} className="text-gray-600 hover:text-red-400 text-sm">🗑️</button>
+                      <button onClick={() => setConfirmAction({ show: true, title: 'Eliminar Recordatorio', message: `¿Eliminar "${r.text}"?`, action: () => deleteReminder(r) })} className="text-gray-600 hover:text-red-400 text-sm">🗑️</button>
                     </div>
                   </div>
                 ))}
@@ -263,6 +257,16 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
           </>
         )}
       </div>
+
+      <ConfirmDialog
+        show={confirmAction.show}
+        title={confirmAction.title}
+        message={confirmAction.message}
+        confirmText="Confirmar"
+        confirmColor="red"
+        onConfirm={confirmAction.action}
+        onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })}
+      />
     </div>
   )
 }

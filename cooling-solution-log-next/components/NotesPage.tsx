@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
+import ConfirmDialog from './ConfirmDialog'
 import type { Note } from '@/lib/types'
 
 interface NotesPageProps {
@@ -16,6 +17,7 @@ export default function NotesPage({ onNavigate }: NotesPageProps) {
   const [editContent, setEditContent] = useState('')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const loadNotes = useCallback(async () => {
     const all = await db.notes.orderBy('updated_at').reverse().toArray()
@@ -69,8 +71,8 @@ export default function NotesPage({ onNavigate }: NotesPageProps) {
 
   const deleteNote = async () => {
     if (!selectedNote?.id) return
-    if (!confirm('¿Borrar esta nota?')) return
     await db.notes.delete(selectedNote.id)
+    setConfirmDelete(false)
     setSelectedNote(null)
     setEditing(false)
     loadNotes()
@@ -102,7 +104,7 @@ export default function NotesPage({ onNavigate }: NotesPageProps) {
           </div>
           <div className="flex gap-2">
             {selectedNote && (
-              <button onClick={deleteNote} className="bg-red-500/30 rounded-lg px-3 py-1.5 text-sm font-medium">🗑️</button>
+              <button onClick={() => setConfirmDelete(true)} className="bg-red-500/30 rounded-lg px-3 py-1.5 text-sm font-medium">🗑️</button>
             )}
             <button onClick={saveNote} disabled={!editContent.trim()} className="bg-green-500 rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-50">💾 Guardar</button>
           </div>
@@ -124,6 +126,16 @@ export default function NotesPage({ onNavigate }: NotesPageProps) {
             autoFocus
           />
         </div>
+
+        <ConfirmDialog
+          show={confirmDelete}
+          title="Eliminar Nota"
+          message={`¿Borrar "${selectedNote?.title || 'esta nota'}"?`}
+          confirmText="Borrar"
+          confirmColor="red"
+          onConfirm={deleteNote}
+          onCancel={() => setConfirmDelete(false)}
+        />
       </div>
     )
   }
@@ -138,7 +150,7 @@ export default function NotesPage({ onNavigate }: NotesPageProps) {
             <h1 className="text-xl font-bold truncate">{selectedNote.title || 'Nota'}</h1>
           </div>
           <div className="flex gap-2">
-            <button onClick={deleteNote} className="bg-red-500/30 rounded-lg px-3 py-1.5 text-sm font-medium">🗑️</button>
+            <button onClick={() => setConfirmDelete(true)} className="bg-red-500/30 rounded-lg px-3 py-1.5 text-sm font-medium">🗑️</button>
             <button onClick={startEdit} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">✏️ Editar</button>
           </div>
         </div>
@@ -149,6 +161,16 @@ export default function NotesPage({ onNavigate }: NotesPageProps) {
             <div className="whitespace-pre-wrap text-sm text-gray-200 leading-relaxed">{selectedNote.content}</div>
           </div>
         </div>
+
+        <ConfirmDialog
+          show={confirmDelete}
+          title="Eliminar Nota"
+          message={`¿Borrar "${selectedNote.title || 'esta nota'}"?`}
+          confirmText="Borrar"
+          confirmColor="red"
+          onConfirm={deleteNote}
+          onCancel={() => setConfirmDelete(false)}
+        />
       </div>
     )
   }

@@ -23,6 +23,31 @@ export interface EventRecord {
   photo?: string
   metadata?: any
   expense_type?: 'personal' | 'business'
+  location_id?: number
+}
+
+// ========== CLIENT LOCATIONS ==========
+
+export interface ClientLocation {
+  id?: number
+  client_id: number
+  name: string               // "Tienda #32", "Casa Bayamón", "Oficina Principal"
+  address: string
+  city?: string
+  zip?: string
+  latitude?: number
+  longitude?: number
+  access_instructions?: string  // "Decirle al guardia que viene de Cooling Solution, código portón: 1234"
+  contact_person?: string       // Persona de contacto en esa ubicación
+  contact_phone?: string
+  equipment_info?: string       // "2x Mini split 12k BTU Carrier, 1x Central 3 ton Trane"
+  last_service_date?: number
+  next_service_due?: number
+  notes?: string
+  is_primary: boolean
+  active: boolean
+  created_at: number
+  updated_at?: number
 }
 
 export interface Client {
@@ -70,6 +95,7 @@ export interface Job {
   vehicle_used?: VehicleId
   notes?: string
   created_at: number
+  location_id?: number
 }
 
 export interface JobService {
@@ -153,6 +179,7 @@ export interface Appointment {
   status: 'scheduled' | 'completed' | 'cancelled'
   reminder_minutes?: number
   created_at: number
+  location_id?: number
 }
 
 export interface Reminder {
@@ -198,6 +225,7 @@ export interface Invoice {
   paid_method?: string
   created_at: number
   updated_at: number
+  location_id?: number
 }
 
 // ========== JOB TEMPLATES ==========
@@ -237,6 +265,7 @@ export interface ClientPhoto {
   location?: string
   equipment_type?: string
   created_at: number
+  location_id?: number
 }
 
 // ========== CLIENT DOCUMENTS ==========
@@ -257,4 +286,23 @@ export interface ClientDocument {
   expiration_date?: number
   timestamp: number
   created_at: number
+}
+
+// ========== BITÁCORA ==========
+
+export interface BitacoraEntry {
+  id?: number
+  date: string                  // "2026-02-07"
+  raw_text: string              // Texto original del usuario
+  summary: string               // Resumen organizado por AI
+  tags: string[]                // mantenimiento, instalación, compras...
+  clients_mentioned: string[]   // Nombres de clientes
+  locations: string[]           // Ciudades, barrios
+  equipment: string[]           // Equipos mencionados
+  jobs_count: number
+  hours_estimated: number
+  had_emergency: boolean
+  highlights: string[]          // Puntos importantes del día
+  created_at: number
+  updated_at?: number
 }

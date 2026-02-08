@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { db } from '@/lib/db'
+import ConfirmDialog from './ConfirmDialog'
 import type { EventRecord } from '@/lib/types'
 
 interface HistoryPageProps {
@@ -15,6 +16,7 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [categories, setCategories] = useState<string[]>([])
   const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; item: EventRecord | null }>({ show: false, item: null })
 
   useEffect(() => {
     loadEvents()
@@ -25,7 +27,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
       const allEvents = await db.events.orderBy('timestamp').reverse().toArray()
       setEvents(allEvents)
       
-      // Get unique categories
       const uniqueCats = [...new Set(allEvents.map(e => e.category).filter(Boolean))]
       setCategories(uniqueCats as string[])
     } catch (error) {
@@ -35,13 +36,13 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
     }
   }
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('¿Eliminar este registro?')) return
-    
+  const handleDelete = async (event: EventRecord) => {
+    if (!event.id) return
     try {
-      await db.events.delete(id)
-      setEvents(prev => prev.filter(e => e.id !== id))
+      await db.events.delete(event.id)
+      setEvents(prev => prev.filter(e => e.id !== event.id))
       setSelectedEvent(null)
+      setConfirmDelete({ show: false, item: null })
     } catch (error) {
       console.error('Error deleting event:', error)
       alert('Error al eliminar')
@@ -56,7 +57,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
 
   const formatCurrency = (n: number) => `$${n.toFixed(2)}`
 
-  // Group by date
   const groupedEvents: Record<string, EventRecord[]> = {}
   filteredEvents.forEach(e => {
     const dateKey = new Date(e.timestamp).toLocaleDateString('es-PR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -88,7 +88,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
 
       {/* Filters */}
       <div className="p-4 space-y-3">
-        {/* Type Filter */}
         <div className="flex gap-2">
           <button
             onClick={() => setFilter('all')}
@@ -116,7 +115,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
           </button>
         </div>
 
-        {/* Category Filter */}
         {categories.length > 0 && (
           <select
             value={categoryFilter}
@@ -130,7 +128,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
           </select>
         )}
 
-        {/* Summary */}
         <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Total registros:</span>
@@ -215,7 +212,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
             </div>
             
             <div className="p-4 space-y-4">
-              {/* Info Principal */}
               <div className="flex justify-between items-start">
                 <div>
                   <span className={`text-xs px-2 py-1 rounded ${
@@ -230,7 +226,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                 </p>
               </div>
 
-              {/* Detalles */}
               <div className="bg-[#0b1220] rounded-xl p-3 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Fecha:</span>
@@ -268,7 +263,6 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                 )}
               </div>
 
-              {/* Foto del Recibo */}
               {selectedEvent.photo && (
                 <div>
                   <p className="text-sm text-gray-400 mb-2">📷 Foto del Recibo:</p>
@@ -280,9 +274,8 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                 </div>
               )}
 
-              {/* Botón Eliminar */}
               <button
-                onClick={() => selectedEvent.id && handleDelete(selectedEvent.id)}
+                onClick={() => setConfirmDelete({ show: true, item: selectedEvent })}
                 className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-medium"
               >
                 🗑️ Eliminar Registro
@@ -291,6 +284,16 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
           </div>
         </>
       )}
+
+      <ConfirmDialog
+        show={confirmDelete.show}
+        title="Eliminar Registro"
+        message={`¿Eliminar ${confirmDelete.item?.category || 'este registro'} de ${confirmDelete.item ? formatCurrency(confirmDelete.item.amount) : ''}?`}
+        confirmText="Eliminar"
+        confirmColor="red"
+        onConfirm={() => confirmDelete.item && handleDelete(confirmDelete.item)}
+        onCancel={() => setConfirmDelete({ show: false, item: null })}
+      />
     </div>
   )
 }

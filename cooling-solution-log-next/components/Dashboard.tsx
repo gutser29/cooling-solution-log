@@ -320,10 +320,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-4 gap-2 pb-6">
+        <div className="grid grid-cols-3 gap-2 pb-6">
           <button onClick={() => onNavigate('chat')} className="bg-blue-600 hover:bg-blue-700 rounded-xl p-3 text-center transition-colors">
             <span className="text-xl">💬</span>
             <p className="text-[10px] mt-1 font-medium">Registrar</p>
+          </button>
+          <button onClick={() => onNavigate('bitacora')} className="bg-purple-600 hover:bg-purple-700 rounded-xl p-3 text-center transition-colors">
+            <span className="text-xl">📒</span>
+            <p className="text-[10px] mt-1 font-medium">Bitácora</p>
           </button>
           <button onClick={() => onNavigate('invoices')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
             <span className="text-xl">🧾</span>

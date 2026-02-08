@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
 import { downloadInvoicePDF, generateInvoiceNumber } from '@/lib/pdfGenerator'
+import ConfirmDialog from './ConfirmDialog'
 import type { Invoice, InvoiceItem, Client } from '@/lib/types'
 
 interface InvoicesPageProps {
@@ -21,6 +22,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [clients, setClients] = useState<Client[]>([])
   const [selected, setSelected] = useState<Invoice | null>(null)
   const [loading, setLoading] = useState(true)
+  const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; item: Invoice | null }>({ show: false, item: null })
 
   // Form state
   const [formType, setFormType] = useState<'invoice' | 'quote'>('invoice')
@@ -42,7 +44,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setClients(cls)
     setLoading(false)
     
-    // Check for template data
     try {
       const templateData = localStorage.getItem('invoiceFromTemplate')
       if (templateData) {
@@ -184,7 +185,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     loadAll()
   }
 
-  // ========== CRITICAL FIX: Register income when marking as paid ==========
   const updateStatus = async (inv: Invoice, status: Invoice['status'], paidMethod?: string) => {
     if (!inv.id) return
     const now = Date.now()
@@ -194,7 +194,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       update.paid_date = now
       update.paid_method = paidMethod || 'cash'
       
-      // CREATE INCOME EVENT - This is the fix!
       await db.events.add({
         timestamp: now,
         type: 'income',
@@ -219,8 +218,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
 
   const deleteInvoice = async (inv: Invoice) => {
     if (!inv.id) return
-    if (!confirm(`¿Borrar ${inv.type === 'quote' ? 'cotización' : 'factura'} ${inv.invoice_number}?`)) return
     await db.invoices.delete(inv.id)
+    setConfirmDelete({ show: false, item: null })
     setViewMode('list')
     setSelected(null)
     loadAll()
@@ -523,11 +522,21 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 ✕ Cancelar
               </button>
             )}
-            <button onClick={() => deleteInvoice(selected)} className="w-full py-3 rounded-xl text-sm font-medium bg-red-900/30 text-red-400 border border-red-800/30">
+            <button onClick={() => setConfirmDelete({ show: true, item: selected })} className="w-full py-3 rounded-xl text-sm font-medium bg-red-900/30 text-red-400 border border-red-800/30">
               🗑️ Eliminar
             </button>
           </div>
         </div>
+
+        <ConfirmDialog
+          show={confirmDelete.show}
+          title={`Eliminar ${selected.type === 'quote' ? 'Cotización' : 'Factura'}`}
+          message={`¿Eliminar ${selected.type === 'quote' ? 'cotización' : 'factura'} ${selected.invoice_number}?`}
+          confirmText="Eliminar"
+          confirmColor="red"
+          onConfirm={() => confirmDelete.item && deleteInvoice(confirmDelete.item)}
+          onCancel={() => setConfirmDelete({ show: false, item: null })}
+        />
       </div>
     )
   }
@@ -548,7 +557,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         </button>
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-white/10">
         {([
           { key: 'invoices' as Tab, label: '🧾 Facturas', count: invoices.filter(i => i.type === 'invoice' && i.status !== 'paid' && i.status !== 'cancelled').length },

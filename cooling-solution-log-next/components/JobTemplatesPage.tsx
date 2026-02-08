@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
+import ConfirmDialog from './ConfirmDialog'
 import type { JobTemplate, JobTemplateItem, Client } from '@/lib/types'
 
 interface JobTemplatesPageProps {
@@ -17,6 +18,7 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<'list' | 'create' | 'edit'>('list')
   const [selected, setSelected] = useState<JobTemplate | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; item: JobTemplate | null }>({ show: false, item: null })
 
   // Form
   const [formName, setFormName] = useState('')
@@ -134,8 +136,8 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
 
   const deleteTemplate = async (t: JobTemplate) => {
     if (!t.id) return
-    if (!confirm(`¿Eliminar template "${t.name}"?`)) return
     await db.job_templates.update(t.id, { active: false, updated_at: Date.now() })
+    setConfirmDelete({ show: false, item: null })
     loadAll()
   }
 
@@ -143,7 +145,6 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
     if (onUseTemplate) {
       onUseTemplate(t)
     } else {
-      // Navigate to invoices with template data in localStorage
       localStorage.setItem('invoiceFromTemplate', JSON.stringify(t))
       onNavigate('invoices')
     }
@@ -357,7 +358,7 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
                     ✏️
                   </button>
                   <button
-                    onClick={() => deleteTemplate(t)}
+                    onClick={() => setConfirmDelete({ show: true, item: t })}
                     className="px-3 py-2 rounded-lg text-sm bg-red-900/30 text-red-400"
                   >
                     🗑️
@@ -368,6 +369,16 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        show={confirmDelete.show}
+        title="Eliminar Template"
+        message={`¿Eliminar template "${confirmDelete.item?.name}"?`}
+        confirmText="Eliminar"
+        confirmColor="red"
+        onConfirm={() => confirmDelete.item && deleteTemplate(confirmDelete.item)}
+        onCancel={() => setConfirmDelete({ show: false, item: null })}
+      />
     </div>
   )
 }

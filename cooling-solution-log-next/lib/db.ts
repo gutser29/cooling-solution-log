@@ -12,7 +12,9 @@ import type {
   Invoice,
   JobTemplate,
   ClientPhoto,
-  ClientDocument
+  ClientDocument,
+  ClientLocation,
+  BitacoraEntry
 } from './types'
 
 export interface SyncQueueItem {
@@ -37,6 +39,8 @@ export class CoolingDB extends Dexie {
   job_templates!: Dexie.Table<JobTemplate, number>
   client_photos!: Dexie.Table<ClientPhoto, number>
   client_documents!: Dexie.Table<ClientDocument, number>
+  client_locations!: Dexie.Table<ClientLocation, number>
+  bitacora!: Dexie.Table<BitacoraEntry, number>
 
   constructor() {
     super('CoolingSolutionDB')
@@ -143,6 +147,26 @@ export class CoolingDB extends Dexie {
       job_templates: '++id,name,client_id,active,created_at,updated_at',
       client_photos: '++id,client_id,client_name,job_id,invoice_id,category,timestamp,created_at',
       client_documents: '++id,client_id,client_name,job_id,invoice_id,doc_type,file_name,timestamp,created_at'
+    })
+
+    // Version 10 - Add client_locations and bitacora
+    this.version(10).stores({
+      events: '++id,timestamp,type,status,subtype,category,amount,client_id,employee_id,job_id,vehicle_id,payment_method,expense_type,location_id',
+      clients: '++id,first_name,last_name,phone,type,active,created_at,updated_at',
+      employees: '++id,first_name,last_name,active,created_at',
+      jobs: '++id,client_id,date,status,payment_status,created_at,location_id',
+      vehicles: '++id,name,active,created_at',
+      contracts: '++id,client_id,status,next_service_due,created_at',
+      sync_queue: '++id,timestamp,status',
+      notes: '++id,timestamp,updated_at',
+      appointments: '++id,timestamp,date,client_id,status,created_at,location_id',
+      reminders: '++id,timestamp,due_date,completed,priority,created_at',
+      invoices: '++id,invoice_number,type,client_id,client_name,status,issue_date,due_date,created_at,updated_at,location_id',
+      job_templates: '++id,name,client_id,active,created_at,updated_at',
+      client_photos: '++id,client_id,client_name,job_id,invoice_id,category,timestamp,created_at,location_id',
+      client_documents: '++id,client_id,client_name,job_id,invoice_id,doc_type,file_name,timestamp,created_at',
+      client_locations: '++id,client_id,name,city,is_primary,active,created_at',
+      bitacora: '++id,date,*tags,*clients_mentioned,*locations,created_at'
     })
   }
 }

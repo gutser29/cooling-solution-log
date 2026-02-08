@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { generatePhotoReport, generateDocumentListPDF } from '@/lib/pdfGenerator'
+import ConfirmDialog from './ConfirmDialog'
 import type { Client, Job, EventRecord, ClientPhoto, ClientDocument } from '@/lib/types'
 
 interface ClientsPageProps {
@@ -42,6 +43,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [loading, setLoading] = useState(true)
   const [editForm, setEditForm] = useState<Partial<Client>>({})
   const [filter, setFilter] = useState<'all' | 'residential' | 'commercial'>('all')
+  const [confirmAction, setConfirmAction] = useState<{ show: boolean; title: string; message: string; action: () => void }>({ show: false, title: '', message: '', action: () => {} })
   
   const [showPhotoUpload, setShowPhotoUpload] = useState(false)
   const [showDocUpload, setShowDocUpload] = useState(false)
@@ -175,6 +177,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const toggleActive = async () => {
     if (!selectedClient?.id) return
     await db.clients.update(selectedClient.id, { active: !selectedClient.active })
+    setConfirmAction({ show: false, title: '', message: '', action: () => {} })
     setViewMode('list')
     setSelectedClient(null)
     loadClients()
@@ -290,15 +293,15 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   }
 
   const deletePhoto = async (photoId: number) => {
-    if (!confirm('¿Eliminar esta foto?')) return
     await db.client_photos.delete(photoId)
     setClientPhotos(prev => prev.filter(p => p.id !== photoId))
+    setConfirmAction({ show: false, title: '', message: '', action: () => {} })
   }
 
   const deleteDoc = async (docId: number) => {
-    if (!confirm('¿Eliminar este documento?')) return
     await db.client_documents.delete(docId)
     setClientDocs(prev => prev.filter(d => d.id !== docId))
+    setConfirmAction({ show: false, title: '', message: '', action: () => {} })
   }
 
   const fmt = (n: number) => `$${n.toFixed(2)}`
@@ -441,11 +444,21 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
           </div>
 
           {!isNew && selectedClient && (
-            <button onClick={toggleActive} className="w-full bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
+            <button onClick={() => setConfirmAction({ show: true, title: selectedClient.active ? 'Desactivar Cliente' : 'Reactivar Cliente', message: `¿${selectedClient.active ? 'Desactivar' : 'Reactivar'} a ${selectedClient.first_name} ${selectedClient.last_name}?`, action: toggleActive })} className="w-full bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
               {selectedClient.active ? '🗑️ Desactivar Cliente' : '✅ Reactivar Cliente'}
             </button>
           )}
         </div>
+
+        <ConfirmDialog
+          show={confirmAction.show}
+          title={confirmAction.title}
+          message={confirmAction.message}
+          confirmText="Confirmar"
+          confirmColor="red"
+          onConfirm={confirmAction.action}
+          onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })}
+        />
       </div>
     )
   }
@@ -477,7 +490,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             {selectedClient.phone && <p className="text-sm text-gray-400 mt-3">📞 {selectedClient.phone}</p>}
             {selectedClient.email && <p className="text-sm text-gray-400">✉️ {selectedClient.email}</p>}
             {selectedClient.address && <p className="text-sm text-gray-400">📍 {selectedClient.address}</p>}
-            {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">"{selectedClient.notes}"</p>}
+            {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">&quot;{selectedClient.notes}&quot;</p>}
           </div>
 
           {/* Stats */}
@@ -548,7 +561,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                       {getCategoryIcon(photo.category)}
                     </div>
                     <button 
-                      onClick={() => photo.id && deletePhoto(photo.id)}
+                      onClick={() => photo.id && setConfirmAction({ show: true, title: 'Eliminar Foto', message: '¿Eliminar esta foto?', action: () => deletePhoto(photo.id!) })}
                       className="absolute top-1 right-1 bg-red-500/80 text-white text-xs w-5 h-5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                     >×</button>
                     <p className="text-[10px] text-gray-500 mt-1 truncate">{fmtDate(photo.timestamp)}</p>
@@ -575,7 +588,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                     </div>
                     <button onClick={() => viewDocument(doc)} className="text-blue-400 text-xs">Descargar</button>
                     <button 
-                      onClick={() => doc.id && deleteDoc(doc.id)}
+                      onClick={() => doc.id && setConfirmAction({ show: true, title: 'Eliminar Documento', message: `¿Eliminar "${doc.file_name}"?`, action: () => deleteDoc(doc.id!) })}
                       className="text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                     >Eliminar</button>
                   </div>
@@ -705,6 +718,16 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
           </>
         )}
+
+        <ConfirmDialog
+          show={confirmAction.show}
+          title={confirmAction.title}
+          message={confirmAction.message}
+          confirmText="Confirmar"
+          confirmColor="red"
+          onConfirm={confirmAction.action}
+          onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })}
+        />
       </div>
     )
   }

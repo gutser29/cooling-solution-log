@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { db } from '@/lib/db'
+import type { Client } from '@/lib/types'
 
 interface ExpensesPageProps {
   onNavigate: (page: string) => void
@@ -32,6 +33,11 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
   const [notes, setNotes] = useState('')
   const [receiptPhoto, setReceiptPhoto] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [clients, setClients] = useState<Client[]>([])
+  const [selectedClientId, setSelectedClientId] = useState<number | undefined>(undefined)
+  const [selectedClientName, setSelectedClientName] = useState('')
+  const [showClientPicker, setShowClientPicker] = useState(false)
+  const [clientSearch, setClientSearch] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const categories = ['Gasolina', 'Comida', 'Materiales', 'Herramientas', 'Peajes', 'Mantenimiento', 'Seguros', 'Nómina', 'Otros']
@@ -46,6 +52,14 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     { value: 'transfer', label: 'Transferencia' },
     { value: 'check', label: 'Cheque' }
   ]
+
+  useEffect(() => {
+    const loadClients = async () => {
+      const cls = await db.clients.where('active').equals(1).toArray()
+      setClients(cls)
+    }
+    loadClients()
+  }, [])
 
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -63,6 +77,18 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const pickClient = (c: Client) => {
+    setSelectedClientId(c.id)
+    setSelectedClientName(`${c.first_name} ${c.last_name}`)
+    setShowClientPicker(false)
+    setClientSearch('')
+  }
+
+  const clearClient = () => {
+    setSelectedClientId(undefined)
+    setSelectedClientName('')
+  }
+
   const handleSave = async () => {
     if (!amount || parseFloat(amount) <= 0) {
       alert('Ingresa un monto válido')
@@ -74,7 +100,6 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     try {
       const now = Date.now()
       
-      // Guardar el gasto
       await db.events.add({
         timestamp: now,
         type: 'expense',
@@ -87,23 +112,25 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
         vendor: vendor || undefined,
         note: notes || undefined,
         expense_type: expenseType,
-        photo: receiptPhoto || undefined
+        photo: receiptPhoto || undefined,
+        client_id: selectedClientId,
+        client: selectedClientName || undefined
       })
 
-      // Si hay foto del recibo, guardarla también en client_photos
       if (receiptPhoto) {
         await db.client_photos.add({
           category: 'receipt',
           description: `Recibo: ${category} - $${amount} ${vendor ? `@ ${vendor}` : ''}`,
           photo_data: receiptPhoto,
           timestamp: now,
-          created_at: now
+          created_at: now,
+          client_id: selectedClientId,
+          client_name: selectedClientName || undefined
         })
       }
 
       alert('✅ Gasto guardado')
       
-      // Clear form
       setAmount('')
       setCategory('Gasolina')
       setPaymentMethod('cash')
@@ -112,6 +139,8 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
       setNotes('')
       setExpenseType('business')
       setReceiptPhoto(null)
+      setSelectedClientId(undefined)
+      setSelectedClientName('')
       
     } catch (error) {
       console.error('Error saving expense:', error)
@@ -120,6 +149,9 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
       setSaving(false)
     }
   }
+
+  // Show client picker for material categories
+  const showClientOption = ['Materiales', 'Herramientas', 'Mantenimiento'].includes(category)
 
   return (
     <div className="min-h-screen bg-[#0b1220] text-gray-100">
@@ -162,6 +194,47 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
               ))}
             </select>
           </div>
+
+          {/* Cliente (para materiales/herramientas) */}
+          {showClientOption && (
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-xs text-gray-400">👤 Cliente (opcional)</label>
+                {selectedClientName ? (
+                  <button onClick={clearClient} className="text-xs text-red-400">✕ Quitar</button>
+                ) : (
+                  <button onClick={() => setShowClientPicker(!showClientPicker)} className="text-xs text-blue-400">
+                    {showClientPicker ? 'Cerrar' : '📋 Elegir'}
+                  </button>
+                )}
+              </div>
+              {selectedClientName && (
+                <div className="bg-[#0b1220] rounded-lg px-3 py-2 text-sm text-gray-300 border border-blue-800/30">
+                  👤 {selectedClientName}
+                </div>
+              )}
+              {showClientPicker && !selectedClientName && (
+                <div className="bg-[#0b1220] rounded-lg p-3 border border-white/10">
+                  <input
+                    value={clientSearch}
+                    onChange={e => setClientSearch(e.target.value)}
+                    placeholder="Buscar cliente..."
+                    className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {clients.filter(c => {
+                      const name = `${c.first_name} ${c.last_name}`.toLowerCase()
+                      return !clientSearch || name.includes(clientSearch.toLowerCase())
+                    }).map(c => (
+                      <button key={c.id} onClick={() => pickClient(c)} className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/10 text-gray-300">
+                        {c.first_name} {c.last_name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Método de Pago */}
           <div>
@@ -293,7 +366,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
         {/* Info */}
         <div className="bg-blue-900/20 border border-blue-900/50 rounded-xl p-3 text-sm text-blue-300">
           <p className="font-medium mb-1">💡 Tip</p>
-          <p className="text-xs opacity-80">También puedes añadir gastos por voz en el Chat diciendo: "gasté $40 en gasolina con capital one en la van"</p>
+          <p className="text-xs opacity-80">También puedes añadir gastos por voz en el Chat diciendo: &quot;gasté $40 en gasolina con capital one en la van&quot;</p>
         </div>
       </div>
     </div>
