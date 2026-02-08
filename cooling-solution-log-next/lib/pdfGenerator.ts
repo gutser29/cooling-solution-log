@@ -160,13 +160,15 @@ try {
   doc.setFontSize(10)
   doc.setTextColor(30, 30, 30)
   invoice.items.forEach((item) => {
-    doc.text(item.description, marginL, y)
+    const maxDescWidth = pageW - marginL - marginR - 70
+    const descLines = doc.splitTextToSize(item.description, maxDescWidth)
+    doc.text(descLines, marginL, y)
     doc.text(String(item.quantity), pageW - marginR - 55, y, { align: 'right' })
     doc.text(formatCurrency(item.unit_price), pageW - marginR - 25, y, { align: 'right' })
     doc.text(formatCurrency(item.total), pageW - marginR, y, { align: 'right' })
-    y += 7
+    const lineHeight = 4.5
+    y += Math.max(7, descLines.length * lineHeight + 3)
   })
-
   // === TOTALS (derecha, estilo Anthropic) ===
   y += 10
   const labelX = pageW - marginR - 60
