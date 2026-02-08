@@ -971,6 +971,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
             <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📜 Historial</button>
             <button onClick={() => { setShowMenu(false); onNavigate('bitacora') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📒 Bitácora</button>
+            <button onClick={() => { setShowMenu(false); onNavigate('reports') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Reportes</button>
             <button onClick={async () => {
               setShowMenu(false)
               const d = new Date()
