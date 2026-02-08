@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument } from './types'
+import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract } from './types'
 
 // ============ COMPANY INFO ============
 const COMPANY_NAME = 'Cooling Solution'
@@ -849,4 +849,708 @@ export function generateDocumentListPDF(docs: ClientDocument[], clientName: stri
 
   const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '-')
   doc.save(`Documentos-${safeName}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ PAYROLL / NÓMINA REPORT ============
+export function generatePayrollReport(
+  events: EventRecord[],
+  employees: Employee[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
+  const payrollEvents = events.filter(e =>
+    e.timestamp >= startDate &&
+    e.timestamp <= endDate &&
+    e.type === 'expense' &&
+    e.employee_id != null
+  )
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20
+  const marginR = 20
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text(`Reporte de Nómina - ${periodLabel}`, marginL, 28)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 34)
+  doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 39)
+
+  const byEmployee: Record<number, { name: string; events: EventRecord[]; total: number }> = {}
+
+  payrollEvents.forEach(e => {
+    const empId = e.employee_id!
+    if (!byEmployee[empId]) {
+      const emp = employees.find(em => em.id === empId)
+      byEmployee[empId] = {
+        name: emp ? `${emp.first_name} ${emp.last_name}` : `Empleado #${empId}`,
+        events: [],
+        total: 0
+      }
+    }
+    byEmployee[empId].events.push(e)
+    byEmployee[empId].total += e.amount
+  })
+
+  const grandTotal = payrollEvents.reduce((s, e) => s + e.amount, 0)
+
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('Resumen por Empleado', marginL, 50); doc.setFont('helvetica', 'normal')
+
+  const summaryRows = Object.values(byEmployee)
+    .sort((a, b) => b.total - a.total)
+    .map(emp => [emp.name, String(emp.events.length), formatCurrency(emp.total)])
+
+  autoTable(doc, {
+    startY: 55,
+    head: [['Empleado', '# Pagos', 'Total']],
+    body: summaryRows,
+    foot: [['TOTAL', String(payrollEvents.length), formatCurrency(grandTotal)]],
+    headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255] },
+    footStyles: { fillColor: [240, 240, 240], fontStyle: 'bold', textColor: [30, 30, 30] },
+    bodyStyles: { fontSize: 9 }
+  })
+
+  let detailY = (doc as any).lastAutoTable.finalY + 15
+
+  Object.values(byEmployee).sort((a, b) => b.total - a.total).forEach(emp => {
+    if (detailY > pageH - 60) { doc.addPage(); detailY = 20 }
+
+    doc.setFontSize(10); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
+    doc.text(emp.name, marginL, detailY); doc.setFont('helvetica', 'normal')
+
+    autoTable(doc, {
+      startY: detailY + 3,
+      head: [['Fecha', 'Monto', 'Método', 'Nota']],
+      body: emp.events.map(e => [
+        formatDateShort(e.timestamp), formatCurrency(e.amount),
+        getPaymentLabel(e.payment_method), e.note || '-'
+      ]),
+      headStyles: { fillColor: [60, 60, 60], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 }, margin: { left: marginL + 5 }
+    })
+    detailY = (doc as any).lastAutoTable.finalY + 12
+  })
+
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+  }
+
+  doc.save(`Nomina-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ EXPENSES WITH RECEIPT PHOTOS REPORT ============
+export function generateExpenseReceiptsReport(
+  events: EventRecord[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
+  const withPhotos = events.filter(e =>
+    e.timestamp >= startDate &&
+    e.timestamp <= endDate &&
+    e.type === 'expense' &&
+    ((e.receipt_photos && e.receipt_photos.length > 0) || e.photo)
+  )
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 15
+  const marginR = 15
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(16); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(12); doc.setTextColor(40, 40, 40); doc.text(`Gastos con Recibos - ${periodLabel}`, marginL, 27)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 33)
+  doc.text(`Total: ${withPhotos.length} gastos con recibos`, marginL, 38)
+
+  const totalAmount = withPhotos.reduce((s, e) => s + e.amount, 0)
+  doc.setFont('helvetica', 'bold'); doc.text(`Monto Total: ${formatCurrency(totalAmount)}`, marginL, 43); doc.setFont('helvetica', 'normal')
+
+  let y = 52
+  let currentPage = 1
+
+  const addFooter = () => {
+    doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+  }
+
+  withPhotos.sort((a, b) => b.timestamp - a.timestamp).forEach((event, idx) => {
+    if (y > pageH - 130) { addFooter(); doc.addPage(); currentPage++; y = 20 }
+
+    const contentW = pageW - marginL - marginR
+    doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.3)
+    doc.setFillColor(248, 248, 248); doc.roundedRect(marginL, y, contentW, 22, 2, 2, 'FD')
+
+    doc.setFontSize(10); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+    doc.text(`#${idx + 1} — ${formatDateShort(event.timestamp)}`, marginL + 4, y + 6); doc.setFont('helvetica', 'normal')
+
+    doc.setFontSize(9)
+    doc.text(`Monto: ${formatCurrency(event.amount)}`, marginL + 4, y + 12)
+    doc.text(`Categoría: ${event.category || '-'}`, marginL + 60, y + 12)
+    doc.text(`Método: ${getPaymentLabel(event.payment_method)}`, marginL + 120, y + 12)
+
+    doc.setTextColor(80, 80, 80); doc.text(`Detalle: ${event.vendor || event.note || '-'}`, marginL + 4, y + 18)
+    if (event.expense_type === 'personal') {
+      doc.setTextColor(168, 85, 247); doc.text('PERSONAL', pageW - marginR - 25, y + 6)
+    }
+
+    y += 26
+
+    const photos: string[] = []
+    if (event.receipt_photos && event.receipt_photos.length > 0) photos.push(...event.receipt_photos)
+    else if (event.photo) photos.push(event.photo)
+
+    photos.forEach((photoData) => {
+      if (y > pageH - 120) { addFooter(); doc.addPage(); currentPage++; y = 20 }
+      const imgW = 160, imgH = 100, imgX = (pageW - imgW) / 2
+      try {
+        const imgSrc = photoData.startsWith('data:') ? photoData : `data:image/jpeg;base64,${photoData}`
+        doc.addImage(imgSrc, imgX, y, imgW, imgH)
+        doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2); doc.rect(imgX, y, imgW, imgH)
+      } catch {
+        doc.setDrawColor(200, 200, 200); doc.rect(imgX, y, imgW, imgH)
+        doc.setFontSize(9); doc.setTextColor(150, 150, 150); doc.text('Imagen no disponible', imgX + 50, y + 50)
+      }
+      y += imgH + 8
+    })
+    y += 10
+  })
+
+  addFooter()
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+  }
+
+  doc.save(`Gastos-Recibos-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ ACCOUNTANT REPORT ============
+export function generateAccountantReport(
+  events: EventRecord[],
+  invoices: Invoice[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
+  const filtered = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate)
+  const businessEvents = filtered.filter(e => e.expense_type !== 'personal')
+  const personalExpenses = filtered.filter(e => e.type === 'expense' && e.expense_type === 'personal')
+
+  const income = businessEvents.filter(e => e.type === 'income')
+  const expenses = businessEvents.filter(e => e.type === 'expense')
+  const totalIncome = income.reduce((s, e) => s + e.amount, 0)
+  const totalExpense = expenses.reduce((s, e) => s + e.amount, 0)
+  const totalPersonal = personalExpenses.reduce((s, e) => s + e.amount, 0)
+  const profit = totalIncome - totalExpense
+
+  const periodInvoices = invoices.filter(inv => inv.type === 'invoice' && inv.created_at >= startDate && inv.created_at <= endDate)
+  const taxCollected = periodInvoices.reduce((s, inv) => s + (inv.tax_amount || 0), 0)
+
+  const expByCat: Record<string, number> = {}
+  expenses.forEach(e => { expByCat[e.category || 'Otros'] = (expByCat[e.category || 'Otros'] || 0) + e.amount })
+  const incByCat: Record<string, number> = {}
+  income.forEach(e => { incByCat[e.category || 'Otros'] = (incByCat[e.category || 'Otros'] || 0) + e.amount })
+  const expByMethod: Record<string, number> = {}
+  expenses.forEach(e => { expByMethod[e.payment_method || 'other'] = (expByMethod[e.payment_method || 'other'] || 0) + e.amount })
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20, marginR = 20
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Reporte para Contable - ${periodLabel}`, marginL, 27)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 33)
+  doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 38)
+
+  let y = 48
+  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y); y += 8
+  doc.setFontSize(12); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('RESUMEN EJECUTIVO', marginL, y); doc.setFont('helvetica', 'normal'); y += 8
+
+  const summaryData = [
+    ['Ingresos Brutos', formatCurrency(totalIncome)], ['Gastos de Negocio', formatCurrency(totalExpense)],
+    ['Ganancia/Pérdida Neta', formatCurrency(profit)],
+    ['Margen', totalIncome > 0 ? ((profit / totalIncome) * 100).toFixed(1) + '%' : 'N/A'],
+    ['', ''],
+    ['IVU Cobrado (en facturas)', formatCurrency(taxCollected)],
+    ['Gastos Personales (no deducibles)', formatCurrency(totalPersonal)],
+    ['Total Transacciones', String(filtered.length)]
+  ]
+
+  doc.setFontSize(10)
+  summaryData.forEach(([label, value]) => {
+    if (label === '') { y += 4; return }
+    doc.setTextColor(60, 60, 60); doc.text(label, marginL + 5, y)
+    doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+    doc.text(value, 120, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 6
+  })
+
+  y += 10
+  doc.setFontSize(11); doc.setTextColor(34, 197, 94); doc.setFont('helvetica', 'bold')
+  doc.text('INGRESOS POR CATEGORÍA', marginL, y); doc.setFont('helvetica', 'normal'); y += 6
+  doc.setFontSize(9)
+  Object.entries(incByCat).sort((a, b) => b[1] - a[1]).forEach(([cat, total]) => {
+    doc.setTextColor(60, 60, 60); doc.text(cat, marginL + 5, y); doc.text(formatCurrency(total), 120, y, { align: 'right' }); y += 5
+  })
+
+  y += 8
+  doc.setFontSize(11); doc.setTextColor(239, 68, 68); doc.setFont('helvetica', 'bold')
+  doc.text('GASTOS DEDUCIBLES POR CATEGORÍA', marginL, y); doc.setFont('helvetica', 'normal'); y += 6
+  doc.setFontSize(9)
+  Object.entries(expByCat).sort((a, b) => b[1] - a[1]).forEach(([cat, total]) => {
+    doc.setTextColor(60, 60, 60); doc.text(cat, marginL + 5, y); doc.text(formatCurrency(total), 120, y, { align: 'right' }); y += 5
+    if (y > pageH - 40) { doc.addPage(); y = 20 }
+  })
+
+  y += 8; if (y > pageH - 60) { doc.addPage(); y = 20 }
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('GASTOS POR MÉTODO DE PAGO', marginL, y); doc.setFont('helvetica', 'normal'); y += 6
+  doc.setFontSize(9)
+  Object.entries(expByMethod).sort((a, b) => b[1] - a[1]).forEach(([method, total]) => {
+    doc.setTextColor(60, 60, 60); doc.text(getPaymentLabel(method), marginL + 5, y)
+    doc.text(formatCurrency(total), 120, y, { align: 'right' }); y += 5
+  })
+
+  y += 8; if (y > pageH - 60) { doc.addPage(); y = 20 }
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('FACTURAS DEL PERÍODO', marginL, y); doc.setFont('helvetica', 'normal'); y += 3
+
+  if (periodInvoices.length > 0) {
+    autoTable(doc, {
+      startY: y,
+      head: [['#', 'Cliente', 'Subtotal', 'IVU', 'Total', 'Status']],
+      body: periodInvoices.map(inv => [
+        inv.invoice_number, inv.client_name, formatCurrency(inv.subtotal),
+        formatCurrency(inv.tax_amount || 0), formatCurrency(inv.total),
+        inv.status === 'paid' ? 'Pagada' : inv.status === 'overdue' ? 'Vencida' : inv.status === 'sent' ? 'Enviada' : 'Borrador'
+      ]),
+      headStyles: { fillColor: [0, 150, 150], fontSize: 8 }, bodyStyles: { fontSize: 8 }
+    })
+  } else { y += 5; doc.setFontSize(9); doc.setTextColor(100, 100, 100); doc.text('No hay facturas en este período.', marginL + 5, y) }
+
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+  }
+  doc.save(`Contable-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ DELINQUENT CLIENTS / MOROSOS REPORT ============
+export function generateDelinquentReport(invoices: Invoice[]) {
+  const now = Date.now()
+  const pending = invoices.filter(inv =>
+    inv.type === 'invoice' && (inv.status === 'sent' || inv.status === 'overdue' || inv.status === 'draft')
+  )
+
+  const buckets = { current: [] as Invoice[], days31_60: [] as Invoice[], days61_90: [] as Invoice[], days90plus: [] as Invoice[] }
+  pending.forEach(inv => {
+    const daysOld = Math.floor((now - (inv.due_date || inv.created_at)) / 86400000)
+    if (daysOld <= 30) buckets.current.push(inv)
+    else if (daysOld <= 60) buckets.days31_60.push(inv)
+    else if (daysOld <= 90) buckets.days61_90.push(inv)
+    else buckets.days90plus.push(inv)
+  })
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20, marginR = 20
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text('Reporte de Clientes Morosos', marginL, 28)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100); doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 34)
+
+  const totalPending = pending.reduce((s, inv) => s + inv.total, 0)
+  doc.setFontSize(12); doc.setTextColor(239, 68, 68); doc.setFont('helvetica', 'bold')
+  doc.text(`Total Pendiente: ${formatCurrency(totalPending)}`, marginL, 42); doc.setFont('helvetica', 'normal')
+
+  let y = 52
+  const agingSummary = [
+    ['0-30 días', buckets.current, [59, 130, 246]], ['31-60 días', buckets.days31_60, [245, 158, 11]],
+    ['61-90 días', buckets.days61_90, [249, 115, 22]], ['90+ días', buckets.days90plus, [239, 68, 68]]
+  ] as const
+
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('Resumen de Aging', marginL, y); doc.setFont('helvetica', 'normal'); y += 7
+
+  agingSummary.forEach(([label, invs, color]) => {
+    const total = (invs as Invoice[]).reduce((s: number, inv: Invoice) => s + inv.total, 0)
+    doc.setFontSize(10); doc.setTextColor(color[0], color[1], color[2])
+    doc.text(`${label}: ${(invs as Invoice[]).length} factura(s) — ${formatCurrency(total)}`, marginL + 5, y); y += 6
+  })
+
+  y += 8
+  if (pending.length > 0) {
+    autoTable(doc, {
+      startY: y,
+      head: [['Factura', 'Cliente', 'Tel.', 'Emisión', 'Vence', 'Edad', 'Monto']],
+      body: pending
+        .sort((a, b) => Math.floor((now - (b.due_date || b.created_at)) / 86400000) - Math.floor((now - (a.due_date || a.created_at)) / 86400000))
+        .map(inv => {
+          const daysOld = Math.floor((now - (inv.due_date || inv.created_at)) / 86400000)
+          return [inv.invoice_number, inv.client_name, inv.client_phone || '-', formatDateShort(inv.created_at),
+            inv.due_date ? formatDateShort(inv.due_date) : '-', `${daysOld} días`, formatCurrency(inv.total)]
+        }),
+      headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 8 }, bodyStyles: { fontSize: 8 },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 5) {
+          const days = parseInt(data.cell.raw as string)
+          if (days > 90) data.cell.styles.textColor = [239, 68, 68]
+          else if (days > 60) data.cell.styles.textColor = [249, 115, 22]
+          else if (days > 30) data.cell.styles.textColor = [245, 158, 11]
+        }
+      }
+    })
+  } else { doc.setFontSize(12); doc.setTextColor(34, 197, 94); doc.text('🎉 No hay facturas pendientes', marginL, y) }
+
+  doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3); doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+  doc.setFontSize(8); doc.setTextColor(150, 150, 150); doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+  doc.save(`Morosos-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ CLIENT PROFITABILITY REPORT ============
+export function generateClientProfitabilityReport(
+  events: EventRecord[],
+  clients: Client[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
+  const filtered = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate && e.client_id != null)
+
+  const byClient: Record<number, { name: string; income: number; expense: number; events: number }> = {}
+  filtered.forEach(e => {
+    const cid = e.client_id!
+    if (!byClient[cid]) {
+      const client = clients.find(c => c.id === cid)
+      byClient[cid] = { name: client ? `${client.first_name} ${client.last_name}` : (e.client || `Cliente #${cid}`), income: 0, expense: 0, events: 0 }
+    }
+    byClient[cid].events++
+    if (e.type === 'income') byClient[cid].income += e.amount
+    else byClient[cid].expense += e.amount
+  })
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20, marginR = 20
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Rentabilidad por Cliente - ${periodLabel}`, marginL, 27)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100); doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 33)
+
+  const rows = Object.values(byClient)
+    .sort((a, b) => (b.income - b.expense) - (a.income - a.expense))
+    .map(c => {
+      const profit = c.income - c.expense
+      return [c.name, String(c.events), formatCurrency(c.income), formatCurrency(c.expense), formatCurrency(profit), c.income > 0 ? ((profit / c.income) * 100).toFixed(1) + '%' : 'N/A']
+    })
+
+  if (rows.length === 0) { doc.setFontSize(12); doc.text('No hay transacciones asociadas a clientes en este período.', marginL, 50) }
+  else {
+    autoTable(doc, {
+      startY: 42,
+      head: [['Cliente', '# Trans.', 'Ingresos', 'Gastos', 'Ganancia', 'Margen']],
+      body: rows,
+      headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 9 }, bodyStyles: { fontSize: 9 },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 4) {
+          const val = parseFloat((data.cell.raw as string).replace('$', '').replace(',', ''))
+          if (val < 0) data.cell.styles.textColor = [239, 68, 68]
+          else data.cell.styles.textColor = [34, 197, 94]
+        }
+      }
+    })
+  }
+
+  doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3); doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+  doc.setFontSize(8); doc.setTextColor(150, 150, 150); doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+  doc.save(`Rentabilidad-Clientes-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ RECURRING CONTRACTS REPORT ============
+export function generateContractsReport(
+  contracts: RecurringContract[],
+  clients: Client[]
+) {
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20, marginR = 20
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text('Reporte de Contratos Recurrentes', marginL, 28)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100); doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 34)
+
+  const active = contracts.filter(c => c.status === 'active')
+  const cancelled = contracts.filter(c => c.status === 'cancelled')
+
+  const freqLabels: Record<string, string> = { monthly: 'Mensual', quarterly: 'Trimestral' }
+
+  // Monthly recurring revenue
+  const monthlyRevenue = active.reduce((s, c) => {
+    if (c.frequency === 'monthly') return s + c.monthly_fee
+    if (c.frequency === 'quarterly') return s + (c.monthly_fee / 3)
+    return s + c.monthly_fee
+  }, 0)
+
+  let y = 44
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('RESUMEN', marginL, y); doc.setFont('helvetica', 'normal'); y += 7
+  doc.setFontSize(10)
+
+  const items: [string, string][] = [
+    ['Contratos Activos', String(active.length)],
+    ['Contratos Cancelados', String(cancelled.length)],
+    ['Ingreso Recurrente Mensual', formatCurrency(monthlyRevenue)],
+    ['Ingreso Recurrente Anual (est.)', formatCurrency(monthlyRevenue * 12)]
+  ]
+  items.forEach(([label, value]) => {
+    doc.setTextColor(60, 60, 60); doc.text(label, marginL + 5, y)
+    doc.setTextColor(34, 197, 94); doc.setFont('helvetica', 'bold')
+    doc.text(value, 130, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 6
+  })
+
+  // Active contracts
+  y += 8
+  doc.setFontSize(11); doc.setTextColor(34, 197, 94); doc.setFont('helvetica', 'bold')
+  doc.text('CONTRATOS ACTIVOS', marginL, y); doc.setFont('helvetica', 'normal'); y += 3
+
+  if (active.length > 0) {
+    autoTable(doc, {
+      startY: y,
+      head: [['Cliente', 'Servicio', 'Frecuencia', 'Cuota', 'Próx. Servicio', 'Inicio']],
+      body: active.map(c => {
+        const client = clients.find(cl => cl.id === c.client_id)
+        return [
+          client ? `${client.first_name} ${client.last_name}` : `Cliente #${c.client_id}`,
+          c.service_type || '-',
+          freqLabels[c.frequency] || c.frequency,
+          formatCurrency(c.monthly_fee),
+          formatDateShort(c.next_service_due),
+          formatDateShort(c.start_date)
+        ]
+      }),
+      headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 8 }, bodyStyles: { fontSize: 8 }
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  } else { y += 5; doc.setFontSize(10); doc.setTextColor(100, 100, 100); doc.text('No hay contratos activos.', marginL + 5, y); y += 10 }
+
+  // Cancelled contracts
+  if (cancelled.length > 0) {
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+    doc.setFontSize(11); doc.setTextColor(100, 100, 100); doc.setFont('helvetica', 'bold')
+    doc.text('CONTRATOS CANCELADOS', marginL, y); doc.setFont('helvetica', 'normal'); y += 3
+    autoTable(doc, {
+      startY: y,
+      head: [['Cliente', 'Servicio', 'Frecuencia', 'Cuota']],
+      body: cancelled.map(c => {
+        const client = clients.find(cl => cl.id === c.client_id)
+        return [
+          client ? `${client.first_name} ${client.last_name}` : `Cliente #${c.client_id}`,
+          c.service_type || '-',
+          freqLabels[c.frequency] || c.frequency,
+          formatCurrency(c.monthly_fee)
+        ]
+      }),
+      headStyles: { fillColor: [120, 120, 120], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8, textColor: [120, 120, 120] }
+    })
+  }
+
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+  }
+  doc.save(`Contratos-Recurrentes-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ PRODUCTIVITY / JOBS REPORT ============
+export function generateProductivityReport(
+  jobs: Job[],
+  events: EventRecord[],
+  clients: Client[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20, marginR = 20
+
+  // Filter jobs by date field
+  const periodJobs = jobs.filter(j => j.date >= startDate && j.date <= endDate)
+  const completedJobs = periodJobs.filter(j => j.status === 'completed')
+  const activeJobs = periodJobs.filter(j => j.status === 'in_progress')
+  const quoteJobs = periodJobs.filter(j => j.status === 'quote')
+
+  // Revenue from jobs via events
+  const jobIncome = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate && e.type === 'income' && e.job_id != null)
+  const totalJobRevenue = jobIncome.reduce((s, e) => s + e.amount, 0)
+  const avgRevenuePerJob = completedJobs.length > 0 ? totalJobRevenue / completedJobs.length : 0
+
+  const jobExpenses = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate && e.type === 'expense' && e.job_id != null)
+  const totalJobExpense = jobExpenses.reduce((s, e) => s + e.amount, 0)
+  const jobProfit = totalJobRevenue - totalJobExpense
+
+  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Productividad & Trabajos - ${periodLabel}`, marginL, 27)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 33)
+  doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 38)
+
+  let y = 48
+  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y); y += 8
+  doc.setFontSize(12); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('INDICADORES CLAVE', marginL, y); doc.setFont('helvetica', 'normal'); y += 8
+
+  const typeLabels: Record<string, string> = {
+    installation: 'Instalación', repair: 'Reparación', maintenance: 'Mantenimiento',
+    emergency: 'Emergencia', warranty: 'Garantía', quote: 'Cotización'
+  }
+
+  const statusLabels: Record<string, string> = {
+    quote: 'Cotización', in_progress: 'En Progreso', completed: 'Completado', cancelled: 'Cancelado'
+  }
+
+  const kpis: [string, string][] = [
+    ['Total Trabajos', String(periodJobs.length)],
+    ['Completados', String(completedJobs.length)],
+    ['En Progreso', String(activeJobs.length)],
+    ['Cotizaciones', String(quoteJobs.length)],
+    ['Tasa de Completación', periodJobs.length > 0 ? ((completedJobs.length / periodJobs.length) * 100).toFixed(0) + '%' : 'N/A'],
+    ['', ''],
+    ['Ingreso por Trabajos', formatCurrency(totalJobRevenue)],
+    ['Gastos en Trabajos', formatCurrency(totalJobExpense)],
+    ['Ganancia en Trabajos', formatCurrency(jobProfit)],
+    ['Ingreso Promedio/Trabajo', formatCurrency(avgRevenuePerJob)],
+    ['Margen por Trabajo', totalJobRevenue > 0 ? ((jobProfit / totalJobRevenue) * 100).toFixed(1) + '%' : 'N/A']
+  ]
+
+  doc.setFontSize(10)
+  kpis.forEach(([label, value]) => {
+    if (label === '') { y += 4; return }
+    doc.setTextColor(60, 60, 60); doc.text(label, marginL + 5, y)
+    doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+    doc.text(value, 130, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 6
+  })
+
+  // Jobs detail table
+  y += 10; if (y > pageH - 60) { doc.addPage(); y = 20 }
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('DETALLE DE TRABAJOS', marginL, y); doc.setFont('helvetica', 'normal'); y += 3
+
+  if (periodJobs.length > 0) {
+    autoTable(doc, {
+      startY: y,
+      head: [['Fecha', 'Cliente', 'Tipo', 'Status', 'Cobrado', 'Balance']],
+      body: periodJobs.sort((a, b) => b.date - a.date).map(j => {
+        const client = clients.find(c => c.id === j.client_id)
+        const clientName = client ? `${client.first_name} ${client.last_name}` : `Cliente #${j.client_id}`
+        return [
+          formatDateShort(j.date),
+          clientName,
+          typeLabels[j.type] || j.type,
+          statusLabels[j.status] || j.status,
+          formatCurrency(j.total_charged),
+          formatCurrency(j.balance_due)
+        ]
+      }),
+      headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 3) {
+          const status = data.cell.raw as string
+          if (status === 'Completado') data.cell.styles.textColor = [34, 197, 94]
+          else if (status === 'Cancelado') data.cell.styles.textColor = [239, 68, 68]
+          else data.cell.styles.textColor = [59, 130, 246]
+        }
+        if (data.section === 'body' && data.column.index === 5) {
+          const val = parseFloat((data.cell.raw as string).replace('$', '').replace(',', ''))
+          if (val > 0) data.cell.styles.textColor = [239, 68, 68]
+          else data.cell.styles.textColor = [34, 197, 94]
+        }
+      }
+    })
+  } else { y += 5; doc.setFontSize(10); doc.setTextColor(100, 100, 100); doc.text('No hay trabajos en este período.', marginL + 5, y) }
+
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+  }
+  doc.save(`Productividad-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ CSV EXPORT ============
+export function exportEventsCSV(
+  events: EventRecord[],
+  startDate: number,
+  endDate: number
+) {
+  const filtered = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate).sort((a, b) => a.timestamp - b.timestamp)
+
+  const headers = ['Fecha', 'Tipo', 'Categoría', 'Monto', 'Método de Pago', 'Vendor/Cliente', 'Nota', 'Tipo Gasto', 'Vehículo']
+  const rows = filtered.map(e => [
+    new Date(e.timestamp).toLocaleDateString('es-PR'),
+    e.type === 'income' ? 'Ingreso' : 'Gasto',
+    e.category || '',
+    e.amount.toFixed(2),
+    getPaymentLabel(e.payment_method),
+    e.vendor || e.client || '',
+    (e.note || '').replace(/,/g, ';').replace(/\n/g, ' '),
+    e.expense_type || 'business',
+    e.vehicle_id || ''
+  ])
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+  const BOM = '\uFEFF'
+  const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `Transacciones-${new Date(startDate).toISOString().split('T')[0]}-a-${new Date(endDate).toISOString().split('T')[0]}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
