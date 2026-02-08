@@ -14,6 +14,7 @@ import HistoryPage from '@/components/HistoryPage'
 import SearchPage from '@/components/SearchPage'
 import ReceiptsPage from '@/components/ReceiptsPage'
 import BitacoraPage from '@/components/BitacoraPage'
+import ReportsPage from '@/components/ReportsPage'
 
 export default function Home() {
   const [currentPage, setCurrentPage] = useState('chat')
@@ -33,6 +34,7 @@ export default function Home() {
       case 'search': return <SearchPage onNavigate={navigate} />
       case 'receipts': return <ReceiptsPage onNavigate={navigate} />
       case 'bitacora': return <BitacoraPage onNavigate={navigate} />
+      case 'reports': return <ReportsPage onNavigate={navigate} />
       default: return <ChatCapture onNavigate={navigate} />
     }
   }

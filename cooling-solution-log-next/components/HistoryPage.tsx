@@ -17,6 +17,7 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
   const [categories, setCategories] = useState<string[]>([])
   const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; item: EventRecord | null }>({ show: false, item: null })
+  const [expandedPhoto, setExpandedPhoto] = useState<string | null>(null)
 
   useEffect(() => {
     loadEvents()
@@ -47,6 +48,23 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
       console.error('Error deleting event:', error)
       alert('Error al eliminar')
     }
+  }
+
+  // Helper: check if event has any photos (new receipt_photos or legacy photo field)
+  const hasPhotos = (e: EventRecord) => {
+    return (e.receipt_photos && e.receipt_photos.length > 0) || !!e.photo
+  }
+
+  // Helper: get all photos from event (both old 'photo' field and new 'receipt_photos')
+  const getEventPhotos = (e: EventRecord): string[] => {
+    const photos: string[] = []
+    if (e.receipt_photos && e.receipt_photos.length > 0) {
+      photos.push(...e.receipt_photos)
+    }
+    if (e.photo && !photos.includes(e.photo)) {
+      photos.push(e.photo)
+    }
+    return photos
   }
 
   const filteredEvents = events.filter(e => {
@@ -83,7 +101,10 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
           <button onClick={() => onNavigate('chat')} className="text-lg">←</button>
           <h1 className="text-xl font-bold">📜 Historial</h1>
         </div>
-        <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
+        <div className="flex gap-2">
+          <button onClick={() => onNavigate('reports')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">📊</button>
+          <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -162,7 +183,7 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className={`text-xs px-2 py-0.5 rounded ${
                             e.type === 'income' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
                           }`}>
@@ -173,24 +194,33 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                               Personal
                             </span>
                           )}
-                          {e.photo && (
+                          {hasPhotos(e) && (
                             <span className="text-xs px-2 py-0.5 rounded bg-blue-900/50 text-blue-400">
-                              📷
+                              📷 {getEventPhotos(e).length > 1 ? `${getEventPhotos(e).length}` : 'Recibo'}
                             </span>
                           )}
                         </div>
                         <p className="text-gray-200 font-medium mt-1">{e.category}</p>
                         {e.vendor && <p className="text-xs text-gray-500">📍 {e.vendor}</p>}
+                        {e.client && <p className="text-xs text-gray-500">👤 {e.client}</p>}
                         {e.payment_method && <p className="text-xs text-gray-500">💳 {e.payment_method}</p>}
                         {e.note && <p className="text-xs text-gray-500 mt-1">📝 {e.note}</p>}
                         <p className="text-xs text-gray-600 mt-1">
                           {new Date(e.timestamp).toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })}
                         </p>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right flex flex-col items-end gap-1">
                         <p className={`text-lg font-bold ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
                           {e.type === 'income' ? '+' : '-'}{formatCurrency(e.amount)}
                         </p>
+                        {/* Thumbnail de recibo */}
+                        {hasPhotos(e) && (
+                          <img 
+                            src={getEventPhotos(e)[0]} 
+                            alt="📷" 
+                            className="w-10 h-10 object-cover rounded-lg border border-white/10"
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -237,6 +267,12 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                     <span>{selectedEvent.vendor}</span>
                   </div>
                 )}
+                {selectedEvent.client && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Cliente:</span>
+                    <span>{selectedEvent.client}</span>
+                  </div>
+                )}
                 {selectedEvent.payment_method && (
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Método de pago:</span>
@@ -263,14 +299,21 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                 )}
               </div>
 
-              {selectedEvent.photo && (
+              {/* ====== FOTOS DE RECIBOS ====== */}
+              {hasPhotos(selectedEvent) && (
                 <div>
-                  <p className="text-sm text-gray-400 mb-2">📷 Foto del Recibo:</p>
-                  <img 
-                    src={selectedEvent.photo} 
-                    alt="Recibo" 
-                    className="w-full rounded-xl border border-white/10"
-                  />
+                  <p className="text-sm text-gray-400 mb-2">📷 Foto(s) del Recibo:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {getEventPhotos(selectedEvent).map((photo, i) => (
+                      <img 
+                        key={i}
+                        src={photo} 
+                        alt={`Recibo ${i + 1}`} 
+                        className="w-full rounded-xl border border-white/10 cursor-pointer hover:opacity-80 transition-opacity"
+                        onClick={(ev) => { ev.stopPropagation(); setExpandedPhoto(photo) }}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -281,6 +324,20 @@ export default function HistoryPage({ onNavigate }: HistoryPageProps) {
                 🗑️ Eliminar Registro
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {/* Modal de Foto Expandida */}
+      {expandedPhoto && (
+        <>
+          <div className="fixed inset-0 bg-black/90 z-[60]" onClick={() => setExpandedPhoto(null)} />
+          <div className="fixed inset-4 z-[70] flex items-center justify-center" onClick={() => setExpandedPhoto(null)}>
+            <img src={expandedPhoto} alt="Recibo" className="max-w-full max-h-full object-contain rounded-xl" />
+            <button 
+              onClick={() => setExpandedPhoto(null)} 
+              className="absolute top-2 right-2 bg-white/20 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl"
+            >✕</button>
           </div>
         </>
       )}

@@ -31,7 +31,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
   const [vendor, setVendor] = useState('')
   const [expenseType, setExpenseType] = useState<'business' | 'personal'>('business')
   const [notes, setNotes] = useState('')
-  const [receiptPhoto, setReceiptPhoto] = useState<string | null>(null)
+  const [receiptPhotos, setReceiptPhotos] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [clients, setClients] = useState<Client[]>([])
   const [selectedClientId, setSelectedClientId] = useState<number | undefined>(undefined)
@@ -62,19 +62,21 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
   }, [])
 
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    
-    const b64 = await new Promise<string>((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.readAsDataURL(file)
-    })
-    
-    const compressed = await compressImage(b64)
-    setReceiptPhoto(compressed)
-    
+    const files = Array.from(e.target.files || [])
+    for (const file of files) {
+      const b64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.readAsDataURL(file)
+      })
+      const compressed = await compressImage(b64)
+      setReceiptPhotos(prev => [...prev, compressed])
+    }
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removePhoto = (idx: number) => {
+    setReceiptPhotos(prev => prev.filter((_, i) => i !== idx))
   }
 
   const pickClient = (c: Client) => {
@@ -100,6 +102,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     try {
       const now = Date.now()
       
+      // Guardar evento con fotos incluidas directamente (NO duplicar en client_photos)
       await db.events.add({
         timestamp: now,
         type: 'expense',
@@ -112,24 +115,12 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
         vendor: vendor || undefined,
         note: notes || undefined,
         expense_type: expenseType,
-        photo: receiptPhoto || undefined,
+        receipt_photos: receiptPhotos.length > 0 ? receiptPhotos : undefined,
         client_id: selectedClientId,
         client: selectedClientName || undefined
       })
 
-      if (receiptPhoto) {
-        await db.client_photos.add({
-          category: 'receipt',
-          description: `Recibo: ${category} - $${amount} ${vendor ? `@ ${vendor}` : ''}`,
-          photo_data: receiptPhoto,
-          timestamp: now,
-          created_at: now,
-          client_id: selectedClientId,
-          client_name: selectedClientName || undefined
-        })
-      }
-
-      alert('✅ Gasto guardado')
+      alert('✅ Gasto guardado' + (receiptPhotos.length > 0 ? ` con ${receiptPhotos.length} foto(s)` : ''))
       
       setAmount('')
       setCategory('Gasolina')
@@ -138,7 +129,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
       setVendor('')
       setNotes('')
       setExpenseType('business')
-      setReceiptPhoto(null)
+      setReceiptPhotos([])
       setSelectedClientId(undefined)
       setSelectedClientName('')
       
@@ -306,29 +297,40 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
             </div>
           </div>
 
-          {/* Foto del Recibo */}
+          {/* Fotos de Recibos - soporta múltiples */}
           <div>
-            <label className="text-xs text-gray-400 mb-1 block">📸 Foto del Recibo (opcional)</label>
+            <label className="text-xs text-gray-400 mb-1 block">📸 Foto(s) del Recibo (opcional)</label>
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
+              multiple
               onChange={handlePhotoSelect}
               className="hidden"
             />
             
-            {receiptPhoto ? (
-              <div className="relative">
-                <img 
-                  src={receiptPhoto} 
-                  alt="Recibo" 
-                  className="w-full max-h-48 object-contain rounded-lg border border-white/10"
-                />
+            {receiptPhotos.length > 0 ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {receiptPhotos.map((photo, idx) => (
+                    <div key={idx} className="relative">
+                      <img 
+                        src={photo} 
+                        alt={`Recibo ${idx + 1}`} 
+                        className="w-full h-32 object-cover rounded-lg border border-white/10"
+                      />
+                      <button
+                        onClick={() => removePhoto(idx)}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold"
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
                 <button
-                  onClick={() => setReceiptPhoto(null)}
-                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full bg-[#0b1220] border border-dashed border-white/20 rounded-lg py-3 text-center hover:bg-[#1a2332] transition-colors text-sm text-gray-400"
                 >
-                  ✕
+                  + Agregar otra foto
                 </button>
               </div>
             ) : (
@@ -360,7 +362,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
           disabled={saving || !amount}
           className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-xl py-4 text-lg font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {saving ? '⏳ Guardando...' : '✅ Guardar Gasto'}
+          {saving ? '⏳ Guardando...' : `✅ Guardar Gasto${receiptPhotos.length > 0 ? ` (${receiptPhotos.length} foto${receiptPhotos.length > 1 ? 's' : ''})` : ''}`}
         </button>
 
         {/* Info */}
