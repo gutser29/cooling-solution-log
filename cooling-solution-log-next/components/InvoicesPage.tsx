@@ -35,6 +35,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [formTaxRate, setFormTaxRate] = useState(0)
   const [formNotes, setFormNotes] = useState('')
   const [formDueDays, setFormDueDays] = useState(30)
+  const [formServiceDate, setFormServiceDate] = useState('')
   const [showClientPicker, setShowClientPicker] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
@@ -138,6 +139,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormTaxRate(0)
     setFormNotes('')
     setFormDueDays(type === 'quote' ? 15 : 30)
+    setFormServiceDate('')
     setSelected(null)
   }
 
@@ -157,6 +159,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormTaxRate(inv.tax_rate)
     setFormNotes(inv.notes || '')
     setFormDueDays(inv.due_date ? Math.round((inv.due_date - inv.issue_date) / 86400000) : 30)
+    setFormServiceDate(inv.service_date ? new Date(inv.service_date).toISOString().split('T')[0] : '')
     setViewMode('edit')
   }
 
@@ -185,6 +188,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         tax_amount: taxAmount,
         total,
         notes: formNotes.trim() || undefined,
+        service_date: formServiceDate ? new Date(formServiceDate + 'T12:00:00').getTime() : undefined,
         due_date: formType === 'invoice' ? dueDate : undefined,
         expiration_date: formType === 'quote' ? dueDate : undefined,
         updated_at: now
@@ -203,6 +207,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         tax_amount: taxAmount,
         total,
         notes: formNotes.trim() || undefined,
+        service_date: formServiceDate ? new Date(formServiceDate + 'T12:00:00').getTime() : undefined,
         status: 'draft',
         issue_date: now,
         due_date: formType === 'invoice' ? dueDate : undefined,
@@ -500,6 +505,18 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           {/* Notes & Due */}
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-3">
             <div className="flex items-center gap-3">
+              <p className="text-sm text-gray-400">📅 Fecha de servicio</p>
+              <input
+                type="date"
+                value={formServiceDate}
+                onChange={e => setFormServiceDate(e.target.value)}
+                className="flex-1 bg-[#0b1220] border border-white/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 text-gray-300"
+              />
+              {formServiceDate && (
+                <button onClick={() => setFormServiceDate('')} className="text-xs text-red-400">✕</button>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
               <p className="text-sm text-gray-400">{formType === 'quote' ? 'Válida por' : 'Vence en'}</p>
               <input
                 type="number"
@@ -552,6 +569,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
             <p className="text-lg font-medium text-gray-200">{selected.client_name}</p>
             {selected.client_phone && <p className="text-sm text-gray-400">📞 {selected.client_phone}</p>}
             {selected.client_address && <p className="text-sm text-gray-400">📍 {selected.client_address}</p>}
+            {selected.service_date && <p className="text-sm text-gray-400 mt-2">📅 Servicio: {fmtDate(selected.service_date)}</p>}
           </div>
 
           {/* Items */}

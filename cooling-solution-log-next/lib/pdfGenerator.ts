@@ -101,11 +101,19 @@ try {
     doc.setFont('helvetica', 'normal')
     doc.text(formatDate(invoice.due_date), marginL + 35, y)
   }
-  if (isQuote && invoice.expiration_date) {
+if (isQuote && invoice.expiration_date) {
     doc.setFont('helvetica', 'bold')
     doc.text('Valid until', marginL, y)
     doc.setFont('helvetica', 'normal')
     doc.text(formatDate(invoice.expiration_date), marginL + 35, y)
+  }
+
+  if (invoice.service_date) {
+    y += 6
+    doc.setFont('helvetica', 'bold')
+    doc.text('Service date', marginL, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(formatDate(invoice.service_date), marginL + 35, y)
   }
 
   // === COMPANY INFO (izquierda) & BILL TO (derecha) - EN PARALELO ===

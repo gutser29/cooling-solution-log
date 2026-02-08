@@ -212,6 +212,7 @@ export interface Invoice {
   client_email?: string
   client_address?: string
   job_id?: number
+  service_date?: number
   items: InvoiceItem[]
   subtotal: number
   tax_rate: number
