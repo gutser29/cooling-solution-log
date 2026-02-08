@@ -31,10 +31,14 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
   const [clientSearch, setClientSearch] = useState('')
 
   const loadAll = useCallback(async () => {
-    const all = await db.job_templates.orderBy('name').toArray()
-    setTemplates(all.filter(t => t.active))
-    const cls = await db.clients.where('active').equals(1).toArray()
-    setClients(cls)
+    try {
+      const all = await db.job_templates.toArray()
+      setTemplates(all.filter(t => t.active))
+    } catch { setTemplates([]) }
+    try {
+      const cls = await db.clients.toArray()
+      setClients(cls.filter(c => c.active))
+    } catch { setClients([]) }
     setLoading(false)
   }, [])
 
@@ -204,16 +208,18 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
                 <input
                   value={clientSearch}
                   onChange={e => setClientSearch(e.target.value)}
-                  placeholder="Buscar cliente..."
+                  placeholder="🔍 Buscar cliente..."
                   className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                  autoFocus
                 />
-                <div className="max-h-32 overflow-y-auto space-y-1">
+                <div className="max-h-40 overflow-y-auto space-y-1">
                   {clients.filter(c => {
                     const name = `${c.first_name} ${c.last_name}`.toLowerCase()
-                    return !clientSearch || name.includes(clientSearch.toLowerCase())
+                    return !clientSearch || name.includes(clientSearch.toLowerCase()) || (c.phone && c.phone.includes(clientSearch))
                   }).map(c => (
-                    <button key={c.id} onClick={() => pickClient(c)} className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/10 text-gray-300">
-                      {c.first_name} {c.last_name}
+                    <button key={c.id} onClick={() => pickClient(c)} className="w-full text-left px-3 py-2.5 text-sm rounded-lg hover:bg-orange-900/30 border border-transparent hover:border-orange-500/30 text-gray-300 transition-colors">
+                      <p className="font-medium">{c.first_name} {c.last_name}</p>
+                      {c.phone && <p className="text-xs text-gray-500">📞 {c.phone}</p>}
                     </button>
                   ))}
                 </div>
@@ -232,14 +238,15 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
               {formItems.map((item, idx) => (
                 <div key={idx} className="bg-[#0b1220] rounded-lg p-3 border border-white/5">
                   <div className="flex gap-2 mb-2">
-                    <input
+                    <textarea
                       value={item.description}
                       onChange={e => updateItem(idx, 'description', e.target.value)}
-                      placeholder="Descripción del servicio"
-                      className="flex-1 bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder-gray-600"
+                      placeholder="Descripción del servicio — usa Enter para saltos de línea y guiones para estructura"
+                      rows={4}
+                      className="flex-1 bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder-gray-600 resize-y min-h-[80px]"
                     />
                     {formItems.length > 1 && (
-                      <button onClick={() => removeItem(idx)} className="text-red-400 px-2">✕</button>
+                      <button onClick={() => removeItem(idx)} className="text-red-400 px-2 self-start mt-1">✕</button>
                     )}
                   </div>
                   <div className="grid grid-cols-3 gap-2">
