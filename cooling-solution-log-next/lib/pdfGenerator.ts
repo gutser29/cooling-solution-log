@@ -30,7 +30,8 @@ function getPaymentLabel(method?: string): string {
   const labels: Record<string, string> = {
     cash: 'Efectivo', ath_movil: 'ATH Móvil', capital_one: 'Capital One',
     chase_visa: 'Chase Visa', paypal: 'PayPal', check: 'Cheque',
-    sams_mastercard: "Sam's MC", transfer: 'Transferencia'
+    sams_mastercard: "Sam's MC", transfer: 'Transferencia',
+    ach: 'ACH', credit_card: 'Tarjeta Crédito', zelle: 'Zelle'
   }
   return labels[method] || method
 }

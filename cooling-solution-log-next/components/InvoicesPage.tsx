@@ -530,18 +530,27 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 📤 Marcar como Enviada
               </button>
             )}
-            {(selected.status === 'sent' || selected.status === 'overdue') && (
-              <div className="space-y-2">
-                <p className="text-xs text-gray-500 text-center">Marcar como pagada con:</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {['cash', 'ath_movil', 'paypal'].map(method => (
-                    <button key={method} onClick={() => updateStatus(selected, 'paid', method)} className="py-2.5 rounded-xl text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/30">
-                      {method === 'cash' ? '💵 Efectivo' : method === 'ath_movil' ? '📱 ATH' : '💳 PayPal'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+           {(selected.status === 'sent' || selected.status === 'overdue') && (
+  <div className="space-y-2">
+    <p className="text-xs text-gray-500 text-center">Marcar como pagada con:</p>
+    <div className="grid grid-cols-3 gap-2">
+      {[
+        { key: 'cash', label: '💵 Efectivo' },
+        { key: 'ath_movil', label: '📱 ATH Móvil' },
+        { key: 'check', label: '📝 Cheque' },
+        { key: 'ach', label: '🏦 ACH' },
+        { key: 'credit_card', label: '💳 Tarjeta Crédito' },
+        { key: 'paypal', label: '🅿️ PayPal' },
+        { key: 'zelle', label: '⚡ Zelle' },
+        { key: 'transfer', label: '🔄 Transferencia' },
+      ].map(method => (
+        <button key={method.key} onClick={() => updateStatus(selected, 'paid', method.key)} className="py-2.5 rounded-xl text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/30">
+          {method.label}
+        </button>
+      ))}
+    </div>
+  </div>
+)}
             {selected.status !== 'paid' && selected.status !== 'cancelled' && (
               <button onClick={() => updateStatus(selected, 'cancelled')} className="w-full py-3 rounded-xl text-sm font-medium bg-gray-800 text-gray-400 border border-white/10">
                 ✕ Cancelar
