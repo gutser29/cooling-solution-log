@@ -42,11 +42,13 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const loadAll = useCallback(async () => {
     const all = await db.invoices.orderBy('created_at').reverse().toArray()
     setInvoices(all)
-    const cls = await db.clients.where('active').equals(1).toArray()
-    setClients(cls)
     try {
-      const tpls = await db.job_templates.where('active').equals(1).toArray()
-      setTemplates(tpls)
+      const cls = await db.clients.toArray()
+      setClients(cls.filter(c => c.active))
+    } catch { setClients([]) }
+    try {
+      const tpls = await db.job_templates.toArray()
+      setTemplates(tpls.filter(t => t.active))
     } catch { setTemplates([]) }
     setLoading(false)
     
@@ -369,11 +371,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
             <div className="flex justify-between items-center mb-3">
               <p className="text-sm font-semibold text-gray-300">👤 Cliente</p>
-              {clients.length > 0 && (
-                <button onClick={() => { setShowClientPicker(!showClientPicker); setClientSearch('') }} className="text-xs text-blue-400">
-                  {showClientPicker ? '✕ Cerrar' : '📋 Elegir existente'}
-                </button>
-              )}
+              <button onClick={() => { setShowClientPicker(!showClientPicker); setClientSearch('') }} className="text-xs text-blue-400">
+                {showClientPicker ? '✕ Cerrar' : '📋 Elegir existente'}
+              </button>
             </div>
 
             {showClientPicker && (
