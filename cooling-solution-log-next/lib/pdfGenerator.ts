@@ -73,7 +73,9 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   doc.text(title, marginL, 28)
 
   // === LOGO (arriba derecha) ===
-
+try {
+    doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', 120, 16, 74, 31)
+  } catch { }
 
   // === INVOICE META (debajo del título) ===
   let y = 40
