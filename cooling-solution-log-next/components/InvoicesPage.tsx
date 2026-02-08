@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
 import { downloadInvoicePDF, generateInvoiceNumber } from '@/lib/pdfGenerator'
 import ConfirmDialog from './ConfirmDialog'
-import type { Invoice, InvoiceItem, Client } from '@/lib/types'
+import type { Invoice, InvoiceItem, Client, JobTemplate } from '@/lib/types'
 
 interface InvoicesPageProps {
   onNavigate: (page: string) => void
@@ -20,6 +20,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [clients, setClients] = useState<Client[]>([])
+  const [templates, setTemplates] = useState<JobTemplate[]>([])
   const [selected, setSelected] = useState<Invoice | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; item: Invoice | null }>({ show: false, item: null })
@@ -36,12 +37,17 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [formDueDays, setFormDueDays] = useState(30)
   const [showClientPicker, setShowClientPicker] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
 
   const loadAll = useCallback(async () => {
     const all = await db.invoices.orderBy('created_at').reverse().toArray()
     setInvoices(all)
     const cls = await db.clients.where('active').equals(1).toArray()
     setClients(cls)
+    try {
+      const tpls = await db.job_templates.where('active').equals(1).toArray()
+      setTemplates(tpls)
+    } catch { setTemplates([]) }
     setLoading(false)
     
     try {
@@ -95,6 +101,29 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormClientAddress(c.address || '')
     setShowClientPicker(false)
     setClientSearch('')
+  }
+
+  const pickTemplate = (t: JobTemplate) => {
+    const newItems = t.items.map(i => ({
+      description: i.description,
+      quantity: i.quantity,
+      unit_price: i.unit_price,
+      total: i.quantity * i.unit_price
+    }))
+    setFormItems(newItems)
+    if (t.default_tax_rate) setFormTaxRate(t.default_tax_rate)
+    if (t.notes) setFormNotes(t.notes)
+    if (t.client_name && !formClientName) {
+      setFormClientName(t.client_name)
+      // Try to fill rest of client info from clients list
+      const match = clients.find(c => `${c.first_name} ${c.last_name}` === t.client_name)
+      if (match) {
+        setFormClientPhone(match.phone || '')
+        setFormClientEmail(match.email || '')
+        setFormClientAddress(match.address || '')
+      }
+    }
+    setShowTemplatePicker(false)
   }
 
   const resetForm = (type: 'invoice' | 'quote' = 'invoice') => {
@@ -247,7 +276,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     alert('✅ Cotización convertida a factura — revisa en Facturas')
   }
 
-  // ====== NUEVO: WhatsApp directo ======
   const sendWhatsApp = (inv: Invoice) => {
     const phone = inv.client_phone?.replace(/\D/g, '') || ''
     if (!phone) {
@@ -282,6 +310,11 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const taxAmount = subtotal * (formTaxRate / 100)
     const total = subtotal + taxAmount
 
+    const filteredClients = clients.filter(c => {
+      const name = `${c.first_name} ${c.last_name}`.toLowerCase()
+      return !clientSearch || name.includes(clientSearch.toLowerCase()) || (c.phone && c.phone.includes(clientSearch))
+    })
+
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100">
         <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
@@ -295,13 +328,52 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4 pb-20">
-          {/* Client Section */}
+
+          {/* ====== TEMPLATE PICKER ====== */}
+          {templates.length > 0 && viewMode === 'create' && (
+            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+              <div className="flex justify-between items-center">
+                <p className="text-sm font-semibold text-gray-300">📋 Usar Template</p>
+                <button onClick={() => setShowTemplatePicker(!showTemplatePicker)} className="text-xs text-purple-400">
+                  {showTemplatePicker ? 'Cerrar' : `Ver templates (${templates.length})`}
+                </button>
+              </div>
+              {showTemplatePicker && (
+                <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                  {templates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => pickTemplate(t)}
+                      className="w-full text-left bg-[#0b1220] rounded-lg p-3 border border-white/10 hover:border-purple-500/50 transition-colors"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-sm font-medium text-gray-200">{t.name}</p>
+                          {t.client_name && <p className="text-xs text-gray-500 mt-0.5">👤 {t.client_name}</p>}
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {t.items.length} item{t.items.length !== 1 ? 's' : ''} • {t.default_tax_rate > 0 ? `IVU ${t.default_tax_rate}%` : 'Sin IVU'}
+                          </p>
+                        </div>
+                        <p className="text-sm font-bold text-green-400">
+                          {fmt(t.items.reduce((s, i) => s + (i.quantity * i.unit_price), 0))}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ====== CLIENT SECTION - MEJORADO ====== */}
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
             <div className="flex justify-between items-center mb-3">
               <p className="text-sm font-semibold text-gray-300">👤 Cliente</p>
-              <button onClick={() => setShowClientPicker(!showClientPicker)} className="text-xs text-blue-400">
-                {showClientPicker ? 'Cerrar' : '📋 Elegir existente'}
-              </button>
+              {clients.length > 0 && (
+                <button onClick={() => { setShowClientPicker(!showClientPicker); setClientSearch('') }} className="text-xs text-blue-400">
+                  {showClientPicker ? '✕ Cerrar' : '📋 Elegir existente'}
+                </button>
+              )}
             </div>
 
             {showClientPicker && (
@@ -309,18 +381,30 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 <input
                   value={clientSearch}
                   onChange={e => setClientSearch(e.target.value)}
-                  placeholder="Buscar cliente..."
-                  className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="🔍 Buscar por nombre o teléfono..."
+                  className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-500"
+                  autoFocus
                 />
-                <div className="max-h-32 overflow-y-auto space-y-1">
-                  {clients.filter(c => {
-                    const name = `${c.first_name} ${c.last_name}`.toLowerCase()
-                    return !clientSearch || name.includes(clientSearch.toLowerCase())
-                  }).map(c => (
-                    <button key={c.id} onClick={() => pickClient(c)} className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/10 text-gray-300">
-                      {c.first_name} {c.last_name} {c.phone ? `• ${c.phone}` : ''}
-                    </button>
-                  ))}
+                <div className="max-h-48 overflow-y-auto space-y-1">
+                  {filteredClients.length === 0 ? (
+                    <p className="text-xs text-gray-600 text-center py-3">No se encontraron clientes</p>
+                  ) : (
+                    filteredClients.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => pickClient(c)}
+                        className="w-full text-left px-3 py-2.5 text-sm rounded-lg hover:bg-blue-900/30 border border-transparent hover:border-blue-500/30 text-gray-300 transition-colors"
+                      >
+                        <p className="font-medium">{c.first_name} {c.last_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {c.phone && `📞 ${c.phone}`}
+                          {c.phone && c.address && ' • '}
+                          {c.address && `📍 ${c.address}`}
+                          {!c.phone && !c.address && (c.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial')}
+                        </p>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
             )}
@@ -511,14 +595,12 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
 
           {/* Actions */}
           <div className="space-y-2">
-            {/* ====== NUEVO: WhatsApp directo ====== */}
             {selected.client_phone && (
               <button onClick={() => sendWhatsApp(selected)} className="w-full py-3 rounded-xl text-sm font-medium bg-green-600 text-white flex items-center justify-center gap-2">
                 📱 Enviar por WhatsApp
               </button>
             )}
 
-            {/* ====== MEJORADO: Cotización → Factura más visible ====== */}
             {isQuote && selected.status !== 'cancelled' && (
               <button onClick={() => convertQuoteToInvoice(selected)} className="w-full py-3 rounded-xl text-sm font-medium bg-purple-600 text-white flex items-center justify-center gap-2">
                 🔄 Convertir a Factura
@@ -530,27 +612,27 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 📤 Marcar como Enviada
               </button>
             )}
-           {(selected.status === 'sent' || selected.status === 'overdue') && (
-  <div className="space-y-2">
-    <p className="text-xs text-gray-500 text-center">Marcar como pagada con:</p>
-    <div className="grid grid-cols-3 gap-2">
-      {[
-        { key: 'cash', label: '💵 Efectivo' },
-        { key: 'ath_movil', label: '📱 ATH Móvil' },
-        { key: 'check', label: '📝 Cheque' },
-        { key: 'ach', label: '🏦 ACH' },
-        { key: 'credit_card', label: '💳 Tarjeta Crédito' },
-        { key: 'paypal', label: '🅿️ PayPal' },
-        { key: 'zelle', label: '⚡ Zelle' },
-        { key: 'transfer', label: '🔄 Transferencia' },
-      ].map(method => (
-        <button key={method.key} onClick={() => updateStatus(selected, 'paid', method.key)} className="py-2.5 rounded-xl text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/30">
-          {method.label}
-        </button>
-      ))}
-    </div>
-  </div>
-)}
+            {(selected.status === 'sent' || selected.status === 'overdue') && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 text-center">Marcar como pagada con:</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { key: 'cash', label: '💵 Efectivo' },
+                    { key: 'ath_movil', label: '📱 ATH Móvil' },
+                    { key: 'check', label: '📝 Cheque' },
+                    { key: 'ach', label: '🏦 ACH' },
+                    { key: 'credit_card', label: '💳 Tarjeta Crédito' },
+                    { key: 'paypal', label: '🅿️ PayPal' },
+                    { key: 'zelle', label: '⚡ Zelle' },
+                    { key: 'transfer', label: '🔄 Transferencia' },
+                  ].map(method => (
+                    <button key={method.key} onClick={() => updateStatus(selected, 'paid', method.key)} className="py-2.5 rounded-xl text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/30">
+                      {method.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {selected.status !== 'paid' && selected.status !== 'cancelled' && (
               <button onClick={() => updateStatus(selected, 'cancelled')} className="w-full py-3 rounded-xl text-sm font-medium bg-gray-800 text-gray-400 border border-white/10">
                 ✕ Cancelar
