@@ -249,7 +249,7 @@ export function generateCategoryReport(
   const filtered = events.filter(e =>
     e.timestamp >= startDate &&
     e.timestamp <= endDate &&
-    (category === 'general' || e.category?.toLowerCase() === category.toLowerCase())
+    (category === 'general' || category === 'gastos' || category === 'ingresos' || category === 'personales' || category === 'vehículos' || e.category?.toLowerCase() === category.toLowerCase())
   )
 
   const doc = new jsPDF()
