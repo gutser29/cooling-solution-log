@@ -22,7 +22,7 @@ function formatDateShort(ts: number): string {
 }
 
 function formatCurrency(n: number): string {
-  return '$' + n.toFixed(2)
+  return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
 function getPaymentLabel(method?: string): string {
