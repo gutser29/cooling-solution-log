@@ -83,30 +83,10 @@ try {
   doc.setFontSize(10)
   doc.setTextColor(30, 30, 30)
   
-  doc.setFont('helvetica', 'bold')
+ doc.setFont('helvetica', 'bold')
   doc.text('Invoice number', marginL, y)
   doc.setFont('helvetica', 'normal')
   doc.text(invoice.invoice_number, marginL + 35, y)
-  
-  y += 6
-  doc.setFont('helvetica', 'bold')
-  doc.text('Date of issue', marginL, y)
-  doc.setFont('helvetica', 'normal')
-  doc.text(formatDate(invoice.issue_date), marginL + 35, y)
-  
-  y += 6
-  if (invoice.due_date && !isQuote) {
-    doc.setFont('helvetica', 'bold')
-    doc.text('Date due', marginL, y)
-    doc.setFont('helvetica', 'normal')
-    doc.text(formatDate(invoice.due_date), marginL + 35, y)
-  }
-if (isQuote && invoice.expiration_date) {
-    doc.setFont('helvetica', 'bold')
-    doc.text('Valid until', marginL, y)
-    doc.setFont('helvetica', 'normal')
-    doc.text(formatDate(invoice.expiration_date), marginL + 35, y)
-  }
 
   if (invoice.service_date) {
     y += 6
