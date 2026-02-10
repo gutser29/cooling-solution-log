@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/db';
 import type { BitacoraEntry } from '@/lib/types';
 import ConfirmDialog from './ConfirmDialog';
@@ -21,8 +21,47 @@ export default function BitacoraPage({ onNavigate }: BitacoraPageProps) {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [showRaw, setShowRaw] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; entry: BitacoraEntry | null }>({ show: false, entry: null });
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => { loadEntries() }, []);
+
+  // Speech Recognition
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'es-PR';
+    recognition.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          setInputText(prev => (prev + ' ' + event.results[i][0].transcript).trim());
+        }
+      }
+    };
+    recognition.onend = () => {
+      if (recognitionRef.current?._active) {
+        setTimeout(() => { try { recognition.start() } catch {} }, 100);
+      } else { setIsListening(false); }
+    };
+    recognitionRef.current = recognition;
+  }, []);
+
+  const toggleListening = () => {
+    const r = recognitionRef.current;
+    if (!r) { alert('Tu navegador no soporta dictado. Usa Chrome.'); return; }
+    if (isListening) {
+      r._active = false;
+      try { r.stop() } catch {}
+      setIsListening(false);
+    } else {
+      r._active = true;
+      try { r.start(); setIsListening(true); } catch {}
+    }
+  };
 
   const loadEntries = async () => {
     try {
@@ -36,8 +75,9 @@ export default function BitacoraPage({ onNavigate }: BitacoraPageProps) {
     setLoading(true);
 
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const todayStr = new Date().toLocaleDateString('es-PR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const todayStr = now.toLocaleDateString('es-PR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -238,8 +278,15 @@ PREGUNTA: ${searchQuery}` }
           <div className="mb-4 bg-[#111a2e] rounded-xl p-4 border border-white/5">
             <h2 className="text-lg font-semibold text-gray-200 mb-2">Cuéntame tu día</h2>
             <p className="text-xs text-gray-500 mb-3">
-              Escribe todo lo que hiciste hoy. La AI lo organiza automáticamente.
+              Escribe o dicta 🎤 todo lo que hiciste hoy. La AI lo organiza automáticamente.
             </p>
+            {isListening && (
+              <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-red-900/20 rounded-lg border border-red-800/30">
+                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                <span className="text-sm text-red-400 font-medium">Dictando...</span>
+                <span className="text-xs text-gray-500 ml-auto">Toca 🎤 para parar</span>
+              </div>
+            )}
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
@@ -249,10 +296,16 @@ PREGUNTA: ${searchQuery}` }
             />
             <div className="flex gap-2 mt-3">
               <button
-                onClick={() => { setMode('list'); setInputText(''); }}
-                className="flex-1 bg-gray-700 text-gray-300 py-2.5 rounded-xl text-sm"
+                onClick={() => { setMode('list'); setInputText(''); if (isListening) { recognitionRef.current._active = false; try { recognitionRef.current.stop() } catch {} setIsListening(false); } }}
+                className="bg-gray-700 text-gray-300 py-2.5 rounded-xl text-sm px-4"
               >
                 Cancelar
+              </button>
+              <button
+                onClick={toggleListening}
+                className={`py-2.5 rounded-xl text-sm px-4 ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-purple-600 text-white'}`}
+              >
+                🎤 {isListening ? 'Parar' : 'Dictar'}
               </button>
               <button
                 onClick={handleSubmitEntry}
