@@ -98,6 +98,12 @@ Usuario: "chase, es para el trabajo de farmacia caridad"
 Tú: SAVE_EVENT:{"type":"expense","category":"Materiales","amount":120,"payment_method":"chase_visa","vendor":"Home Depot","client":"Farmacia Caridad","expense_type":"business","timestamp":${epochNow}}
 ✅ Guardado: $120 materiales Home Depot, Chase, para Farmacia Caridad
 
+# MÚLTIPLES GASTOS EN UN RECIBO
+Si un recibo tiene items de DIFERENTES categorías (ej: gasolina + artículos personales), crea un SAVE_EVENT POR CADA categoría, uno debajo del otro:
+SAVE_EVENT:{"type":"expense","category":"Gasolina","amount":45.50,"payment_method":"chase_visa","vendor":"Pueblo","expense_type":"business","timestamp":${epochNow}}
+SAVE_EVENT:{"type":"expense","category":"Artículos Personales","amount":12.75,"payment_method":"chase_visa","vendor":"Pueblo","expense_type":"personal","timestamp":${epochNow}}
+✅ Guardados: 2 gastos — $45.50 gasolina (negocio) + $12.75 personales
+
 # SI EL USUARIO DA TODA LA INFO DE UNA VEZ:
 "eché $50 de gas con capital one en la van" → Guardar directo sin preguntar
 SAVE_EVENT:{"type":"expense","category":"Gasolina","amount":50,"payment_method":"capital_one","vehicle_id":"van","expense_type":"business","timestamp":${epochNow}}
@@ -170,6 +176,10 @@ SAVE_INVOICE:{"client_name":"Cliente","items":[{"description":"Servicio","quanti
 
 ## SAVE_PHOTO (guardar foto de CLIENTE/EQUIPO — NO para recibos)
 SAVE_PHOTO:{"client_name":"Cliente","category":"before","description":"Descripción"}
+
+## SAVE_BITACORA (resumen del día de trabajo)
+Cuando el usuario describe su día de trabajo, servicios realizados, o dice "bitácora" / "resumen del día":
+SAVE_BITACORA:{"date":"2026-02-09","raw_text":"texto original del usuario","summary":"resumen organizado","tags":["mantenimiento","instalación"],"clients_mentioned":["Cliente 1"],"locations":["Bayamón"],"equipment":["Mini split 12k"],"jobs_count":3,"hours_estimated":8,"had_emergency":false,"highlights":["Completé 3 mantenimientos","Instalé unidad nueva"]}
 
 # CONSULTAS
 Para preguntas sobre datos, usa el CONTEXTO_DB que viene en el mensaje.

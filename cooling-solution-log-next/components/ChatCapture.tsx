@@ -625,32 +625,54 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       // ====== TEXT RESPONSE - PARSE COMMANDS ======
       const assistantText = data.text || data.error || 'Sin respuesta'
 
-      // ====== SAVE_EVENT ======
-      const eventData = extractJSON(assistantText, 'SAVE_EVENT:')
-      if (eventData) {
-        try {
-          await db.events.add({
-            timestamp: eventData.timestamp || Date.now(),
-            type: eventData.type,
-            status: 'completed',
-            subtype: eventData.subtype,
-            category: eventData.category,
-            amount: eventData.amount,
-            payment_method: eventData.payment_method,
-            vendor: eventData.vendor,
-            client: eventData.client,
-            vehicle_id: eventData.vehicle_id,
-            note: eventData.note,
-            expense_type: eventData.expense_type || 'business',
-            receipt_photos: receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
-          })
-          const hadPhotos = receiptPhotosRef.current.length > 0
-          receiptPhotosRef.current = [] // Limpiar después de usar
+     // ====== SAVE_EVENT (soporta múltiples) ======
+      const eventMatches = assistantText.match(/SAVE_EVENT:\s*\{/gi)
+      if (eventMatches && eventMatches.length > 0) {
+        let savedCount = 0
+        let remaining = assistantText
+        for (let i = 0; i < eventMatches.length; i++) {
+          const evData = extractJSON(remaining, 'SAVE_EVENT:')
+          if (evData) {
+            try {
+              await db.events.add({
+                timestamp: evData.timestamp || Date.now(),
+                type: evData.type,
+                status: 'completed',
+                subtype: evData.subtype,
+                category: evData.category,
+                amount: evData.amount,
+                payment_method: evData.payment_method,
+                vendor: evData.vendor,
+                client: evData.client,
+                vehicle_id: evData.vehicle_id,
+                note: evData.note,
+                expense_type: evData.expense_type || 'business',
+                receipt_photos: i === 0 && receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
+              })
+              savedCount++
+            } catch (e) { console.error('SAVE_EVENT error:', e) }
+            // Remove the processed SAVE_EVENT from remaining text
+            const upperRemaining = remaining.toUpperCase()
+            const cmdIdx = upperRemaining.indexOf('SAVE_EVENT:')
+            if (cmdIdx >= 0) {
+              const afterCmd = remaining.slice(cmdIdx)
+              const braceStart = afterCmd.indexOf('{')
+              let depth = 0, end = braceStart
+              for (let j = braceStart; j < afterCmd.length; j++) {
+                if (afterCmd[j] === '{') depth++
+                else if (afterCmd[j] === '}') { depth--; if (depth === 0) { end = j + 1; break } }
+              }
+              remaining = remaining.slice(0, cmdIdx) + remaining.slice(cmdIdx + end)
+            }
+          }
+        }
+        if (savedCount > 0) {
+          receiptPhotosRef.current = []
           const cleanText = assistantText.replace(/SAVE_EVENT:\s*\{[^}]*\}/gi, '').trim()
-          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${eventData.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${eventData.amount}${hadPhotos ? ' 📷 foto adjunta' : ''}` }])
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ ${savedCount} registro(s) guardado(s)` }])
           syncToDrive()
           return
-        } catch (e) { console.error('SAVE_EVENT error:', e) }
+        }
       }
 
       // ====== SAVE_CLIENT ======
@@ -882,6 +904,32 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         } catch (e) { console.error('SAVE_PHOTO error:', e) }
       }
 
+     // ====== SAVE_BITACORA ======
+      const bitacoraData = extractJSON(assistantText, 'SAVE_BITACORA:')
+      if (bitacoraData) {
+        try {
+          const now = Date.now()
+          await db.bitacora.add({
+            date: bitacoraData.date || new Date().toISOString().split('T')[0],
+            raw_text: bitacoraData.raw_text || '',
+            summary: bitacoraData.summary || '',
+            tags: bitacoraData.tags || [],
+            clients_mentioned: bitacoraData.clients_mentioned || [],
+            locations: bitacoraData.locations || [],
+            equipment: bitacoraData.equipment || [],
+            jobs_count: bitacoraData.jobs_count || 0,
+            hours_estimated: bitacoraData.hours_estimated || 0,
+            had_emergency: bitacoraData.had_emergency || false,
+            highlights: bitacoraData.highlights || [],
+            created_at: now
+          })
+          const cleanText = assistantText.replace(/SAVE_BITACORA:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Bitácora guardada: ${bitacoraData.date}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_BITACORA error:', e) }
+      } 
+
       // ====== SAVE_JOB ======
       const jobData = extractJSON(assistantText, 'SAVE_JOB:')
       if (jobData) {
@@ -959,7 +1007,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       {showMenu && (
         <>
           <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowMenu(false)} />
-          <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 overflow-hidden border border-white/10">
+          <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 max-h-[80vh] overflow-y-auto">
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Dashboard</button>
             <button onClick={() => { setShowMenu(false); onNavigate('clients') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">👥 Clientes</button>
             <button onClick={() => { setShowMenu(false); onNavigate('expenses') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">💵 Gastos</button>
@@ -971,7 +1019,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
             <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📜 Historial</button>
             <button onClick={() => { setShowMenu(false); onNavigate('bitacora') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📒 Bitácora</button>
-            <button onClick={() => { setShowMenu(false); onNavigate('reports') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📊 Reportes</button>
+            
             <button onClick={async () => {
               setShowMenu(false)
               const d = new Date()
