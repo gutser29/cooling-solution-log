@@ -430,7 +430,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const clients = await db.clients.where('active').equals(1).toArray()
         if (clients.length > 0) {
           ctx += '\n\nCLIENTES:\n' + clients.map(c => 
-            `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}`
+            `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}${c.address ? ' | 📍 ' + c.address : ''}${c.notes ? ' | ' + c.notes : ''}`
           ).join('\n')
         }
 

@@ -99,18 +99,27 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     setViewMode('detail')
     setDetailTab('resumen')
 
-    const clientName = `${client.first_name} ${client.last_name}`.toLowerCase()
+    const clientName = `${client.first_name} ${client.last_name}`.trim().toLowerCase()
+    
+    // Flexible name matching - handles "Farmacia Caridad" vs "Farmacia Caridad #40"
+    const nameMatches = (val: string | undefined) => {
+      if (!val) return false
+      const v = val.trim().toLowerCase()
+      return v.includes(clientName) || clientName.includes(v) || 
+        (clientName.split(/\s+/).filter(p => p.length > 2).filter(p => v.includes(p)).length >= 2)
+    }
 
     // Jobs
     const jobs = await db.jobs.where('client_id').equals(client.id!).toArray()
     setClientJobs(jobs.sort((a, b) => b.date - a.date))
 
     // Events (all related)
+
     const events = await db.events.toArray()
-    const related = events.filter(e =>
-      e.client_id === client.id ||
-      (e.client && e.client.toLowerCase().includes(clientName))
+ const related = events.filter(e =>
+      e.client_id === client.id || nameMatches(e.client)
     ).sort((a, b) => b.timestamp - a.timestamp)
+
     setClientEvents(related)
 
     // Expenses FOR this client (materials, etc)
@@ -120,38 +129,36 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     // Photos
     const photos = await db.client_photos.toArray()
     setClientPhotos(photos.filter(p =>
-      p.client_id === client.id || p.client_name?.toLowerCase().includes(clientName)
+      p.client_id === client.id || nameMatches(p.client_name)
     ).sort((a, b) => b.timestamp - a.timestamp))
 
     // Documents
     const docs = await db.client_documents.toArray()
     setClientDocs(docs.filter(d =>
-      d.client_id === client.id || d.client_name?.toLowerCase().includes(clientName)
+      d.client_id === client.id || nameMatches(d.client_name)
     ).sort((a, b) => b.timestamp - a.timestamp))
 
     // Invoices
     try {
       const invoices = await db.invoices.toArray()
       setClientInvoices(invoices.filter(i =>
-        i.client_name?.toLowerCase().includes(clientName)
+        nameMatches(i.client_name)
       ).sort((a: any, b: any) => b.issue_date - a.issue_date))
     } catch { setClientInvoices([]) }
 
     // Warranties
     try {
       const warranties = await db.table('warranties').toArray()
-      setClientWarranties(warranties.filter((w: any) =>
-        w.client_name?.toLowerCase().includes(clientName) ||
-        w.client_id === client.id
+    setClientWarranties(warranties.filter((w: any) =>
+        w.client_id === client.id || nameMatches(w.client_name)
       ).sort((a: any, b: any) => b.purchase_date - a.purchase_date))
     } catch { setClientWarranties([]) }
 
     // Quick Quotes
     try {
       const quotes = await db.table('quick_quotes').toArray()
-      setClientQuotes(quotes.filter((q: any) =>
-        q.client_name?.toLowerCase().includes(clientName) ||
-        q.client_id === client.id
+     setClientQuotes(quotes.filter((q: any) =>
+        q.client_id === client.id || nameMatches(q.client_name)
       ).sort((a: any, b: any) => b.created_at - a.created_at))
     } catch { setClientQuotes([]) }
   }
