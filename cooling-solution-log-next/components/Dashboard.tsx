@@ -319,44 +319,27 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-2 pb-6">
-          <button onClick={() => onNavigate('chat')} className="bg-blue-600 hover:bg-blue-700 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">💬</span>
-            <p className="text-[10px] mt-1 font-medium">Registrar</p>
-          </button>
-          <button onClick={() => onNavigate('bitacora')} className="bg-purple-600 hover:bg-purple-700 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">📒</span>
-            <p className="text-[10px] mt-1 font-medium">Bitácora</p>
-          </button>
-          <button onClick={() => onNavigate('invoices')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">🧾</span>
-            <p className="text-[10px] mt-1 font-medium">Facturas</p>
-          </button>
-          <button onClick={() => onNavigate('templates')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">📋</span>
-            <p className="text-[10px] mt-1 font-medium">Templates</p>
-          </button>
-          <button onClick={() => onNavigate('clients')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">👥</span>
-            <p className="text-[10px] mt-1 font-medium">Clientes</p>
-          </button>
-          <button onClick={() => onNavigate('calendar')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">📅</span>
-            <p className="text-[10px] mt-1 font-medium">Calendario</p>
-          </button>
-          <button onClick={() => onNavigate('notes')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">📝</span>
-            <p className="text-[10px] mt-1 font-medium">Notas</p>
-          </button>
-          <button onClick={() => onNavigate('search')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">🔍</span>
-            <p className="text-[10px] mt-1 font-medium">Buscar</p>
-          </button>
-          <button onClick={() => onNavigate('history')} className="bg-[#111a2e] hover:bg-[#1a2332] border border-white/10 rounded-xl p-3 text-center transition-colors">
-            <span className="text-xl">📜</span>
-            <p className="text-[10px] mt-1 font-medium">Historial</p>
-          </button>
+        {/* Quick Actions - Scrollable horizontal */}
+        <div className="pb-6">
+          <p className="text-sm font-semibold text-gray-300 mb-3">⚡ Acciones Rápidas</p>
+          <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4" style={{ WebkitOverflowScrolling: 'touch' }}>
+            {[
+              { page: 'chat', icon: '💬', label: 'Registrar', bg: 'bg-blue-600' },
+              { page: 'bitacora', icon: '📒', label: 'Bitácora', bg: 'bg-purple-600' },
+              { page: 'invoices', icon: '🧾', label: 'Facturas', bg: 'bg-[#111a2e] border border-white/10' },
+              { page: 'templates', icon: '📋', label: 'Templates', bg: 'bg-[#111a2e] border border-white/10' },
+              { page: 'clients', icon: '👥', label: 'Clientes', bg: 'bg-[#111a2e] border border-white/10' },
+              { page: 'calendar', icon: '📅', label: 'Calendario', bg: 'bg-[#111a2e] border border-white/10' },
+              { page: 'notes', icon: '📝', label: 'Notas', bg: 'bg-[#111a2e] border border-white/10' },
+              { page: 'search', icon: '🔍', label: 'Buscar', bg: 'bg-[#111a2e] border border-white/10' },
+              { page: 'history', icon: '📜', label: 'Historial', bg: 'bg-[#111a2e] border border-white/10' },
+            ].map(item => (
+              <button key={item.page} onClick={() => onNavigate(item.page)} className={`${item.bg} rounded-xl p-3 text-center flex-shrink-0 w-20 transition-colors`}>
+                <span className="text-xl">{item.icon}</span>
+                <p className="text-[10px] mt-1 font-medium whitespace-nowrap">{item.label}</p>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

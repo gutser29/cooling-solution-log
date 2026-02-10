@@ -435,14 +435,15 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
               {formItems.map((item, idx) => (
                 <div key={idx} className="bg-[#0b1220] rounded-lg p-3 border border-white/5">
                   <div className="flex gap-2 mb-2">
-                    <input
+                    <textarea
                       value={item.description}
                       onChange={e => updateItem(idx, 'description', e.target.value)}
                       placeholder="Descripción del servicio/material"
-                      className="flex-1 bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600"
+                      rows={3}
+                      className="flex-1 bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600 resize-y min-h-[60px]"
                     />
                     {formItems.length > 1 && (
-                      <button onClick={() => removeItem(idx)} className="text-red-400 px-2">✕</button>
+                      <button onClick={() => removeItem(idx)} className="text-red-400 px-2 self-start mt-1">✕</button>
                     )}
                   </div>
                   <div className="grid grid-cols-3 gap-2">
