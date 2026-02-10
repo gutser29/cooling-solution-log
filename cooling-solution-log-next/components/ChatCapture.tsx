@@ -932,6 +932,31 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         } catch (e) { console.error('SAVE_BITACORA error:', e) }
       } 
 
+      // ====== SAVE_QUICK_QUOTE ======
+      const quickQuoteData = extractJSON(assistantText, 'SAVE_QUICK_QUOTE:')
+      if (quickQuoteData) {
+        try {
+          const now = Date.now()
+          const myCost = quickQuoteData.my_cost || 0
+          const quoted = quickQuoteData.quoted_price || 0
+          await db.table('quick_quotes').add({
+            client_name: quickQuoteData.client_name || '',
+            client_id: quickQuoteData.client_id,
+            description: quickQuoteData.description || '',
+            my_cost: myCost,
+            quoted_price: quoted,
+            markup: quoted - myCost,
+            status: 'pending',
+            notes: quickQuoteData.notes,
+            created_at: now,
+          })
+          const cleanText = assistantText.replace(/SAVE_QUICK_QUOTE:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Cotización guardada: ${quickQuoteData.description} — ${quickQuoteData.client_name}` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_QUICK_QUOTE error:', e) }
+      }
+
       // ====== SAVE_WARRANTY ======
       const warrantyData = extractJSON(assistantText, 'SAVE_WARRANTY:')
       if (warrantyData) {
