@@ -134,6 +134,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const syncingRef = useRef(false)
   // ====== NUEVO: Ref para fotos de recibos pendientes ======
   const receiptPhotosRef = useRef<string[]>([])
+  const [aiModel, setAiModel] = useState<'auto' | 'gpt' | 'claude'>('auto')
 
   useEffect(() => { driveConnectedRef.current = driveConnected }, [driveConnected])
 
@@ -513,7 +514,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const contextMsg = dbContextRef.current ? `\n\n[CONTEXTO_DB]\n${dbContextRef.current}\n[/CONTEXTO_DB]` : ''
       const fullContent = userContent + contextMsg
 
-      const payload = {
+     const payload = {
+        model: aiModel,
         messages: [
           ...messages.filter(m => m.role !== 'assistant' || !m.content.startsWith('✅')).slice(-10),
           { role: 'user', content: fullContent, photos: userPhotos.length ? userPhotos : undefined }
@@ -930,6 +932,44 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         } catch (e) { console.error('SAVE_BITACORA error:', e) }
       } 
 
+      // ====== SAVE_WARRANTY ======
+      const warrantyData = extractJSON(assistantText, 'SAVE_WARRANTY:')
+      if (warrantyData) {
+        try {
+          const now = Date.now()
+          const purchaseDate = warrantyData.purchase_date ? new Date(warrantyData.purchase_date).getTime() : now
+          const months = warrantyData.warranty_months || 12
+          const expDate = new Date(purchaseDate)
+          expDate.setMonth(expDate.getMonth() + months)
+
+          await db.table('warranties').add({
+            equipment_type: warrantyData.equipment_type || '',
+            brand: warrantyData.brand || '',
+            model_number: warrantyData.model_number,
+            serial_number: warrantyData.serial_number,
+            vendor: warrantyData.vendor || '',
+            vendor_phone: warrantyData.vendor_phone,
+            vendor_invoice: warrantyData.vendor_invoice,
+            client_name: warrantyData.client_name || '',
+            client_id: warrantyData.client_id,
+            location: warrantyData.location,
+            purchase_date: purchaseDate,
+            warranty_months: months,
+            expiration_date: expDate.getTime(),
+            cost: warrantyData.cost,
+            receipt_photos: receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined,
+            notes: warrantyData.notes,
+            status: 'active',
+            created_at: now,
+          })
+          receiptPhotosRef.current = []
+          const cleanText = assistantText.replace(/SAVE_WARRANTY:\s*\{[\s\S]*?\}(?:\s*\})?/gi, '').trim()
+          setMessages(prev => [...prev, { role: 'assistant', content: cleanText || `✅ Garantía registrada: ${warrantyData.equipment_type} (${warrantyData.brand}) — ${warrantyData.client_name}, ${months} meses` }])
+          syncToDrive()
+          return
+        } catch (e) { console.error('SAVE_WARRANTY error:', e) }
+      }
+
       // ====== SAVE_JOB ======
       const jobData = extractJSON(assistantText, 'SAVE_JOB:')
       if (jobData) {
@@ -1000,7 +1040,19 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             )}
           </div>
         </div>
-        <button onClick={() => setShowMenu(!showMenu)} className="text-3xl w-10 h-10 flex items-center justify-center">☰</button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAiModel(prev => prev === 'auto' ? 'gpt' : prev === 'gpt' ? 'claude' : 'auto')}
+            className={`text-xs px-2 py-1 rounded-lg font-medium ${
+              aiModel === 'auto' ? 'bg-white/20 text-white' :
+              aiModel === 'gpt' ? 'bg-green-500/30 text-green-300' :
+              'bg-orange-500/30 text-orange-300'
+            }`}
+          >
+            {aiModel === 'auto' ? '⚡ Auto' : aiModel === 'gpt' ? '🟢 GPT' : '🟠 Claude'}
+          </button>
+          <button onClick={() => setShowMenu(!showMenu)} className="text-3xl w-10 h-10 flex items-center justify-center">☰</button>
+        </div>
       </div>
 
       {/* MENU - FIXED position, dark theme - SIN DUPLICADOS */}
@@ -1019,7 +1071,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             <button onClick={() => { setShowMenu(false); onNavigate('search') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🔍 Buscar</button>
             <button onClick={() => { setShowMenu(false); onNavigate('history') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📜 Historial</button>
             <button onClick={() => { setShowMenu(false); onNavigate('bitacora') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">📒 Bitácora</button>
-            
+            <button onClick={() => { setShowMenu(false); onNavigate('warranties') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">🛡️ Garantías</button>
             <button onClick={async () => {
               setShowMenu(false)
               const d = new Date()

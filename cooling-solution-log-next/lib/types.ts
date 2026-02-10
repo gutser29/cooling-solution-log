@@ -193,6 +193,21 @@ export interface Reminder {
   created_at: number
 }
 
+export interface QuickQuote {
+  id?: number
+  client_name: string
+  client_id?: number
+  description: string
+  my_cost: number
+  quoted_price: number
+  markup: number
+  status: 'pending' | 'approved' | 'rejected' | 'invoiced'
+  notes?: string
+  created_at: number
+  updated_at?: number
+  responded_at?: number
+}
+
 // ========== INVOICING ==========
 
 export interface InvoiceItem {
@@ -307,4 +322,29 @@ export interface BitacoraEntry {
   highlights: string[]          // Puntos importantes del día
   created_at: number
   updated_at?: number
+}
+export interface Warranty {
+  id?: number;
+  equipment_type: string;
+  brand: string;
+  model_number?: string;
+  serial_number?: string;
+  vendor: string;
+  vendor_phone?: string;
+  vendor_invoice?: string;
+  client_name: string;
+  client_id?: number;
+  location?: string;
+  purchase_date: number;
+  warranty_months: number;
+  expiration_date: number;
+  cost?: number;
+  receipt_photos?: string[];
+  notes?: string;
+  status: 'active' | 'expired' | 'claimed' | 'void';
+  claim_date?: number;
+  claim_notes?: string;
+  replacement_warranty_id?: number;
+  created_at: number;
+  updated_at?: number;
 }

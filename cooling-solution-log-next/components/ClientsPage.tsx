@@ -10,7 +10,23 @@ interface ClientsPageProps {
   onNavigate: (page: string) => void
 }
 
-type ViewMode = 'list' | 'detail' | 'edit' | 'new'
+type ViewMode = 'list' | 'detail' | 'edit' | 'new' | 'newQuote'
+type DetailTab = 'resumen' | 'facturas' | 'garantias' | 'gastos' | 'cotizaciones' | 'fotos' | 'docs'
+
+interface QuickQuote {
+  id?: number
+  client_name: string
+  client_id?: number
+  description: string
+  my_cost: number
+  quoted_price: number
+  markup: number
+  status: 'pending' | 'approved' | 'rejected' | 'invoiced'
+  notes?: string
+  created_at: number
+  updated_at?: number
+  responded_at?: number
+}
 
 const compressImage = (base64: string, maxWidth = 2000): Promise<string> => {
   return new Promise((resolve) => {
@@ -19,12 +35,8 @@ const compressImage = (base64: string, maxWidth = 2000): Promise<string> => {
       const canvas = document.createElement('canvas')
       let { width, height } = img
       if (width > maxWidth) { height = (height * maxWidth) / width; width = maxWidth }
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')!
-      ctx.imageSmoothingEnabled = true
-      ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(img, 0, 0, width, height)
+      canvas.width = width; canvas.height = height
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
       resolve(canvas.toDataURL('image/png'))
     }
     img.src = base64
@@ -38,13 +50,19 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [clientEvents, setClientEvents] = useState<EventRecord[]>([])
   const [clientPhotos, setClientPhotos] = useState<ClientPhoto[]>([])
   const [clientDocs, setClientDocs] = useState<ClientDocument[]>([])
+  const [clientInvoices, setClientInvoices] = useState<any[]>([])
+  const [clientWarranties, setClientWarranties] = useState<any[]>([])
+  const [clientExpenses, setClientExpenses] = useState<EventRecord[]>([])
+  const [clientQuotes, setClientQuotes] = useState<QuickQuote[]>([])
   const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [detailTab, setDetailTab] = useState<DetailTab>('resumen')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [editForm, setEditForm] = useState<Partial<Client>>({})
   const [filter, setFilter] = useState<'all' | 'residential' | 'commercial'>('all')
   const [confirmAction, setConfirmAction] = useState<{ show: boolean; title: string; message: string; action: () => void }>({ show: false, title: '', message: '', action: () => {} })
-  
+
+  // Photo/Doc upload state
   const [showPhotoUpload, setShowPhotoUpload] = useState(false)
   const [showDocUpload, setShowDocUpload] = useState(false)
   const [photoCategory, setPhotoCategory] = useState<'before' | 'after' | 'diagnostic' | 'equipment' | 'area' | 'other'>('other')
@@ -55,7 +73,13 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [docDesc, setDocDesc] = useState('')
   const [docName, setDocName] = useState('')
   const [docExpiration, setDocExpiration] = useState('')
-  
+
+  // Quick quote form
+  const [qDesc, setQDesc] = useState('')
+  const [qMyCost, setQMyCost] = useState('')
+  const [qQuoted, setQQuoted] = useState('')
+  const [qNotes, setQNotes] = useState('')
+
   const photoInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
 
@@ -64,12 +88,8 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       const all = await db.clients.toArray()
       const active = all.filter(c => c.active === true)
       setClients(active.sort((a, b) => (a.first_name + a.last_name).localeCompare(b.first_name + b.last_name)))
-    } catch (error) {
-      console.error('Error loading clients:', error)
-      setClients([])
-    } finally {
-      setLoading(false)
-    }
+    } catch { setClients([]) }
+    finally { setLoading(false) }
   }, [])
 
   useEffect(() => { loadClients() }, [loadClients])
@@ -77,29 +97,63 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const selectClient = async (client: Client) => {
     setSelectedClient(client)
     setViewMode('detail')
+    setDetailTab('resumen')
+
+    const clientName = `${client.first_name} ${client.last_name}`.toLowerCase()
+
+    // Jobs
     const jobs = await db.jobs.where('client_id').equals(client.id!).toArray()
     setClientJobs(jobs.sort((a, b) => b.date - a.date))
+
+    // Events (all related)
     const events = await db.events.toArray()
-    const clientName = `${client.first_name} ${client.last_name}`.toLowerCase()
     const related = events.filter(e =>
       e.client_id === client.id ||
       (e.client && e.client.toLowerCase().includes(clientName))
     ).sort((a, b) => b.timestamp - a.timestamp)
     setClientEvents(related)
-    
+
+    // Expenses FOR this client (materials, etc)
+    const expenses = related.filter(e => e.type === 'expense')
+    setClientExpenses(expenses)
+
+    // Photos
     const photos = await db.client_photos.toArray()
-    const clientPhotosFiltered = photos.filter(p => 
-      p.client_id === client.id || 
-      p.client_name?.toLowerCase().includes(clientName)
-    ).sort((a, b) => b.timestamp - a.timestamp)
-    setClientPhotos(clientPhotosFiltered)
-    
+    setClientPhotos(photos.filter(p =>
+      p.client_id === client.id || p.client_name?.toLowerCase().includes(clientName)
+    ).sort((a, b) => b.timestamp - a.timestamp))
+
+    // Documents
     const docs = await db.client_documents.toArray()
-    const clientDocsFiltered = docs.filter(d => 
-      d.client_id === client.id || 
-      d.client_name?.toLowerCase().includes(clientName)
-    ).sort((a, b) => b.timestamp - a.timestamp)
-    setClientDocs(clientDocsFiltered)
+    setClientDocs(docs.filter(d =>
+      d.client_id === client.id || d.client_name?.toLowerCase().includes(clientName)
+    ).sort((a, b) => b.timestamp - a.timestamp))
+
+    // Invoices
+    try {
+      const invoices = await db.invoices.toArray()
+      setClientInvoices(invoices.filter(i =>
+        i.client_name?.toLowerCase().includes(clientName)
+      ).sort((a: any, b: any) => b.issue_date - a.issue_date))
+    } catch { setClientInvoices([]) }
+
+    // Warranties
+    try {
+      const warranties = await db.table('warranties').toArray()
+      setClientWarranties(warranties.filter((w: any) =>
+        w.client_name?.toLowerCase().includes(clientName) ||
+        w.client_id === client.id
+      ).sort((a: any, b: any) => b.purchase_date - a.purchase_date))
+    } catch { setClientWarranties([]) }
+
+    // Quick Quotes
+    try {
+      const quotes = await db.table('quick_quotes').toArray()
+      setClientQuotes(quotes.filter((q: any) =>
+        q.client_name?.toLowerCase().includes(clientName) ||
+        q.client_id === client.id
+      ).sort((a: any, b: any) => b.created_at - a.created_at))
+    } catch { setClientQuotes([]) }
   }
 
   const startEdit = () => {
@@ -109,15 +163,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   }
 
   const startNew = () => {
-    setEditForm({
-      first_name: '',
-      last_name: '',
-      phone: '',
-      email: '',
-      address: '',
-      type: 'residential',
-      notes: ''
-    })
+    setEditForm({ first_name: '', last_name: '', phone: '', email: '', address: '', type: 'residential', notes: '' })
     setViewMode('new')
   }
 
@@ -127,202 +173,132 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
       await db.clients.update(selectedClient.id, {
         first_name: editForm.first_name || selectedClient.first_name,
         last_name: editForm.last_name || selectedClient.last_name,
-        phone: editForm.phone || '',
-        email: editForm.email || '',
-        address: editForm.address || '',
-        type: editForm.type || selectedClient.type,
-        notes: editForm.notes || '',
-        updated_at: Date.now()
+        phone: editForm.phone || '', email: editForm.email || '',
+        address: editForm.address || '', type: editForm.type || selectedClient.type,
+        notes: editForm.notes || '', updated_at: Date.now()
       })
       const updated = await db.clients.get(selectedClient.id)
-      if (updated) {
-        setSelectedClient(updated)
-        setViewMode('detail')
-        loadClients()
-      }
-    } catch (error) {
-      console.error('Error saving client:', error)
-      alert('Error al guardar cliente')
-    }
+      if (updated) { setSelectedClient(updated); setViewMode('detail'); loadClients() }
+    } catch { alert('Error al guardar cliente') }
   }
 
   const saveNew = async () => {
-    if (!editForm.first_name) {
-      alert('El nombre es requerido')
-      return
-    }
+    if (!editForm.first_name) { alert('El nombre es requerido'); return }
     try {
       const now = Date.now()
-      await db.clients.add({
-        first_name: editForm.first_name || '',
-        last_name: editForm.last_name || '',
-        phone: editForm.phone || '',
-        email: editForm.email || '',
-        address: editForm.address || '',
-        type: editForm.type || 'residential',
-        notes: editForm.notes || '',
-        active: true,
-        created_at: now,
-        updated_at: now
+      const id = await db.clients.add({
+        first_name: editForm.first_name || '', last_name: editForm.last_name || '',
+        phone: editForm.phone || '', email: editForm.email || '',
+        address: editForm.address || '', type: editForm.type || 'residential',
+        notes: editForm.notes || '', active: true, created_at: now, updated_at: now
       })
-      setViewMode('list')
-      loadClients()
-      alert('✅ Cliente creado')
-    } catch (error) {
-      console.error('Error creating client:', error)
-      alert('Error al crear cliente')
-    }
+      setViewMode('list'); loadClients()
+    } catch { alert('Error al crear cliente') }
   }
 
   const toggleActive = async () => {
     if (!selectedClient?.id) return
     await db.clients.update(selectedClient.id, { active: !selectedClient.active })
     setConfirmAction({ show: false, title: '', message: '', action: () => {} })
-    setViewMode('list')
-    setSelectedClient(null)
-    loadClients()
+    setViewMode('list'); setSelectedClient(null); loadClients()
   }
 
-  // ====== NUEVO: WhatsApp directo ======
   const openWhatsApp = (phone: string, message?: string) => {
-    const cleanPhone = phone.replace(/\D/g, '')
-    if (!cleanPhone) return
-    const url = message 
-      ? `https://wa.me/1${cleanPhone}?text=${encodeURIComponent(message)}`
-      : `https://wa.me/1${cleanPhone}`
+    const clean = phone.replace(/\D/g, '')
+    if (!clean) return
+    const url = message ? `https://wa.me/1${clean}?text=${encodeURIComponent(message)}` : `https://wa.me/1${clean}`
     window.open(url, '_blank')
   }
 
-  const handleGeneratePhotoReport = () => {
-    if (!selectedClient || clientPhotos.length === 0) {
-      alert('No hay fotos para este cliente')
-      return
-    }
-    const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`
-    generatePhotoReport(clientPhotos, clientName)
-  }
-
-  const handleGenerateDocReport = () => {
-    if (!selectedClient || clientDocs.length === 0) {
-      alert('No hay documentos para este cliente')
-      return
-    }
-    const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`
-    generateDocumentListPDF(clientDocs, clientName)
-  }
-
-  const handleGenerateClientListPDF = async () => {
+  // Quick Quote
+  const saveQuickQuote = async () => {
+    if (!selectedClient || !qDesc || !qQuoted) { alert('Descripción y precio cotizado son requeridos'); return }
+    const now = Date.now()
+    const myCost = parseFloat(qMyCost) || 0
+    const quoted = parseFloat(qQuoted) || 0
     try {
-      const { generateClientListPDF } = await import('@/lib/pdfGenerator')
-      generateClientListPDF(clients)
-    } catch (error) {
-      console.error('Error generating client list PDF:', error)
-      alert('Error al generar PDF')
-    }
+      await db.table('quick_quotes').add({
+        client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+        client_id: selectedClient.id,
+        description: qDesc,
+        my_cost: myCost,
+        quoted_price: quoted,
+        markup: quoted - myCost,
+        status: 'pending',
+        notes: qNotes || undefined,
+        created_at: now,
+      })
+      setQDesc(''); setQMyCost(''); setQQuoted(''); setQNotes('')
+      setViewMode('detail')
+      // Reload quotes
+      const quotes = await db.table('quick_quotes').toArray()
+      const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
+      setClientQuotes(quotes.filter((q: any) => q.client_name?.toLowerCase().includes(clientName) || q.client_id === selectedClient.id).sort((a: any, b: any) => b.created_at - a.created_at))
+    } catch (e) { console.error(e); alert('Error guardando cotización') }
   }
 
+  const updateQuoteStatus = async (quoteId: number, status: string) => {
+    try {
+      await db.table('quick_quotes').update(quoteId, { status, updated_at: Date.now(), responded_at: Date.now() })
+      setClientQuotes(prev => prev.map(q => q.id === quoteId ? { ...q, status: status as any, responded_at: Date.now() } : q))
+    } catch {}
+  }
+
+  const deleteQuote = async (quoteId: number) => {
+    await db.table('quick_quotes').delete(quoteId)
+    setClientQuotes(prev => prev.filter(q => q.id !== quoteId))
+    setConfirmAction({ show: false, title: '', message: '', action: () => {} })
+  }
+
+  // Photo/Doc handlers
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedClient || !e.target.files?.length) return
     const file = e.target.files[0]
-    const b64 = await new Promise<string>(res => {
-      const r = new FileReader()
-      r.onload = () => res(r.result as string)
-      r.readAsDataURL(file)
-    })
+    const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(file) })
     const compressed = await compressImage(b64)
     const now = Date.now()
-    
     await db.client_photos.add({
-      client_id: selectedClient.id,
-      client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
-      category: photoCategory,
-      description: photoDesc,
-      equipment_type: photoEquipment || undefined,
-      location: photoLocation || undefined,
-      photo_data: compressed,
-      timestamp: now,
-      visit_date: now,
-      created_at: now
+      client_id: selectedClient.id, client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+      category: photoCategory, description: photoDesc, equipment_type: photoEquipment || undefined,
+      location: photoLocation || undefined, photo_data: compressed, timestamp: now, visit_date: now, created_at: now
     })
-    
     const photos = await db.client_photos.toArray()
     const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
     setClientPhotos(photos.filter(p => p.client_id === selectedClient.id || p.client_name?.toLowerCase().includes(clientName)).sort((a, b) => b.timestamp - a.timestamp))
-    
-    setShowPhotoUpload(false)
-    setPhotoDesc('')
-    setPhotoEquipment('')
-    setPhotoLocation('')
-    setPhotoCategory('other')
+    setShowPhotoUpload(false); setPhotoDesc(''); setPhotoEquipment(''); setPhotoLocation(''); setPhotoCategory('other')
     if (photoInputRef.current) photoInputRef.current.value = ''
-    alert('✅ Foto guardada')
   }
 
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedClient || !e.target.files?.length) return
     const file = e.target.files[0]
     const fileType = file.name.split('.').pop() || 'unknown'
-    const b64 = await new Promise<string>(res => {
-      const r = new FileReader()
-      r.onload = () => res(r.result as string)
-      r.readAsDataURL(file)
-    })
+    const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(file) })
     const now = Date.now()
-    
     await db.client_documents.add({
-      client_id: selectedClient.id,
-      client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
-      doc_type: docType,
-      file_name: docName || file.name,
-      file_type: fileType,
-      file_data: b64,
-      description: docDesc,
-      expiration_date: docExpiration ? new Date(docExpiration).getTime() : undefined,
-      timestamp: now,
-      created_at: now
+      client_id: selectedClient.id, client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+      doc_type: docType, file_name: docName || file.name, file_type: fileType, file_data: b64,
+      description: docDesc, expiration_date: docExpiration ? new Date(docExpiration).getTime() : undefined,
+      timestamp: now, created_at: now
     })
-    
     const docs = await db.client_documents.toArray()
     const clientName = `${selectedClient.first_name} ${selectedClient.last_name}`.toLowerCase()
     setClientDocs(docs.filter(d => d.client_id === selectedClient.id || d.client_name?.toLowerCase().includes(clientName)).sort((a, b) => b.timestamp - a.timestamp))
-    
-    setShowDocUpload(false)
-    setDocDesc('')
-    setDocName('')
-    setDocExpiration('')
-    setDocType('other')
+    setShowDocUpload(false); setDocDesc(''); setDocName(''); setDocExpiration(''); setDocType('other')
     if (docInputRef.current) docInputRef.current.value = ''
-    alert('✅ Documento guardado')
-  }
-
-  const viewDocument = (doc: ClientDocument) => {
-    const link = document.createElement('a')
-    link.href = doc.file_data
-    link.download = doc.file_name
-    link.click()
   }
 
   const deletePhoto = async (photoId: number) => {
-    await db.client_photos.delete(photoId)
-    setClientPhotos(prev => prev.filter(p => p.id !== photoId))
+    await db.client_photos.delete(photoId); setClientPhotos(prev => prev.filter(p => p.id !== photoId))
     setConfirmAction({ show: false, title: '', message: '', action: () => {} })
   }
-
   const deleteDoc = async (docId: number) => {
-    await db.client_documents.delete(docId)
-    setClientDocs(prev => prev.filter(d => d.id !== docId))
+    await db.client_documents.delete(docId); setClientDocs(prev => prev.filter(d => d.id !== docId))
     setConfirmAction({ show: false, title: '', message: '', action: () => {} })
   }
 
-  const fmt = (n: number) => `$${n.toFixed(2)}`
+  const fmt = (n: number) => `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
   const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { month: 'short', day: 'numeric', year: 'numeric' })
-
-  const getCategoryIcon = (cat: string) => {
-    const icons: Record<string, string> = {
-      before: '📷', after: '✅', diagnostic: '🔍', equipment: '⚙️', area: '📐', other: '📎'
-    }
-    return icons[cat] || '📷'
-  }
 
   const filtered = clients.filter(c => {
     const name = `${c.first_name} ${c.last_name}`.toLowerCase()
@@ -341,53 +317,37 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <h1 className="text-xl font-bold">👥 Clientes</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={handleGenerateClientListPDF} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium">📄 PDF</button>
             <button onClick={startNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">+ Nuevo</button>
             <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
           </div>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-3">
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar cliente..."
-            className="w-full bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
-          />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar cliente..."
+            className="w-full bg-[#111a2e] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500" />
 
           <div className="flex gap-2">
             {(['all', 'residential', 'commercial'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filter === f ? 'bg-blue-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'}`}
-              >
-                {f === 'all' ? 'Todos' : f === 'residential' ? 'Residencial' : 'Comercial'}
+              <button key={f} onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium ${filter === f ? 'bg-blue-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'}`}>
+                {f === 'all' ? 'Todos' : f === 'residential' ? '🏠 Residencial' : '🏢 Comercial'}
               </button>
             ))}
-            <span className="ml-auto text-xs text-gray-500 self-center">{filtered.length} cliente{filtered.length !== 1 ? 's' : ''}</span>
+            <span className="ml-auto text-xs text-gray-500 self-center">{filtered.length}</span>
           </div>
 
-          {loading ? (
-            <div className="text-center py-8 text-gray-500">Cargando...</div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              {search ? 'No se encontraron clientes' : 'No hay clientes. Presiona "+ Nuevo" para agregar uno.'}
-            </div>
-          ) : (
+          {loading ? <div className="text-center py-8 text-gray-500">Cargando...</div> :
+          filtered.length === 0 ? <div className="text-center py-8 text-gray-500">{search ? 'No encontrado' : 'No hay clientes'}</div> : (
             <div className="space-y-2">
               {filtered.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => selectClient(c)}
-                  className="w-full bg-[#111a2e] rounded-xl p-4 border border-white/5 text-left hover:bg-[#1a2332] transition-colors"
-                >
+                <button key={c.id} onClick={() => selectClient(c)}
+                  className="w-full bg-[#111a2e] rounded-xl p-4 border border-white/5 text-left hover:bg-[#1a2332] transition-colors">
                   <div className="flex justify-between items-center">
                     <div>
                       <p className="font-medium text-gray-200">{c.first_name} {c.last_name}</p>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={`text-xs px-2 py-0.5 rounded ${c.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
-                          {c.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
+                          {c.type === 'commercial' ? '🏢' : '🏠'} {c.type === 'commercial' ? 'Comercial' : 'Residencial'}
                         </span>
                         {c.phone && <span className="text-xs text-gray-500">📞 {c.phone}</span>}
                       </div>
@@ -413,33 +373,22 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <button onClick={() => setViewMode(isNew ? 'list' : 'detail')} className="text-lg">←</button>
             <h1 className="text-xl font-bold">{isNew ? '➕ Nuevo' : '✏️ Editar'} Cliente</h1>
           </div>
-          <button onClick={isNew ? saveNew : saveEdit} className="bg-green-500 hover:bg-green-600 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
+          <button onClick={isNew ? saveNew : saveEdit} className="bg-green-500 rounded-lg px-4 py-1.5 text-sm font-medium">Guardar</button>
         </div>
-
-        <div className="p-4 max-w-2xl mx-auto space-y-4">
+        <div className="p-4 max-w-2xl mx-auto">
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Nombre *</label>
-                <input value={editForm.first_name || ''} onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="José" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Apellido</label>
-                <input value={editForm.last_name || ''} onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Rivera" />
-              </div>
+              <div><label className="text-xs text-gray-400 mb-1 block">Nombre *</label>
+                <input value={editForm.first_name || ''} onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="José" /></div>
+              <div><label className="text-xs text-gray-400 mb-1 block">Apellido</label>
+                <input value={editForm.last_name || ''} onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Rivera" /></div>
             </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Teléfono</label>
-              <input value={editForm.phone || ''} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="787-555-1234" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Email</label>
-              <input value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="jose@email.com" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Dirección</label>
-              <input value={editForm.address || ''} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Bayamón, PR" />
-            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Teléfono</label>
+              <input value={editForm.phone || ''} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="787-555-1234" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Email</label>
+              <input value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="jose@email.com" /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Dirección</label>
+              <input value={editForm.address || ''} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Bayamón, PR" /></div>
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
               <div className="flex gap-2">
@@ -447,221 +396,406 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                 <button onClick={() => setEditForm(f => ({ ...f, type: 'commercial' }))} className={`flex-1 py-2 rounded-lg text-sm ${editForm.type === 'commercial' ? 'bg-purple-600 text-white' : 'bg-[#0b1220] border border-white/10 text-gray-400'}`}>🏢 Comercial</button>
               </div>
             </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Notas</label>
-              <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20" placeholder="Notas adicionales..." />
-            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Notas</label>
+              <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20" placeholder="Notas..." /></div>
           </div>
-
           {!isNew && selectedClient && (
-            <button onClick={() => setConfirmAction({ show: true, title: selectedClient.active ? 'Desactivar Cliente' : 'Reactivar Cliente', message: `¿${selectedClient.active ? 'Desactivar' : 'Reactivar'} a ${selectedClient.first_name} ${selectedClient.last_name}?`, action: toggleActive })} className="w-full bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
+            <button onClick={() => setConfirmAction({ show: true, title: selectedClient.active ? 'Desactivar' : 'Reactivar', message: `¿${selectedClient.active ? 'Desactivar' : 'Reactivar'} a ${selectedClient.first_name}?`, action: toggleActive })}
+              className="w-full mt-4 bg-red-900/30 text-red-400 rounded-xl py-3 text-sm border border-red-900/50">
               {selectedClient.active ? '🗑️ Desactivar Cliente' : '✅ Reactivar Cliente'}
             </button>
           )}
         </div>
+        <ConfirmDialog show={confirmAction.show} title={confirmAction.title} message={confirmAction.message} confirmText="Confirmar" confirmColor="red" onConfirm={confirmAction.action} onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })} />
+      </div>
+    )
+  }
 
-        <ConfirmDialog
-          show={confirmAction.show}
-          title={confirmAction.title}
-          message={confirmAction.message}
-          confirmText="Confirmar"
-          confirmColor="red"
-          onConfirm={confirmAction.action}
-          onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })}
-        />
+  // ========== NEW QUOTE VIEW ==========
+  if (viewMode === 'newQuote' && selectedClient) {
+    return (
+      <div className="min-h-screen bg-[#0b1220] text-gray-100">
+        <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setViewMode('detail')} className="text-lg">←</button>
+            <h1 className="text-xl font-bold">💬 Cotización Rápida</h1>
+          </div>
+        </div>
+        <div className="p-4 max-w-2xl mx-auto space-y-4">
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+            <p className="text-sm text-gray-400 mb-1">Cliente</p>
+            <p className="text-gray-200 font-medium">{selectedClient.first_name} {selectedClient.last_name}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 mb-1.5">Descripción *</p>
+            <textarea value={qDesc} onChange={e => setQDesc(e.target.value)} rows={3}
+              placeholder="Ej: Compresor scroll 3 ton para unidad paquete techo"
+              className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm placeholder-gray-600 resize-y focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-gray-400 mb-1.5">💰 Mi costo</p>
+              <input type="number" step="0.01" value={qMyCost} onChange={e => setQMyCost(e.target.value)} placeholder="0.00"
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 mb-1.5">💵 Precio cotizado *</p>
+              <input type="number" step="0.01" value={qQuoted} onChange={e => setQQuoted(e.target.value)} placeholder="0.00"
+                className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
+            </div>
+          </div>
+          {qMyCost && qQuoted && (
+            <div className="bg-green-900/20 rounded-xl p-3 border border-green-700/30">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Ganancia:</span>
+                <span className="text-green-400 font-bold">{fmt(parseFloat(qQuoted || '0') - parseFloat(qMyCost || '0'))}</span>
+              </div>
+              <div className="flex justify-between text-xs mt-1">
+                <span className="text-gray-500">Markup:</span>
+                <span className="text-green-400">{parseFloat(qMyCost) > 0 ? ((parseFloat(qQuoted || '0') / parseFloat(qMyCost || '1') - 1) * 100).toFixed(0) : '—'}%</span>
+              </div>
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-gray-400 mb-1.5">📝 Notas</p>
+            <textarea value={qNotes} onChange={e => setQNotes(e.target.value)} rows={2}
+              placeholder="Le envié por WhatsApp, esperando respuesta..."
+              className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm placeholder-gray-600 resize-y focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setViewMode('detail')} className="flex-1 bg-gray-700 text-gray-300 py-2.5 rounded-xl text-sm">Cancelar</button>
+            <button onClick={saveQuickQuote} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl text-sm font-medium">💾 Guardar</button>
+          </div>
+          {selectedClient.phone && (
+            <button onClick={() => {
+              const msg = `Hola, le informo sobre ${qDesc}. El costo sería ${qQuoted ? `$${qQuoted}` : '(por definir)'}. Déjeme saber cómo desea proceder. Gracias.`
+              openWhatsApp(selectedClient.phone!, msg)
+            }} className="w-full bg-green-600 text-white py-2.5 rounded-xl text-sm font-medium">
+              📱 Enviar por WhatsApp
+            </button>
+          )}
+        </div>
       </div>
     )
   }
 
   // ========== DETAIL VIEW ==========
   if (viewMode === 'detail' && selectedClient) {
-    const totalJobs = clientJobs.length
-    const totalCharged = clientJobs.reduce((s, j) => s + j.total_charged, 0)
-    const totalPaid = clientJobs.reduce((s, j) => s + (j.payments?.reduce((ps, p) => ps + p.amount, 0) || 0), 0)
-    const totalPending = totalCharged - totalPaid
+    // Financial calculations
+    const totalInvoiced = clientInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0)
+    const totalPaid = clientInvoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + (i.total || 0), 0)
+    const totalPending = clientInvoices.filter((i: any) => i.status !== 'paid' && i.status !== 'cancelled').reduce((s: number, i: any) => s + (i.total || 0), 0)
+    const totalExpenses = clientExpenses.reduce((s, e) => s + e.amount, 0)
+    const profit = totalPaid - totalExpenses
+    const activeWarranties = clientWarranties.filter((w: any) => w.status === 'active').length
+    const pendingQuotes = clientQuotes.filter(q => q.status === 'pending').length
+
+    const tabs: { key: DetailTab; label: string; count?: number }[] = [
+      { key: 'resumen', label: '📊' },
+      { key: 'facturas', label: '🧾', count: clientInvoices.length },
+      { key: 'garantias', label: '🛡️', count: clientWarranties.length },
+      { key: 'gastos', label: '📦', count: clientExpenses.length },
+      { key: 'cotizaciones', label: '💬', count: clientQuotes.length },
+      { key: 'fotos', label: '📷', count: clientPhotos.length },
+      { key: 'docs', label: '📄', count: clientDocs.length },
+    ]
 
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100 pb-20">
         <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => { setViewMode('list'); setSelectedClient(null) }} className="text-lg">←</button>
-            <h1 className="text-xl font-bold">👤 {selectedClient.first_name}</h1>
+            <h1 className="text-xl font-bold truncate">👤 {selectedClient.first_name} {selectedClient.last_name}</h1>
           </div>
           <div className="flex items-center gap-2">
-            {/* ====== NUEVO: WhatsApp directo ====== */}
             {selectedClient.phone && (
-              <button onClick={() => openWhatsApp(selectedClient.phone!)} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">📱 WA</button>
+              <button onClick={() => openWhatsApp(selectedClient.phone!)} className="bg-green-500 rounded-lg px-2.5 py-1.5 text-sm">📱</button>
             )}
-            <button onClick={startEdit} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">✏️ Editar</button>
+            <button onClick={startEdit} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm">✏️</button>
+          </div>
+        </div>
+
+        {/* Client info bar */}
+        <div className="px-4 pt-3 max-w-2xl mx-auto">
+          <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
+                {selectedClient.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
+              </span>
+              {selectedClient.phone && <span className="text-xs text-gray-500">📞 {selectedClient.phone}</span>}
+              {selectedClient.address && <span className="text-xs text-gray-500">📍 {selectedClient.address}</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="px-4 pt-3 max-w-2xl mx-auto">
+          <div className="flex gap-1 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+            {tabs.map(t => (
+              <button key={t.key} onClick={() => setDetailTab(t.key)}
+                className={`text-xs px-3 py-2 rounded-lg whitespace-nowrap flex-shrink-0 ${detailTab === t.key ? 'bg-blue-600 text-white' : 'bg-[#111a2e] text-gray-400 border border-white/10'}`}>
+                {t.label}{t.count !== undefined && t.count > 0 ? ` ${t.count}` : ''}
+              </button>
+            ))}
           </div>
         </div>
 
         <div className="p-4 max-w-2xl mx-auto space-y-4">
-          {/* Client Info */}
-          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-            <h2 className="text-xl font-bold text-gray-100 mb-2">{selectedClient.first_name} {selectedClient.last_name}</h2>
-            <span className={`text-xs px-2 py-0.5 rounded ${selectedClient.type === 'commercial' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}`}>
-              {selectedClient.type === 'commercial' ? '🏢 Comercial' : '🏠 Residencial'}
-            </span>
-            {selectedClient.phone && (
-              <div className="flex items-center gap-2 mt-3">
-                <p className="text-sm text-gray-400">📞 {selectedClient.phone}</p>
-                <button onClick={() => openWhatsApp(selectedClient.phone!)} className="text-xs bg-green-600/20 text-green-400 px-2 py-0.5 rounded-lg border border-green-600/30 hover:bg-green-600/30">WhatsApp</button>
-                <a href={`tel:${selectedClient.phone}`} className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded-lg border border-blue-600/30 hover:bg-blue-600/30">Llamar</a>
-              </div>
-            )}
-            {selectedClient.email && <p className="text-sm text-gray-400 mt-1">✉️ {selectedClient.email}</p>}
-            {selectedClient.address && <p className="text-sm text-gray-400">📍 {selectedClient.address}</p>}
-            {selectedClient.notes && <p className="text-sm text-gray-500 mt-2 italic">&quot;{selectedClient.notes}&quot;</p>}
-          </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
-              <p className="text-2xl font-bold text-gray-200">{totalJobs}</p>
-              <p className="text-xs text-gray-500">Trabajos</p>
-            </div>
-            <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
-              <p className="text-2xl font-bold text-green-400">{fmt(totalCharged)}</p>
-              <p className="text-xs text-gray-500">Facturado</p>
-            </div>
-            <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
-              <p className={`text-2xl font-bold ${totalPending > 0 ? 'text-yellow-400' : 'text-gray-400'}`}>{fmt(totalPending)}</p>
-              <p className="text-xs text-gray-500">Pendiente</p>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => setShowPhotoUpload(true)} className="bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-3 border border-white/5 text-center transition-colors">
-              <span className="text-2xl">📷</span>
-              <p className="text-xs text-gray-400 mt-1">Añadir Foto</p>
-            </button>
-            <button onClick={() => setShowDocUpload(true)} className="bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-3 border border-white/5 text-center transition-colors">
-              <span className="text-2xl">📄</span>
-              <p className="text-xs text-gray-400 mt-1">Añadir Documento</p>
-            </button>
-          </div>
-
-          {/* Photo Report Button */}
-          {clientPhotos.length > 0 && (
-            <button onClick={handleGeneratePhotoReport} className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">📸</span>
-                <div className="text-left">
-                  <p className="text-sm font-medium text-gray-200">Reporte de Fotos</p>
-                  <p className="text-xs text-gray-500">{clientPhotos.length} foto(s) - Agrupadas por fecha</p>
+          {/* ====== RESUMEN TAB ====== */}
+          {detailTab === 'resumen' && (
+            <>
+              {/* Financial Summary */}
+              <div className={`rounded-xl p-4 border ${profit >= 0 ? 'bg-green-900/20 border-green-700/30' : 'bg-red-900/20 border-red-700/30'}`}>
+                <p className="text-xs text-gray-400 mb-1">Ganancia Neta con este Cliente</p>
+                <p className={`text-3xl font-bold ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmt(profit)}</p>
+                <div className="flex justify-between mt-2 text-sm">
+                  <span className="text-green-400">↑ Pagado: {fmt(totalPaid)}</span>
+                  <span className="text-red-400">↓ Gastos: {fmt(totalExpenses)}</span>
                 </div>
               </div>
-              <span className="text-blue-400 text-sm font-medium">PDF →</span>
-            </button>
-          )}
 
-          {/* Document Report Button */}
-          {clientDocs.length > 0 && (
-            <button onClick={handleGenerateDocReport} className="w-full bg-[#111a2e] hover:bg-[#1a2332] rounded-xl p-4 border border-white/5 flex items-center justify-between transition-colors">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">📋</span>
-                <div className="text-left">
-                  <p className="text-sm font-medium text-gray-200">Lista de Documentos</p>
-                  <p className="text-xs text-gray-500">{clientDocs.length} documento(s)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
+                  <p className="text-xl font-bold text-gray-200">{fmt(totalInvoiced)}</p>
+                  <p className="text-xs text-gray-500">Facturado Total</p>
+                </div>
+                <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
+                  <p className={`text-xl font-bold ${totalPending > 0 ? 'text-yellow-400' : 'text-gray-400'}`}>{fmt(totalPending)}</p>
+                  <p className="text-xs text-gray-500">Pendiente Cobro</p>
                 </div>
               </div>
-              <span className="text-blue-400 text-sm font-medium">PDF →</span>
-            </button>
-          )}
 
-          {/* Photos Section */}
-          {clientPhotos.length > 0 && (
-            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">📷 Fotos ({clientPhotos.length})</h3>
               <div className="grid grid-cols-3 gap-2">
-                {clientPhotos.slice(0, 9).map((photo) => (
-                  <div key={photo.id} className="relative group">
-                    <img src={photo.photo_data} alt={photo.description || 'Foto'} className="w-full h-20 object-cover rounded-lg" />
-                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1 rounded">
-                      {getCategoryIcon(photo.category)}
-                    </div>
-                    <button 
-                      onClick={() => photo.id && setConfirmAction({ show: true, title: 'Eliminar Foto', message: '¿Eliminar esta foto?', action: () => deletePhoto(photo.id!) })}
-                      className="absolute top-1 right-1 bg-red-500/80 text-white text-xs w-5 h-5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                    >×</button>
-                    <p className="text-[10px] text-gray-500 mt-1 truncate">{fmtDate(photo.timestamp)}</p>
-                  </div>
-                ))}
+                <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
+                  <p className="text-lg font-bold text-orange-400">{activeWarranties}</p>
+                  <p className="text-[10px] text-gray-500">Garantías</p>
+                </div>
+                <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
+                  <p className="text-lg font-bold text-purple-400">{pendingQuotes}</p>
+                  <p className="text-[10px] text-gray-500">Cotiz. Pend.</p>
+                </div>
+                <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5 text-center">
+                  <p className="text-lg font-bold text-blue-400">{clientInvoices.length}</p>
+                  <p className="text-[10px] text-gray-500">Facturas</p>
+                </div>
               </div>
-              {clientPhotos.length > 9 && (
-                <p className="text-xs text-gray-500 mt-2 text-center">+{clientPhotos.length - 9} más...</p>
-              )}
-            </div>
+
+              {/* Quick actions */}
+              <div className="flex gap-2">
+                <button onClick={() => { setViewMode('newQuote'); setQDesc(''); setQMyCost(''); setQQuoted(''); setQNotes('') }}
+                  className="flex-1 bg-[#111a2e] border border-white/10 rounded-xl py-3 text-sm text-gray-300">💬 Cotización</button>
+                <button onClick={() => setShowPhotoUpload(true)}
+                  className="flex-1 bg-[#111a2e] border border-white/10 rounded-xl py-3 text-sm text-gray-300">📷 Foto</button>
+                <button onClick={() => setShowDocUpload(true)}
+                  className="flex-1 bg-[#111a2e] border border-white/10 rounded-xl py-3 text-sm text-gray-300">📄 Doc</button>
+              </div>
+            </>
           )}
 
-          {/* Documents Section */}
-          {clientDocs.length > 0 && (
-            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">📄 Documentos ({clientDocs.length})</h3>
-              <div className="space-y-2">
-                {clientDocs.map((doc) => (
-                  <div key={doc.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#0b1220] transition-colors group">
-                    <span className="text-xl">{doc.file_type === 'pdf' ? '📕' : '📄'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-200 truncate">{doc.file_name}</p>
-                      <p className="text-xs text-gray-500 capitalize">{doc.doc_type} • {fmtDate(doc.timestamp)}</p>
-                    </div>
-                    <button onClick={() => viewDocument(doc)} className="text-blue-400 text-xs">Descargar</button>
-                    <button 
-                      onClick={() => doc.id && setConfirmAction({ show: true, title: 'Eliminar Documento', message: `¿Eliminar "${doc.file_name}"?`, action: () => deleteDoc(doc.id!) })}
-                      className="text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                    >Eliminar</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Jobs Section */}
-          {clientJobs.length > 0 && (
-            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">🔧 Trabajos</h3>
-              <div className="space-y-2">
-                {clientJobs.map((j, i) => {
-                  const paid = j.payments?.reduce((s, p) => s + p.amount, 0) || 0
-                  const pending = j.total_charged - paid
-                  return (
-                    <div key={i} className="flex justify-between items-center text-sm py-2 border-b border-white/5 last:border-0">
-                      <div>
-                        <p className="text-gray-300">{j.type}</p>
-                        <p className="text-xs text-gray-500">{fmtDate(j.date)}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-gray-200">{fmt(j.total_charged)}</p>
-                        {pending > 0 && <p className="text-xs text-yellow-400">Debe: {fmt(pending)}</p>}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Events Section */}
-          {clientEvents.length > 0 && (
-            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">📋 Eventos</h3>
-              <div className="space-y-2">
-                {clientEvents.slice(0, 10).map((e, i) => (
-                  <div key={i} className="flex justify-between items-center text-sm py-1 border-b border-white/5 last:border-0">
+          {/* ====== FACTURAS TAB ====== */}
+          {detailTab === 'facturas' && (
+            <>
+              {clientInvoices.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay facturas para este cliente</div>
+              ) : clientInvoices.map((inv: any) => (
+                <div key={inv.id} className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+                  <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-gray-300">{e.category}</p>
-                      <p className="text-xs text-gray-500">{fmtDate(e.timestamp)}</p>
+                      <p className="text-sm font-medium text-gray-200">#{inv.invoice_number}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{inv.type === 'quote' ? 'Cotización' : 'Factura'} • {fmtDate(inv.issue_date)}</p>
+                      {inv.items?.map((item: any, idx: number) => (
+                        <p key={idx} className="text-xs text-gray-400 mt-1">• {item.description} — {fmt(item.total)}</p>
+                      ))}
                     </div>
-                    <span className={`font-medium ${e.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
-                      {e.type === 'income' ? '+' : '-'}{fmt(e.amount)}
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-gray-200">{fmt(inv.total)}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        inv.status === 'paid' ? 'bg-green-900/50 text-green-400' :
+                        inv.status === 'sent' || inv.status === 'overdue' ? 'bg-yellow-900/50 text-yellow-400' :
+                        inv.status === 'cancelled' ? 'bg-red-900/50 text-red-400' :
+                        'bg-gray-800 text-gray-400'
+                      }`}>
+                        {inv.status === 'paid' ? 'Pagada' : inv.status === 'sent' ? 'Enviada' : inv.status === 'overdue' ? 'Vencida' : inv.status === 'draft' ? 'Borrador' : inv.status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ====== GARANTÍAS TAB ====== */}
+          {detailTab === 'garantias' && (
+            <>
+              {clientWarranties.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay garantías para este cliente</div>
+              ) : clientWarranties.map((w: any) => {
+                const now = Date.now()
+                const daysLeft = Math.ceil((w.expiration_date - now) / 86400000)
+                const isActive = w.status === 'active' && daysLeft > 0
+                const isExpiring = isActive && daysLeft <= 30
+                return (
+                  <div key={w.id} className="bg-[#111a2e] rounded-xl p-4 border border-white/5" onClick={() => onNavigate('warranties')}>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm font-medium text-gray-200">{w.equipment_type}</p>
+                        <p className="text-xs text-gray-400">{w.brand}{w.model_number ? ` — ${w.model_number}` : ''}</p>
+                        <p className="text-xs text-gray-500 mt-1">🏪 {w.vendor} • {fmtDate(w.purchase_date)}</p>
+                        {w.cost && <p className="text-xs text-gray-500">Costo: {fmt(w.cost)}</p>}
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        w.status === 'claimed' ? 'bg-blue-900/50 text-blue-400' :
+                        !isActive ? 'bg-red-900/50 text-red-400' :
+                        isExpiring ? 'bg-yellow-900/50 text-yellow-400' :
+                        'bg-green-900/50 text-green-400'
+                      }`}>
+                        {w.status === 'claimed' ? '📋 Reclamada' :
+                         !isActive ? '🔴 Vencida' :
+                         isExpiring ? `⚠️ ${daysLeft}d` :
+                         `✅ ${daysLeft}d`}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </>
+          )}
+
+          {/* ====== GASTOS/MATERIALES TAB ====== */}
+          {detailTab === 'gastos' && (
+            <>
+              {clientExpenses.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay gastos registrados para este cliente</div>
+              ) : (
+                <>
+                  <div className="bg-red-900/20 rounded-xl p-3 border border-red-700/30">
+                    <p className="text-xs text-gray-400">Total gastado para este cliente</p>
+                    <p className="text-2xl font-bold text-red-400">{fmt(totalExpenses)}</p>
+                  </div>
+                  {clientExpenses.map((e, i) => (
+                    <div key={i} className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="text-sm text-gray-300">{e.category || e.subtype || 'Gasto'}</p>
+                          <p className="text-xs text-gray-500">{fmtDate(e.timestamp)}{e.vendor ? ` • ${e.vendor}` : ''}</p>
+                          {e.note && <p className="text-xs text-gray-600 mt-0.5">{e.note}</p>}
+                        </div>
+                        <p className="text-red-400 font-medium">{fmt(e.amount)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+
+          {/* ====== COTIZACIONES TAB ====== */}
+          {detailTab === 'cotizaciones' && (
+            <>
+              <button onClick={() => { setViewMode('newQuote'); setQDesc(''); setQMyCost(''); setQQuoted(''); setQNotes('') }}
+                className="w-full bg-blue-600 text-white py-2.5 rounded-xl text-sm font-medium">+ Nueva Cotización Rápida</button>
+              {clientQuotes.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay cotizaciones</div>
+              ) : clientQuotes.map(q => (
+                <div key={q.id} className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex-1">
+                      <p className="text-sm text-gray-200">{q.description}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{fmtDate(q.created_at)}</p>
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      q.status === 'pending' ? 'bg-yellow-900/50 text-yellow-400' :
+                      q.status === 'approved' ? 'bg-green-900/50 text-green-400' :
+                      q.status === 'rejected' ? 'bg-red-900/50 text-red-400' :
+                      'bg-blue-900/50 text-blue-400'
+                    }`}>
+                      {q.status === 'pending' ? '⏳ Pendiente' : q.status === 'approved' ? '✅ Aprobada' : q.status === 'rejected' ? '❌ Rechazada' : '🧾 Facturada'}
                     </span>
                   </div>
-                ))}
-              </div>
-            </div>
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs bg-[#0b1220] rounded-lg p-2">
+                    <div><p className="text-gray-500">Mi costo</p><p className="text-red-400 font-medium">{fmt(q.my_cost)}</p></div>
+                    <div><p className="text-gray-500">Cotizado</p><p className="text-gray-200 font-medium">{fmt(q.quoted_price)}</p></div>
+                    <div><p className="text-gray-500">Ganancia</p><p className="text-green-400 font-medium">{fmt(q.markup)}</p></div>
+                  </div>
+                  {q.notes && <p className="text-xs text-gray-500 mt-2">{q.notes}</p>}
+                  {q.status === 'pending' && (
+                    <div className="flex gap-2 mt-3">
+                      <button onClick={() => updateQuoteStatus(q.id!, 'approved')} className="flex-1 bg-green-600/20 text-green-400 py-1.5 rounded-lg text-xs border border-green-600/30">✅ Aprobada</button>
+                      <button onClick={() => updateQuoteStatus(q.id!, 'rejected')} className="flex-1 bg-red-600/20 text-red-400 py-1.5 rounded-lg text-xs border border-red-600/30">❌ Rechazada</button>
+                      <button onClick={() => setConfirmAction({ show: true, title: 'Eliminar', message: `¿Eliminar cotización de ${q.description}?`, action: () => deleteQuote(q.id!) })}
+                        className="bg-gray-700 text-gray-400 py-1.5 px-3 rounded-lg text-xs">🗑️</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ====== FOTOS TAB ====== */}
+          {detailTab === 'fotos' && (
+            <>
+              <button onClick={() => setShowPhotoUpload(true)} className="w-full bg-blue-600 text-white py-2.5 rounded-xl text-sm font-medium">+ Añadir Foto</button>
+              {clientPhotos.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay fotos</div>
+              ) : (
+                <>
+                  {clientPhotos.length > 0 && (
+                    <button onClick={() => {
+                      const name = `${selectedClient.first_name} ${selectedClient.last_name}`
+                      generatePhotoReport(clientPhotos, name)
+                    }} className="w-full bg-[#111a2e] border border-white/10 rounded-xl p-3 text-sm text-blue-400 text-center">
+                      📸 Generar Reporte PDF ({clientPhotos.length} fotos)
+                    </button>
+                  )}
+                  <div className="grid grid-cols-3 gap-2">
+                    {clientPhotos.map(photo => (
+                      <div key={photo.id} className="relative group">
+                        <img src={photo.photo_data} alt="" className="w-full h-24 object-cover rounded-lg" />
+                        <p className="text-[10px] text-gray-500 mt-1 truncate">{fmtDate(photo.timestamp)}</p>
+                        <button onClick={() => photo.id && setConfirmAction({ show: true, title: 'Eliminar', message: '¿Eliminar esta foto?', action: () => deletePhoto(photo.id!) })}
+                          className="absolute top-1 right-1 bg-red-500/80 text-white text-xs w-5 h-5 rounded-full opacity-0 group-hover:opacity-100">×</button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* ====== DOCS TAB ====== */}
+          {detailTab === 'docs' && (
+            <>
+              <button onClick={() => setShowDocUpload(true)} className="w-full bg-blue-600 text-white py-2.5 rounded-xl text-sm font-medium">+ Añadir Documento</button>
+              {clientDocs.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay documentos</div>
+              ) : (
+                <>
+                  {clientDocs.length > 0 && (
+                    <button onClick={() => {
+                      const name = `${selectedClient.first_name} ${selectedClient.last_name}`
+                      generateDocumentListPDF(clientDocs, name)
+                    }} className="w-full bg-[#111a2e] border border-white/10 rounded-xl p-3 text-sm text-blue-400 text-center">
+                      📋 Generar Lista PDF ({clientDocs.length} docs)
+                    </button>
+                  )}
+                  <div className="space-y-2">
+                    {clientDocs.map(doc => (
+                      <div key={doc.id} className="bg-[#111a2e] rounded-xl p-3 border border-white/5 flex items-center gap-3 group">
+                        <span className="text-xl">{doc.file_type === 'pdf' ? '📕' : '📄'}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-200 truncate">{doc.file_name}</p>
+                          <p className="text-xs text-gray-500 capitalize">{doc.doc_type} • {fmtDate(doc.timestamp)}</p>
+                        </div>
+                        <button onClick={() => { const a = document.createElement('a'); a.href = doc.file_data; a.download = doc.file_name; a.click() }} className="text-blue-400 text-xs">⬇</button>
+                        <button onClick={() => doc.id && setConfirmAction({ show: true, title: 'Eliminar', message: `¿Eliminar "${doc.file_name}"?`, action: () => deleteDoc(doc.id!) })}
+                          className="text-red-400 text-xs opacity-0 group-hover:opacity-100">🗑️</button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
 
@@ -671,85 +805,53 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowPhotoUpload(false)} />
             <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4 max-h-[80vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-200">📷 Añadir Foto</h3>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Categoría</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['before', 'after', 'diagnostic', 'equipment', 'area', 'other'] as const).map(cat => (
-                    <button key={cat} onClick={() => setPhotoCategory(cat)} className={`py-2 rounded-lg text-xs ${photoCategory === cat ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
-                      {cat === 'before' ? '📷 Antes' : cat === 'after' ? '✅ Después' : cat === 'diagnostic' ? '🔍 Diagnóstico' : cat === 'equipment' ? '⚙️ Equipo' : cat === 'area' ? '📐 Área' : '📎 Otro'}
-                    </button>
-                  ))}
-                </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(['before', 'after', 'diagnostic', 'equipment', 'area', 'other'] as const).map(cat => (
+                  <button key={cat} onClick={() => setPhotoCategory(cat)} className={`py-2 rounded-lg text-xs ${photoCategory === cat ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
+                    {cat === 'before' ? '📷 Antes' : cat === 'after' ? '✅ Después' : cat === 'diagnostic' ? '🔍 Diag.' : cat === 'equipment' ? '⚙️ Equipo' : cat === 'area' ? '📐 Área' : '📎 Otro'}
+                  </button>
+                ))}
               </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Descripción</label>
-                <input value={photoDesc} onChange={e => setPhotoDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Ej: Compresor antes de reparación" />
-              </div>
+              <input value={photoDesc} onChange={e => setPhotoDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Descripción" />
               <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs text-gray-400 mb-1 block">Equipo (opcional)</label>
-                  <input value={photoEquipment} onChange={e => setPhotoEquipment(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Compresor, Filtro, etc." />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400 mb-1 block">Ubicación (opcional)</label>
-                  <input value={photoLocation} onChange={e => setPhotoLocation(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Techo, Cuarto frío, etc." />
-                </div>
+                <input value={photoEquipment} onChange={e => setPhotoEquipment(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Equipo (opcional)" />
+                <input value={photoLocation} onChange={e => setPhotoLocation(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Ubicación (opcional)" />
               </div>
               <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
               <div className="flex gap-2">
                 <button onClick={() => setShowPhotoUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
-                <button onClick={() => photoInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📷 Tomar/Seleccionar</button>
+                <button onClick={() => photoInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📷 Seleccionar</button>
               </div>
             </div>
           </>
         )}
 
-        {/* Document Upload Modal */}
+        {/* Doc Upload Modal */}
         {showDocUpload && (
           <>
             <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowDocUpload(false)} />
             <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-4 max-h-[80vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-200">📄 Añadir Documento</h3>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Tipo</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['contract', 'permit', 'warranty', 'manual', 'receipt', 'agreement', 'other'] as const).map(t => (
-                    <button key={t} onClick={() => setDocType(t)} className={`py-2 rounded-lg text-xs ${docType === t ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
-                      {t === 'contract' ? 'Contrato' : t === 'permit' ? 'Permiso' : t === 'warranty' ? 'Garantía' : t === 'manual' ? 'Manual' : t === 'receipt' ? 'Recibo' : t === 'agreement' ? 'Acuerdo' : 'Otro'}
-                    </button>
-                  ))}
-                </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(['contract', 'permit', 'warranty', 'manual', 'receipt', 'agreement', 'other'] as const).map(t => (
+                  <button key={t} onClick={() => setDocType(t)} className={`py-2 rounded-lg text-xs ${docType === t ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}>
+                    {t === 'contract' ? 'Contrato' : t === 'permit' ? 'Permiso' : t === 'warranty' ? 'Garantía' : t === 'manual' ? 'Manual' : t === 'receipt' ? 'Recibo' : t === 'agreement' ? 'Acuerdo' : 'Otro'}
+                  </button>
+                ))}
               </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Nombre del documento</label>
-                <input value={docName} onChange={e => setDocName(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Contrato mantenimiento 2025" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Descripción (opcional)</label>
-                <input value={docDesc} onChange={e => setDocDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Notas adicionales..." />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Fecha de vencimiento (opcional)</label>
-                <input type="date" value={docExpiration} onChange={e => setDocExpiration(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" />
-              </div>
+              <input value={docName} onChange={e => setDocName(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Nombre del documento" />
+              <input value={docDesc} onChange={e => setDocDesc(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Descripción (opcional)" />
+              <input type="date" value={docExpiration} onChange={e => setDocExpiration(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-300" />
               <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt" onChange={handleDocUpload} className="hidden" />
               <div className="flex gap-2">
                 <button onClick={() => setShowDocUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
-                <button onClick={() => docInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📄 Seleccionar Archivo</button>
+                <button onClick={() => docInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📄 Seleccionar</button>
               </div>
             </div>
           </>
         )}
 
-        <ConfirmDialog
-          show={confirmAction.show}
-          title={confirmAction.title}
-          message={confirmAction.message}
-          confirmText="Confirmar"
-          confirmColor="red"
-          onConfirm={confirmAction.action}
-          onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })}
-        />
+        <ConfirmDialog show={confirmAction.show} title={confirmAction.title} message={confirmAction.message} confirmText="Confirmar" confirmColor="red" onConfirm={confirmAction.action} onCancel={() => setConfirmAction({ show: false, title: '', message: '', action: () => {} })} />
       </div>
     )
   }
