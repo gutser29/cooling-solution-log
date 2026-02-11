@@ -110,6 +110,51 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
     } catch { setClients([]); }
   };
 
+  // ====== FIND RECEIPT FROM EXPENSES (fallback if warranty has no photos) ======
+  const findReceiptFromExpenses = async (warranty: Warranty): Promise<string[]> => {
+    try {
+      const events = await db.events.toArray();
+      // Find expense events that match this warranty by vendor, cost, date, and client
+      const matched = events.filter(e => {
+        if (!e.receipt_photos || e.receipt_photos.length === 0) return false;
+        if (e.type !== 'expense') return false;
+        
+        // Match by vendor name
+        const vendorMatch = e.vendor && warranty.vendor && 
+          e.vendor.toLowerCase().includes(warranty.vendor.toLowerCase());
+        
+        // Match by client name
+        const clientMatch = e.client && warranty.client_name &&
+          (e.client.toLowerCase().includes(warranty.client_name.toLowerCase()) ||
+           warranty.client_name.toLowerCase().includes(e.client.toLowerCase()));
+        
+        // Match by amount (if warranty has cost)
+        const costMatch = !warranty.cost || (e.amount === warranty.cost);
+        
+        // Match by date (within 3 days of purchase)
+        const daysDiff = Math.abs(e.timestamp - warranty.purchase_date) / 86400000;
+        const dateMatch = daysDiff <= 3;
+        
+        // Need at least vendor+date OR client+vendor match
+        return (vendorMatch && dateMatch) || (vendorMatch && clientMatch) || (clientMatch && costMatch && dateMatch);
+      });
+      
+      // Collect all receipt photos from matched expenses
+      const photos: string[] = [];
+      matched.forEach(e => {
+        if (e.receipt_photos) {
+          photos.push(...e.receipt_photos);
+        }
+      });
+      return photos;
+    } catch {
+      return [];
+    }
+  };
+
+  // State for fetched expense receipts
+  const [expenseReceipts, setExpenseReceipts] = useState<string[]>([]);
+
   const resetForm = () => {
     setFormEquipType(''); setFormEquipCustom(''); setFormBrand(''); setFormModel('');
     setFormSerial(''); setFormVendor(''); setFormVendorCustom(''); setFormVendorPhone('');
@@ -145,6 +190,19 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
     setFormClaimNotes('');
     setSelected(w);
     setViewMode('claim');
+  };
+
+  // When selecting a warranty for detail, also look for expense receipts
+  const openDetail = async (w: Warranty) => {
+    setSelected(w);
+    setViewMode('detail');
+    // If warranty has no photos, try to find from expenses
+    if (!w.receipt_photos || w.receipt_photos.length === 0) {
+      const found = await findReceiptFromExpenses(w);
+      setExpenseReceipts(found);
+    } else {
+      setExpenseReceipts([]);
+    }
   };
 
   const handleSave = async () => {
@@ -401,7 +459,7 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
                   return (
                     <button
                       key={w.id}
-                      onClick={() => { setSelected(w); setViewMode('detail'); }}
+                      onClick={() => openDetail(w)}
                       className="w-full text-left bg-[#111a2e] rounded-xl p-4 border border-white/5 hover:bg-[#1a2332] transition-colors"
                     >
                       <div className="flex justify-between items-start">
@@ -416,7 +474,7 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
                         </div>
                         <div className="text-right ml-2 flex-shrink-0">
                           {w.cost && <p className="text-sm font-medium text-gray-300">{formatCurrency(w.cost)}</p>}
-                          {w.receipt_photos && w.receipt_photos.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">📷 {w.receipt_photos.length}</p>}
+                          {w.receipt_photos && w.receipt_photos.length > 0 && <p className="text-[10px] text-green-400 mt-0.5">🧾 Recibo</p>}
                           <span className="text-gray-600 text-lg">›</span>
                         </div>
                       </div>
@@ -432,6 +490,13 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
         {viewMode === 'detail' && selected && (() => {
           const status = getStatusInfo(selected);
           const daysLeft = getDaysLeft(selected);
+          // Combine warranty photos + expense receipts
+          const allReceiptPhotos = [
+            ...(selected.receipt_photos || []),
+            ...expenseReceipts
+          ];
+          const hasReceipt = allReceiptPhotos.length > 0;
+          
           return (
             <div className="space-y-4">
               {/* Status banner */}
@@ -452,6 +517,46 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
                   )}
                 </div>
               </div>
+
+              {/* ====== RECEIPT BUTTON — BIG & PROMINENT ====== */}
+              {hasReceipt ? (
+                <button
+                  onClick={() => setPhotoViewer({ show: true, photos: allReceiptPhotos, index: 0 })}
+                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl p-4 shadow-lg shadow-green-900/30 active:scale-[0.98] transition-transform"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-3xl">🧾</span>
+                      <div className="text-left">
+                        <p className="text-lg font-bold">Ver Recibo</p>
+                        <p className="text-xs text-green-200 opacity-80">{allReceiptPhotos.length} foto{allReceiptPhotos.length > 1 ? 's' : ''} • Toca para ver a pantalla completa</p>
+                      </div>
+                    </div>
+                    <span className="text-2xl">👆</span>
+                  </div>
+                  {/* Mini preview */}
+                  <div className="flex gap-2 mt-3">
+                    {allReceiptPhotos.slice(0, 3).map((p, i) => (
+                      <img key={i} src={p} alt="" className="w-16 h-16 object-cover rounded-lg border-2 border-white/30" />
+                    ))}
+                    {allReceiptPhotos.length > 3 && (
+                      <div className="w-16 h-16 bg-black/30 rounded-lg flex items-center justify-center text-sm font-bold">
+                        +{allReceiptPhotos.length - 3}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ) : (
+                <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">⚠️</span>
+                    <div>
+                      <p className="text-sm text-yellow-400 font-medium">Sin recibo adjunto</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Edita la garantía para añadir foto del recibo</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Equipment info */}
               <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
@@ -498,24 +603,6 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
                 <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
                   <h3 className="text-sm font-semibold text-gray-300 mb-2">📝 Notas</h3>
                   <p className="text-sm text-gray-400 whitespace-pre-wrap">{selected.notes}</p>
-                </div>
-              )}
-
-              {/* Photos */}
-              {selected.receipt_photos && selected.receipt_photos.length > 0 && (
-                <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-                  <h3 className="text-sm font-semibold text-gray-300 mb-3">📷 Recibos / Fotos ({selected.receipt_photos.length})</h3>
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {selected.receipt_photos.map((p, i) => (
-                      <img
-                        key={i}
-                        src={p}
-                        alt=""
-                        onClick={() => setPhotoViewer({ show: true, photos: selected.receipt_photos!, index: i })}
-                        className="w-24 h-24 object-cover rounded-lg border border-white/10 cursor-pointer flex-shrink-0 hover:opacity-80"
-                      />
-                    ))}
-                  </div>
                 </div>
               )}
 
@@ -723,6 +810,26 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
               {selected.vendor_phone && <p className="text-xs mt-2">📞 Vendor: <a href={`tel:${selected.vendor_phone}`} className="text-blue-400">{selected.vendor_phone}</a></p>}
             </div>
 
+            {/* Show receipt in claim view too */}
+            {(() => {
+              const claimPhotos = [...(selected.receipt_photos || []), ...expenseReceipts];
+              if (claimPhotos.length === 0) return null;
+              return (
+                <button
+                  onClick={() => setPhotoViewer({ show: true, photos: claimPhotos, index: 0 })}
+                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl p-3 shadow-lg active:scale-[0.98] transition-transform"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">🧾</span>
+                    <div className="text-left">
+                      <p className="font-bold">Ver Recibo para Reclamación</p>
+                      <p className="text-xs text-green-200 opacity-80">Muéstralo al vendor</p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })()}
+
             <div>
               <p className="text-xs text-gray-400 mb-1.5">Notas de reclamación</p>
               <textarea value={formClaimNotes} onChange={e => setFormClaimNotes(e.target.value)}
@@ -740,20 +847,71 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
         )}
       </div>
 
-      {/* Photo Viewer Modal */}
+      {/* ====== FULL-SCREEN PHOTO VIEWER (for showing receipt at store) ====== */}
       {photoViewer.show && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center" onClick={() => setPhotoViewer({ show: false, photos: [], index: 0 })}>
-          <button className="absolute top-4 right-4 text-white text-2xl z-10">✕</button>
-          <img src={photoViewer.photos[photoViewer.index]} alt="" className="max-w-[95vw] max-h-[85vh] object-contain" onClick={e => e.stopPropagation()} />
+        <div className="fixed inset-0 bg-black z-50 flex flex-col">
+          {/* Top bar */}
+          <div className="flex justify-between items-center p-4 bg-black/80">
+            <div className="text-white">
+              <p className="text-sm font-medium">🧾 Recibo de Garantía</p>
+              <p className="text-xs text-gray-400">
+                {selected?.equipment_type} — {selected?.brand} • {selected?.vendor}
+              </p>
+            </div>
+            <button 
+              onClick={() => setPhotoViewer({ show: false, photos: [], index: 0 })}
+              className="text-white bg-white/20 rounded-full w-10 h-10 flex items-center justify-center text-xl"
+            >
+              ✕
+            </button>
+          </div>
+          
+          {/* Photo — full screen, pinch to zoom */}
+          <div className="flex-1 flex items-center justify-center overflow-auto bg-black p-2">
+            <img 
+              src={photoViewer.photos[photoViewer.index]} 
+              alt="Recibo" 
+              className="max-w-full max-h-full object-contain"
+              style={{ touchAction: 'pinch-zoom' }}
+            />
+          </div>
+          
+          {/* Bottom navigation */}
           {photoViewer.photos.length > 1 && (
-            <div className="flex gap-4 mt-4">
-              <button onClick={e => { e.stopPropagation(); setPhotoViewer(prev => ({ ...prev, index: Math.max(0, prev.index - 1) })); }}
-                className="text-white text-2xl px-4">‹</button>
-              <span className="text-gray-400 text-sm">{photoViewer.index + 1} / {photoViewer.photos.length}</span>
-              <button onClick={e => { e.stopPropagation(); setPhotoViewer(prev => ({ ...prev, index: Math.min(prev.photos.length - 1, prev.index + 1) })); }}
-                className="text-white text-2xl px-4">›</button>
+            <div className="flex items-center justify-center gap-6 p-4 bg-black/80">
+              <button 
+                onClick={() => setPhotoViewer(prev => ({ ...prev, index: Math.max(0, prev.index - 1) }))}
+                disabled={photoViewer.index === 0}
+                className="text-white text-3xl px-4 disabled:opacity-30"
+              >
+                ‹
+              </button>
+              <span className="text-gray-400 text-sm font-medium">
+                {photoViewer.index + 1} / {photoViewer.photos.length}
+              </span>
+              <button 
+                onClick={() => setPhotoViewer(prev => ({ ...prev, index: Math.min(prev.photos.length - 1, prev.index + 1) }))}
+                disabled={photoViewer.index === photoViewer.photos.length - 1}
+                className="text-white text-3xl px-4 disabled:opacity-30"
+              >
+                ›
+              </button>
             </div>
           )}
+          
+          {/* Warranty info bar at bottom */}
+          <div className="bg-[#111a2e] p-3 border-t border-white/10">
+            <div className="flex justify-between items-center text-xs">
+              <div>
+                <p className="text-gray-400">Cliente: <span className="text-gray-200">{selected?.client_name}</span></p>
+                <p className="text-gray-400">Compra: <span className="text-gray-200">{selected ? formatDate(selected.purchase_date) : ''}</span></p>
+              </div>
+              <div className="text-right">
+                {selected?.cost && <p className="text-gray-200 font-medium">{formatCurrency(selected.cost)}</p>}
+                <p className="text-gray-400">Vence: <span className="text-gray-200">{selected ? formatDate(selected.expiration_date) : ''}</span></p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

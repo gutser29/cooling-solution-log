@@ -100,13 +100,45 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     setDetailTab('resumen')
 
     const clientName = `${client.first_name} ${client.last_name}`.trim().toLowerCase()
-    
-    // Flexible name matching - handles "Farmacia Caridad" vs "Farmacia Caridad #40"
+
+    // Smart name matching — strict for numbered clients (#40, #32, etc.)
     const nameMatches = (val: string | undefined) => {
       if (!val) return false
       const v = val.trim().toLowerCase()
-      return v.includes(clientName) || clientName.includes(v) || 
-        (clientName.split(/\s+/).filter(p => p.length > 2).filter(p => v.includes(p)).length >= 2)
+
+      // 1. Exact match
+      if (v === clientName) return true
+
+      // 2. Check if client has a number identifier (#40, #32, etc.)
+      const clientNumMatch = clientName.match(/#\s*(\d+)/)
+      const valNumMatch = v.match(/#\s*(\d+)/)
+
+      if (clientNumMatch) {
+        // Client HAS a number — require the number to match
+        if (valNumMatch) {
+          // Both have numbers — must be same number AND same base name
+          const clientBase = clientName.replace(/#\s*\d+/, '').trim()
+          const valBase = v.replace(/#\s*\d+/, '').trim()
+          return clientNumMatch[1] === valNumMatch[1] &&
+            (valBase.includes(clientBase) || clientBase.includes(valBase))
+        } else {
+          // Value has NO number — don't match
+          // "Farmacia Caridad" should NOT match "Farmacia Caridad #40"
+          return false
+        }
+      }
+
+      // 3. Client has NO number — use flexible matching
+      if (v.includes(clientName) || clientName.includes(v)) return true
+
+      // 4. Partial match for non-numbered clients (at least 2 significant words)
+      const nameParts = clientName.split(/\s+/).filter(p => p.length > 2)
+      if (nameParts.length >= 2) {
+        const matchCount = nameParts.filter(p => v.includes(p)).length
+        if (matchCount >= Math.min(nameParts.length, 2)) return true
+      }
+
+      return false
     }
 
     // Jobs
@@ -114,12 +146,10 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     setClientJobs(jobs.sort((a, b) => b.date - a.date))
 
     // Events (all related)
-
     const events = await db.events.toArray()
- const related = events.filter(e =>
+    const related = events.filter(e =>
       e.client_id === client.id || nameMatches(e.client)
     ).sort((a, b) => b.timestamp - a.timestamp)
-
     setClientEvents(related)
 
     // Expenses FOR this client (materials, etc)
@@ -149,7 +179,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     // Warranties
     try {
       const warranties = await db.table('warranties').toArray()
-    setClientWarranties(warranties.filter((w: any) =>
+      setClientWarranties(warranties.filter((w: any) =>
         w.client_id === client.id || nameMatches(w.client_name)
       ).sort((a: any, b: any) => b.purchase_date - a.purchase_date))
     } catch { setClientWarranties([]) }
@@ -157,7 +187,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     // Quick Quotes
     try {
       const quotes = await db.table('quick_quotes').toArray()
-     setClientQuotes(quotes.filter((q: any) =>
+      setClientQuotes(quotes.filter((q: any) =>
         q.client_id === client.id || nameMatches(q.client_name)
       ).sort((a: any, b: any) => b.created_at - a.created_at))
     } catch { setClientQuotes([]) }
