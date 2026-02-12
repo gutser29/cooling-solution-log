@@ -15,6 +15,7 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   photos?: string[]
+  timestamp?: number
 }
 
 interface ChatCaptureProps {
@@ -166,9 +167,15 @@ function cleanCommandsFromText(text: string): string {
 }
 
 export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: '¡Hola! ¿Qué quieres registrar? Escribe, dicta 🎤 o envía fotos 📷' }
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('cs_chat_messages')
+        if (saved) return JSON.parse(saved)
+      } catch {}
+    }
+    return [{ role: 'assistant', content: '¡Hola! ¿Qué quieres registrar? Escribe, dicta 🎤 o envía fotos 📷' }]
+  })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
@@ -190,6 +197,10 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   // ====== Ref para fotos de recibos pendientes ======
   const receiptPhotosRef = useRef<string[]>([])
   const [aiModel, setAiModel] = useState<'auto' | 'gpt' | 'claude'>('auto')
+  const [showQuickActions, setShowQuickActions] = useState(true)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [todayStats, setTodayStats] = useState({ gastos: 0, ingresos: 0, count: 0 })
+  const chatContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { driveConnectedRef.current = driveConnected }, [driveConnected])
 
@@ -527,6 +538,76 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
+  // ============ PERSIST CHAT MESSAGES ============
+  useEffect(() => {
+    try {
+      // Strip photo data to avoid localStorage size limits
+      const toSave = messages.map(m => ({ role: m.role, content: m.content, timestamp: m.timestamp }))
+      localStorage.setItem('cs_chat_messages', JSON.stringify(toSave))
+    } catch {}
+  }, [messages])
+
+  // ============ TODAY'S STATS ============
+  useEffect(() => {
+    const loadTodayStats = async () => {
+      try {
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+        const todayStart = today.getTime()
+        const events = await db.events.where('timestamp').above(todayStart).toArray()
+        const gastos = events.filter(e => e.type === 'expense').reduce((s, e) => s + (e.amount || 0), 0)
+        const ingresos = events.filter(e => e.type === 'income').reduce((s, e) => s + (e.amount || 0), 0)
+        setTodayStats({ gastos, ingresos, count: events.length })
+      } catch {}
+    }
+    loadTodayStats()
+    // Refresh stats when messages change (might have saved new events)
+    if (messages.length > 1) loadTodayStats()
+  }, [messages])
+
+  // ============ SCROLL DETECTION ============
+  useEffect(() => {
+    const container = chatContainerRef.current
+    if (!container) return
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container
+      setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 200)
+    }
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // ============ CLEAR CHAT ============
+  const clearChat = () => {
+    setMessages([{ role: 'assistant', content: '¡Hola! ¿Qué quieres registrar? Escribe, dicta 🎤 o envía fotos 📷', timestamp: Date.now() }])
+    localStorage.removeItem('cs_chat_messages')
+    contextLoadedRef.current = false
+  }
+
+  // ============ QUICK ACTIONS ============
+  const quickActions = [
+    { emoji: '💵', label: 'Gasto', prompt: 'Registrar gasto: ' },
+    { emoji: '📸', label: 'Recibo', action: () => fileInputRef.current?.click() },
+    { emoji: '👤', label: 'Cliente', prompt: 'Registrar nuevo cliente: ' },
+    { emoji: '📋', label: 'Cotización', prompt: 'Crear cotización para ' },
+    { emoji: '📅', label: 'Cita', prompt: 'Agendar cita para ' },
+    { emoji: '🔧', label: 'Trabajo', prompt: 'Registrar trabajo: ' },
+  ]
+
+  const handleQuickAction = (action: typeof quickActions[0]) => {
+    if (action.action) {
+      action.action()
+    } else if (action.prompt) {
+      setInput(action.prompt)
+      setShowQuickActions(false)
+      textareaRef.current?.focus()
+    }
+  }
+
   // ============ FOTOS ============
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
@@ -553,10 +634,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       receiptPhotosRef.current = userPhotos
     }
 
-    setMessages(prev => [...prev, { role: 'user', content: userContent, photos: userPhotos.length ? userPhotos : undefined }])
+    setMessages(prev => [...prev, { role: 'user', content: userContent, photos: userPhotos.length ? userPhotos : undefined, timestamp: Date.now() }])
     setInput('')
     setPendingPhotos([])
     setLoading(true)
+    setShowQuickActions(false)
 
     try {
       // Build context message
@@ -1133,6 +1215,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           >
             {aiModel === 'auto' ? '⚡ Auto' : aiModel === 'gpt' ? '🟢 GPT' : '🟠 Claude'}
           </button>
+          <button
+            onClick={clearChat}
+            className="text-xs px-2 py-1 rounded-lg font-medium bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
+            title="Nuevo Chat"
+          >
+            🗑️ Nuevo
+          </button>
           <button onClick={() => setShowMenu(!showMenu)} className="text-3xl w-10 h-10 flex items-center justify-center">☰</button>
         </div>
       </div>
@@ -1220,8 +1309,18 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         </>
       )}
 
+      {/* TODAY'S STATS BAR */}
+      {todayStats.count > 0 && (
+        <div className="bg-[#111a2e] border-b border-white/10 px-4 py-2 flex items-center justify-center gap-4 text-xs flex-shrink-0">
+          <span className="text-gray-400">📅 Hoy:</span>
+          {todayStats.gastos > 0 && <span className="text-red-400">↓ ${todayStats.gastos.toFixed(2)}</span>}
+          {todayStats.ingresos > 0 && <span className="text-green-400">↑ ${todayStats.ingresos.toFixed(2)}</span>}
+          <span className="text-gray-500">{todayStats.count} registro{todayStats.count > 1 ? 's' : ''}</span>
+        </div>
+      )}
+
       {/* MENSAJES */}
-      <div className="flex-1 overflow-y-auto p-4 pb-44">
+      <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 pb-44">
         <div className="max-w-2xl mx-auto space-y-3">
           {messages.map((msg, idx) => (
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -1238,6 +1337,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
                   </div>
                 ) : null}
                 <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                {msg.timestamp && (
+                  <div className={`text-[10px] mt-1 ${msg.role === 'user' ? 'text-blue-200/60' : 'text-gray-500'}`}>
+                    {new Date(msg.timestamp).toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -1256,8 +1360,33 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         </div>
       </div>
 
+      {/* SCROLL TO BOTTOM BUTTON */}
+      {showScrollBtn && (
+        <button
+          onClick={scrollToBottom}
+          className="fixed bottom-48 right-4 z-20 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-10 h-10 flex items-center justify-center shadow-lg shadow-blue-600/30 transition-all"
+        >
+          ↓
+        </button>
+      )}
+
       {/* INPUT AREA */}
       <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] border-t border-white/10 z-20">
+        {/* QUICK ACTIONS */}
+        {showQuickActions && !loading && messages.length <= 3 && (
+          <div className="flex gap-2 px-3 py-2 overflow-x-auto border-b border-white/5">
+            {quickActions.map((qa, i) => (
+              <button
+                key={i}
+                onClick={() => handleQuickAction(qa)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a2332] hover:bg-[#222d3e] rounded-full text-xs text-gray-300 whitespace-nowrap transition-colors border border-white/5"
+              >
+                <span>{qa.emoji}</span>
+                <span>{qa.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {pendingPhotos.length > 0 && (
           <div className="flex gap-2 p-3 bg-[#1a2332] border-b border-white/10 overflow-x-auto">
             {pendingPhotos.map((p, i) => (
