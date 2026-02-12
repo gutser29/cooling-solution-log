@@ -784,7 +784,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
               vehicle_id: evData.vehicle_id,
               note: evData.note,
               expense_type: evData.expense_type || 'business',
-              receipt_photos: i === 0 && receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
+              receipt_photos: receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
             })
             savedItems.push(`${evData.type === 'income' ? 'Ingreso' : 'Gasto'}: $${evData.amount} ${evData.category || ''}${evData.client ? ` (${evData.client})` : ''}`)
             needsSync = true
