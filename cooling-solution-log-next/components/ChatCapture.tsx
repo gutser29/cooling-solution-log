@@ -426,8 +426,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }).join('\n')
         }
 
-        // Clientes
-        const clients = await db.clients.where('active').equals(1).toArray()
+        // ====== FIX: Clientes — handle both boolean true and number 1 for active ======
+        const clients = await db.clients.toArray().then(all => all.filter(c => c.active === true || (c.active as any) === 1))
         if (clients.length > 0) {
           ctx += '\n\nCLIENTES:\n' + clients.map(c => 
             `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}${c.address ? ' | 📍 ' + c.address : ''}${c.notes ? ' | ' + c.notes : ''}`
@@ -479,8 +479,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           ).join('\n')
         }
 
-        // Templates
-        const templates = await db.job_templates.where('active').equals(1).toArray()
+        // ====== FIX: Templates — handle both boolean true and number 1 for active ======
+        const templates = await db.job_templates.toArray().then(all => all.filter(t => t.active === true || (t.active as any) === 1))
         if (templates.length > 0) {
           ctx += '\n\nTEMPLATES DISPONIBLES:\n' + templates.map(t => {
             const itemsStr = t.items.map(i => `${i.description}(${i.quantity}x$${i.unit_price})`).join(', ')
@@ -797,6 +797,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           })
           savedItems.push(`Cliente: ${clientData.first_name} ${clientData.last_name}`)
           needsSync = true
+          // ====== FIX: Reload context after adding client so AI can see them immediately ======
+          contextLoadedRef.current = false
         } catch (e) {
           console.error('SAVE_CLIENT error:', e)
         }
@@ -1172,6 +1174,9 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('bitacora') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               📒 Bitácora
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('reports') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              📊 Reportes
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('warranties') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               🛡️ Garantías
