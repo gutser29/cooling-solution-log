@@ -20,6 +20,7 @@ interface Stats {
   upcomingAppts: { title: string; date: number; clientName?: string; location?: string }[]
   activeReminders: { text: string; dueDate: number; priority: string; overdue: boolean }[]
   contractAlerts: { clientName: string; service: string; daysUntil: number }[]
+  warrantyAlerts: { type: string; brand: string; client: string; days: number }[]
   pendingInvoices: { number: string; client: string; total: number; days: number }[]
   pendingInvoicesTotal: number
 }
@@ -100,15 +101,15 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       } catch {}
 
       // Warranty alerts
-let warrantyAlerts: { type: string; brand: string; client: string; days: number }[] = []
-try {
-  const allWarranties = await db.table('warranties').toArray()
-  const THIRTY = 30 * 86400000
-  warrantyAlerts = allWarranties
-    .filter((w: any) => w.status === 'active' && w.expiration_date - now <= THIRTY && w.expiration_date > now)
-    .map((w: any) => ({ type: w.equipment_type, brand: w.brand, client: w.client_name, days: Math.ceil((w.expiration_date - now) / 86400000) }))
-    .sort((a, b) => a.days - b.days)
-} catch {}
+      let warrantyAlerts: Stats['warrantyAlerts'] = []
+      try {
+        const allWarranties = await db.table('warranties').toArray()
+        const THIRTY = 30 * 86400000
+        warrantyAlerts = allWarranties
+          .filter((w: any) => w.status === 'active' && w.expiration_date - now <= THIRTY && w.expiration_date > now)
+          .map((w: any) => ({ type: w.equipment_type, brand: w.brand, client: w.client_name, days: Math.ceil((w.expiration_date - now) / 86400000) }))
+          .sort((a, b) => a.days - b.days)
+      } catch {}
 
       // Pending invoices
       let pendingInvoices: Stats['pendingInvoices'] = []
@@ -124,7 +125,7 @@ try {
       setStats({
         monthIncome: totalMonthIncome, monthExpenses, monthProfit: totalMonthIncome - monthExpenses,
         todayExpenses, todayIncome, pendingAR: totalAR, pendingClients, recentEvents, topCategories,
-        upcomingAppts, activeReminders, contractAlerts, pendingInvoices, pendingInvoicesTotal
+        upcomingAppts, activeReminders, contractAlerts, warrantyAlerts, pendingInvoices, pendingInvoicesTotal
       })
     } catch (e) { console.error('Dashboard error:', e) }
     finally { setLoading(false) }
@@ -191,31 +192,17 @@ try {
         </div>
 
         {/* Warranty Alerts */}
-        {(() => {
-          const [warrantyAlerts, setWarrantyAlerts] = useState<{type: string; brand: string; client: string; days: number}[]>([]);
-          useEffect(() => {
-            db.table('warranties').toArray().then(all => {
-              const now = Date.now();
-              const THIRTY = 30 * 86400000;
-              const alerts = all.filter((w: any) => w.status === 'active' && w.expiration_date - now <= THIRTY && w.expiration_date > now)
-                .map((w: any) => ({ type: w.equipment_type, brand: w.brand, client: w.client_name, days: Math.ceil((w.expiration_date - now) / 86400000) }))
-                .sort((a: any, b: any) => a.days - b.days);
-              setWarrantyAlerts(alerts);
-            }).catch(() => {});
-          }, []);
-          if (warrantyAlerts.length === 0) return null;
-          return (
-            <div className="bg-orange-900/20 rounded-xl p-4 border border-orange-700/30" onClick={() => onNavigate('warranties')}>
-              <p className="text-sm font-semibold text-orange-400 mb-2">🛡️ Garantías por Vencer</p>
-              {warrantyAlerts.map((a, i) => (
-                <div key={i} className="flex justify-between items-center text-sm py-1">
-                  <span className="text-gray-300">{a.type} ({a.brand}) — {a.client}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded ${a.days <= 7 ? 'bg-red-900/50 text-red-400' : 'bg-orange-900/50 text-orange-400'}`}>{a.days}d</span>
-                </div>
-              ))}
-            </div>
-          );
-        })()}
+        {stats.warrantyAlerts.length > 0 && (
+          <div className="bg-orange-900/20 rounded-xl p-4 border border-orange-700/30" onClick={() => onNavigate('warranties')}>
+            <p className="text-sm font-semibold text-orange-400 mb-2">🛡️ Garantías por Vencer</p>
+            {stats.warrantyAlerts.map((a, i) => (
+              <div key={i} className="flex justify-between items-center text-sm py-1">
+                <span className="text-gray-300">{a.type} ({a.brand}) — {a.client}</span>
+                <span className={`text-xs px-2 py-0.5 rounded ${a.days <= 7 ? 'bg-red-900/50 text-red-400' : 'bg-orange-900/50 text-orange-400'}`}>{a.days}d</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Contract Alerts */}
         {stats.contractAlerts.length > 0 && (
