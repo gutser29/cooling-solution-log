@@ -283,15 +283,18 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const appointments = await db.appointments.toArray()
       const reminders = await db.reminders.toArray()
       const invoices = await db.invoices.toArray()
-      const job_templates = await db.job_templates.toArray()
+  const job_templates = await db.job_templates.toArray()
       const client_photos = await db.client_photos.toArray()
+      const client_documents = await db.client_documents.toArray()
+      const client_locations = await db.client_locations.toArray()
+      const bitacora = await db.bitacora.toArray()
+      const warranties = await db.warranties.toArray()
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_photos })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_photos, client_documents, client_locations, bitacora, warranties })
       })
-
       if (res.ok) {
         await db.sync_queue.clear()
         const time = new Date().toLocaleTimeString('es-PR', { hour: '2-digit', minute: '2-digit' })
@@ -347,9 +350,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       await mergeArray(db.notes, data.notes)
       await mergeArray(db.appointments, data.appointments)
       await mergeArray(db.reminders, data.reminders)
-      await mergeArray(db.invoices, data.invoices)
+    await mergeArray(db.invoices, data.invoices)
       await mergeArray(db.job_templates, data.job_templates)
       await mergeArray(db.client_photos, data.client_photos)
+      await mergeArray(db.employees, data.employees)
+      await mergeArray(db.vehicles, data.vehicles)
+      await mergeArray(db.contracts, data.contracts)
+      await mergeArray(db.client_documents, data.client_documents)
+      await mergeArray(db.client_locations, data.client_locations)
+      await mergeArray(db.bitacora, data.bitacora)
+      await mergeArray(db.warranties, data.warranties)
 
       alert('✅ Datos restaurados')
       contextLoadedRef.current = false
