@@ -118,7 +118,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
 
   // === LOGO ===
   try {
-    doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', 120, 16, 74, 31)
+  doc.addImage(LOGO_BASE64, 'PNG', 120, 16, 74, 31)
   } catch { }
 
   // === INVOICE META ===
@@ -573,7 +573,7 @@ export function generatePhotoReport(
 
   const addHeader = (_pageNum: number) => {
     try {
-      doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17)
+   doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17)
     } catch { }
     doc.setFontSize(14); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
     doc.text(COMPANY_NAME, marginL, 18); doc.setFont('helvetica', 'normal')
@@ -673,7 +673,7 @@ export function generateClientListPDF(clients: Client[]) {
   doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 36)
   doc.text(`Total: ${clients.length} clientes`, marginL, 42)
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+ try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   if (clients.length === 0) {
     doc.setFontSize(12); doc.text('No hay clientes registrados', marginL, 60)
@@ -721,7 +721,7 @@ export function generateDocumentListPDF(docs: ClientDocument[], clientName: stri
   doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 36)
   doc.text(`Total: ${docs.length} documento(s)`, marginL, 42)
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   const docTypeLabels: Record<string, string> = {
     contract: 'Contrato', permit: 'Permiso', warranty: 'Garantía', manual: 'Manual',
@@ -768,7 +768,7 @@ export function generatePayrollReport(
   const marginL = 20
   const marginR = 20
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text(`Reporte de Nómina - ${periodLabel}`, marginL, 28)
@@ -856,7 +856,7 @@ export function generateExpenseReceiptsReport(
   const marginL = 15
   const marginR = 15
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(16); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(12); doc.setTextColor(40, 40, 40); doc.text(`Gastos con Recibos - ${periodLabel}`, marginL, 27)
@@ -962,7 +962,7 @@ export function generateAccountantReport(
   const pageH = doc.internal.pageSize.getHeight()
   const marginL = 20, marginR = 20
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Reporte para Contable - ${periodLabel}`, marginL, 27)
@@ -1068,7 +1068,7 @@ export function generateDelinquentReport(invoices: Invoice[]) {
   const pageH = doc.internal.pageSize.getHeight()
   const marginL = 20, marginR = 20
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text('Reporte de Clientes Morosos', marginL, 28)
@@ -1149,7 +1149,7 @@ export function generateClientProfitabilityReport(
   const pageH = doc.internal.pageSize.getHeight()
   const marginL = 20, marginR = 20
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Rentabilidad por Cliente - ${periodLabel}`, marginL, 27)
@@ -1194,7 +1194,7 @@ export function generateContractsReport(
   const pageH = doc.internal.pageSize.getHeight()
   const marginL = 20, marginR = 20
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(14); doc.setTextColor(40, 40, 40); doc.text('Reporte de Contratos Recurrentes', marginL, 28)
@@ -1305,7 +1305,7 @@ export function generateProductivityReport(
   const totalJobExpense = jobExpenses.reduce((s, e) => s + e.amount, 0)
   const jobProfit = totalJobRevenue - totalJobExpense
 
-  try { doc.addImage('data:image/png;base64,' + LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
   doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Productividad & Trabajos - ${periodLabel}`, marginL, 27)
