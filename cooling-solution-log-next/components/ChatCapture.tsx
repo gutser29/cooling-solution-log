@@ -273,8 +273,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     syncingRef.current = true
     setSyncing(true)
     try {
-      // === DATA SYNC (sin fotos — pasan directo a Drive por separado) ===
-      const events = await db.events.toArray()
+ // === DATA SYNC (sin fotos — pasan directo a Drive por separado) ===
+      const events = (await db.events.toArray()).map(e => ({ ...e, receipt_photos: undefined, photo: undefined }))
       const clients = await db.clients.toArray()
       const jobs = await db.jobs.toArray()
       const employees = await db.employees.toArray()
