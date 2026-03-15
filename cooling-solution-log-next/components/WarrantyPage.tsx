@@ -773,7 +773,7 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
             {/* Photos */}
             <div>
               <p className="text-xs text-gray-400 mb-1.5">📷 Fotos de recibo</p>
-              <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handlePhotoSelect} className="hidden" />
+              <input ref={fileInputRef} type="file" accept="image/*,.pdf,application/pdf" multiple onChange={handlePhotoSelect} className="hidden" />
               <div className="flex gap-2 flex-wrap">
                 {formPhotos.map((p, i) => (
                   <div key={i} className="relative">
