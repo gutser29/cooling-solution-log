@@ -47,6 +47,22 @@ export interface ScanFile {
   created_at: number
 }
 
+export interface ProductPrice {
+  id?: number
+  product_name: string      // nombre normalizado: "Filtro Poly AC"
+  aliases?: string[]         // otros nombres: ["poly", "rollo de filtros", "filter media"]
+  vendor: string             // "Refricentro", "Oldach", "Johnstone Supply"
+  unit_price: number         // precio por unidad
+  quantity: number           // cantidad comprada
+  unit?: string              // "rollo", "und", "caja", "pie"
+  total_price: number        // unit_price * quantity
+  client_for?: string        // para qué cliente se compró
+  category?: string          // "Materiales", "Herramientas", etc.
+  notes?: string
+  timestamp: number
+  created_at: number
+}
+
 export class CoolingDB extends Dexie {
   events!: Dexie.Table<EventRecord, number>
   clients!: Dexie.Table<Client, number>
@@ -67,6 +83,7 @@ export class CoolingDB extends Dexie {
   warranties!: Dexie.Table<Warranty, number>
   scanned_docs!: Dexie.Table<ScannedDoc, number>
   scan_files!: Dexie.Table<ScanFile, number>
+  product_prices!: Dexie.Table<ProductPrice, number>
 
   constructor() {
     super('CoolingSolutionDB')
@@ -274,6 +291,30 @@ export class CoolingDB extends Dexie {
       quick_quotes: null, // DELETE table
       scanned_docs: '++id,name,driveFileId,status,scannedAt,processedAt,created_at',
       scan_files: '++id,docId,created_at'
+    })
+
+    // Version 15 - Add product prices tracking
+    this.version(15).stores({
+      events: '++id,timestamp,type,status,subtype,category,amount,client,employee_id,job_id,vehicle_id,payment_method,expense_type',
+      clients: '++id,first_name,last_name,phone,type,active,created_at,updated_at',
+      employees: '++id,first_name,last_name,active,created_at',
+      jobs: '++id,client_id,date,status,payment_status,created_at,location_id',
+      vehicles: '++id,name,active,created_at',
+      contracts: '++id,client_id,status,next_service_due,created_at',
+      sync_queue: '++id,timestamp,status',
+      notes: '++id,timestamp,updated_at',
+      appointments: '++id,timestamp,date,client_id,status,created_at,location_id',
+      reminders: '++id,timestamp,due_date,completed,created_at',
+      invoices: '++id,invoice_number,type,client_name,status,issue_date,created_at',
+      job_templates: '++id,name,active,created_at',
+      client_photos: '++id,client_id,client_name,job_id,category,timestamp,created_at',
+      client_documents: '++id,client_id,client_name,job_id,invoice_id,doc_type,file_name,timestamp,created_at',
+      client_locations: '++id,client_id,name,city,is_primary,active,created_at',
+      bitacora: '++id,date,*tags,*clients_mentioned,*locations,created_at',
+      warranties: '++id,equipment_type,brand,vendor,client_name,client_id,status,purchase_date,expiration_date,created_at',
+      scanned_docs: '++id,name,driveFileId,status,scannedAt,processedAt,created_at',
+      scan_files: '++id,docId,created_at',
+      product_prices: '++id,product_name,vendor,unit_price,client_for,category,timestamp,created_at'
     })
   }
 }

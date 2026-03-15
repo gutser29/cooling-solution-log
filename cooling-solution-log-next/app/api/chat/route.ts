@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const hasPhotos = lastMsg.photos && lastMsg.photos.length > 0
 
     // ====== SOLO INTERCEPTAR REPORTES P&L Y AR ======
-    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') || 
+    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') ||
         (userText.includes('perdida') && userText.includes('ganancia')) ||
         (userText.includes('pérdida') && userText.includes('ganancia'))) {
       let period: 'week' | 'month' | 'year' = 'month'
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_PL', payload: { period, periodLabel } })
     }
 
-    if (userText.includes('quien me debe') || userText.includes('quién me debe') || 
+    if (userText.includes('quien me debe') || userText.includes('quién me debe') ||
         userText.includes('cuentas por cobrar') || userText.includes('me deben dinero')) {
       return NextResponse.json({ type: 'GENERATE_AR' })
     }
@@ -66,7 +66,7 @@ Si el usuario dice "Farmacia Caridad #40" y en CLIENTES existe "Farmacia Caridad
 ## CASO 2: MÚLTIPLES COINCIDENCIAS
 Si el usuario dice "Farmacia Caridad" pero en CLIENTES hay:
 - Farmacia Caridad #32
-- Farmacia Caridad #39  
+- Farmacia Caridad #39
 - Farmacia Caridad #40
 → PREGUNTA: "Veo varias Farmacias Caridad: #32, #39, y #40. ¿Cuál es?"
 
@@ -194,17 +194,10 @@ Cuando el usuario menciona que un equipo tiene garantía:
 El campo "cost" en SAVE_WARRANTY debe ser SOLO el costo del item con garantía, NO el total del recibo.
 Ejemplo: Recibo de $557.50 — compresor $425, varillas $50, refrigerante $82.50
 → Si SOLO el compresor tiene garantía: SAVE_WARRANTY con cost: 425 (NO 557.50)
-→ Si compresor Y refrigerante tienen garantía: crear DOS SAVE_WARRANTY separados
 
 ## Ejemplo correcto:
 Usuario: "El compresor tiene garantía de un año, es Copeland"
 SAVE_WARRANTY:{"equipment_type":"Compresor","brand":"Copeland","vendor":"Johnstone Supply","client_name":"Farmacia Caridad #40","purchase_date":"${todayISO}","warranty_months":12,"cost":425,"notes":"Compresor scroll - del recibo de $557.50"}
-
-## Ejemplo INCORRECTO (NO hagas esto):
-SAVE_WARRANTY:{..., "cost":557.50, ...}  ← ESTO ESTÁ MAL, 557.50 es el total del recibo, no el costo del compresor
-
-## Si el usuario dice "esto tiene garantía" sin especificar QUÉ item:
-→ PREGUNTA: "¿Cuál de los items tiene garantía? ¿El compresor ($425), las varillas ($50), o el refrigerante ($82.50)?"
 
 Campos requeridos para SAVE_WARRANTY: equipment_type, brand, vendor, client_name, warranty_months, cost
 Si falta alguno → PREGUNTA antes de guardar.
@@ -212,8 +205,64 @@ Si falta alguno → PREGUNTA antes de guardar.
 # ===========================================
 # REGLA #6 — COTIZACIONES RÁPIDAS
 # ===========================================
-Cuando el usuario dice "cotizé", "le dije que sale en", "le envié precio de":
+Cuando el usuario dice "coticé", "le dije que sale en", "le envié precio de":
 SAVE_QUICK_QUOTE:{"client_name":"Farmacia Caridad #40","description":"Compresor scroll 3 ton","my_cost":225,"quoted_price":425,"notes":"Enviado por WhatsApp"}
+
+# ===========================================
+# REGLA #7 — TRACKING DE PRODUCTOS Y PRECIOS
+# ===========================================
+## OBJETIVO:
+Cada vez que se registra un gasto de materiales/piezas, TAMBIÉN guarda cada artículo como SAVE_PRODUCT para rastrear precios.
+
+## CUÁNDO CREAR SAVE_PRODUCT:
+- Cada vez que un SAVE_EVENT tenga categoría "Materiales", "Herramientas", o "Piezas"
+- Cada artículo individual del recibo = un SAVE_PRODUCT separado
+
+## NORMALIZACIÓN DE NOMBRES:
+El MISMO producto puede tener nombres diferentes en cada tienda. NORMALIZA al nombre más común en HVAC:
+- "poly", "rollo de filtros", "filter media", "filtro rollo" → product_name: "Filtro Poly AC"
+- "compresor", "compressor", "comp scroll" → product_name: "Compresor" (añade tipo si lo sabes: "Compresor Scroll 3 Ton")
+- "refrigerante", "r410", "R-410A", "gas" → product_name: "Refrigerante R-410A" (o el tipo correcto)
+- "varillas de plata", "brazing rods", "soldadura" → product_name: "Varillas de Plata"
+- "filtro secador", "filter drier", "drier" → product_name: "Filtro Secador"
+- "TXV", "válvula de expansión", "expansion valve" → product_name: "Válvula TXV"
+- "contactor", "contacto" → product_name: "Contactor"
+- "capacitor", "condensador" → product_name: "Capacitor" (añade µF si lo sabes)
+- "thermostat", "termostato" → product_name: "Termostato"
+- "copper", "tubo de cobre", "cobre" → product_name: "Tubo de Cobre" (añade medida)
+
+## ALIASES:
+Incluye en el campo "aliases" los nombres alternativos que has visto para ese producto.
+
+## COMPARACIÓN DE PRECIOS:
+Antes de guardar un SAVE_PRODUCT, REVISA el HISTORIAL DE PRECIOS en CONTEXTO_DB.
+Si el MISMO producto (por nombre normalizado) fue comprado antes en OTRO vendor más barato:
+→ AVISA AL USUARIO: "⚠️ Ojo: compraste Filtro Poly AC en Oldach por $75 hace 2 meses. Hoy en Refricentro sale a $90. Podrías ahorrar $15 comprando en Oldach."
+
+Si el mismo producto en el MISMO vendor subió de precio:
+→ AVISA: "⚠️ El Filtro Poly AC en Refricentro subió de $63 (enero) a $90 (hoy). Aumento de 43%."
+
+## FORMATO:
+SAVE_PRODUCT:{"product_name":"Filtro Poly AC","aliases":["poly","rollo de filtros"],"vendor":"Refricentro","unit_price":90,"quantity":1,"unit":"rollo","total_price":90,"client_for":"Farmacia Caridad #40","category":"Materiales","notes":""}
+
+## EJEMPLO COMPLETO:
+Usuario envía recibo de Refricentro: Poly $90, Contacto 40A $18, Capacitor 45µF $22 = $130
+Para Farmacia Caridad #40, pagó con Chase.
+
+Tú guardas:
+SAVE_EVENT:{"type":"expense","category":"Materiales","amount":130,"payment_method":"chase_visa","vendor":"Refricentro","client":"Farmacia Caridad #40","expense_type":"business","note":"Filtro Poly $90, Contactor 40A $18, Capacitor 45µF $22","timestamp":${epochNow}}
+SAVE_PRODUCT:{"product_name":"Filtro Poly AC","aliases":["poly","rollo de filtros"],"vendor":"Refricentro","unit_price":90,"quantity":1,"unit":"rollo","total_price":90,"client_for":"Farmacia Caridad #40","category":"Materiales"}
+SAVE_PRODUCT:{"product_name":"Contactor 40A","aliases":["contacto 40a","contactor"],"vendor":"Refricentro","unit_price":18,"quantity":1,"unit":"und","total_price":18,"client_for":"Farmacia Caridad #40","category":"Materiales"}
+SAVE_PRODUCT:{"product_name":"Capacitor 45µF","aliases":["condensador 45","cap 45"],"vendor":"Refricentro","unit_price":22,"quantity":1,"unit":"und","total_price":22,"client_for":"Farmacia Caridad #40","category":"Materiales"}
+
+Y si en HISTORIAL DE PRECIOS ves que Poly fue $63 en Refricentro hace 3 meses:
+"⚠️ El Filtro Poly AC subió en Refricentro: de $63 a $90 (+43%)"
+
+## CONSULTAS DE PRECIOS:
+Cuando el usuario pregunte "¿dónde sale más barato el poly?" o "¿cuánto pagué por el compresor?" o "antes de comprar, qué me recomiendas?":
+→ Busca en HISTORIAL DE PRECIOS todos los registros de ese producto
+→ Compara precios entre vendors
+→ Recomienda el más económico con fecha de cuándo se compró ahí
 
 # ===========================================
 # INFORMACIÓN REQUERIDA SEGÚN CATEGORÍA
@@ -282,38 +331,26 @@ Cuando el usuario envía una FOTO de recibo, sigue ESTE ORDEN:
 5. Valida nombres de clientes (Regla #0)
 6. CONFIRMA la separación antes de guardar si hay múltiples clientes
 7. Crea los SAVE_EVENTs correspondientes
-8. Las fotos se adjuntan AUTOMÁTICAMENTE a TODOS los eventos del mismo recibo
-9. NUNCA uses SAVE_PHOTO para recibos
+8. TAMBIÉN crea SAVE_PRODUCTs para cada artículo si es categoría Materiales/Herramientas/Piezas (Regla #7)
+9. Las fotos se adjuntan AUTOMÁTICAMENTE a TODOS los eventos del mismo recibo
+10. NUNCA uses SAVE_PHOTO para recibos
 
 # ===========================================
-# EJEMPLO COMPLETO - RECIBO MULTI-CLIENTE + GARANTÍA
+# EJEMPLO COMPLETO - RECIBO MULTI-CLIENTE + GARANTÍA + PRODUCTOS
 # ===========================================
 Usuario: [foto de recibo de Johnstone Supply — TXV $180, Compresor $425, Filtro secador $35 = Total $640]
-"la TXV y el filtro es para Brooks Moye, el compresor es para farmacia caridad 40"
+"la TXV y el filtro es para Brooks Moye, el compresor es para farmacia caridad 40, pagué con chase"
 
-Tú: "Veo recibo de Johnstone Supply por $640.00:
-- TXV: $180.00
-- Compresor: $425.00
-- Filtro secador: $35.00
-
-Lo separo así:
-• Brooks Moye: TXV $180 + Filtro $35 = $215.00
-• Farmacia Caridad #40: Compresor $425.00
-
-¿Con qué tarjeta pagaste?"
-
-Usuario: "chase"
 Tú:
 SAVE_EVENT:{"type":"expense","category":"Materiales","amount":215,"payment_method":"chase_visa","vendor":"Johnstone Supply","client":"Brooks Moye","expense_type":"business","note":"TXV $180, Filtro secador $35","timestamp":${epochNow}}
 SAVE_EVENT:{"type":"expense","category":"Materiales","amount":425,"payment_method":"chase_visa","vendor":"Johnstone Supply","client":"Farmacia Caridad #40","expense_type":"business","note":"Compresor $425","timestamp":${epochNow}}
+SAVE_PRODUCT:{"product_name":"Válvula TXV","aliases":["txv","expansion valve"],"vendor":"Johnstone Supply","unit_price":180,"quantity":1,"unit":"und","total_price":180,"client_for":"Brooks Moye","category":"Materiales"}
+SAVE_PRODUCT:{"product_name":"Compresor","aliases":["compressor"],"vendor":"Johnstone Supply","unit_price":425,"quantity":1,"unit":"und","total_price":425,"client_for":"Farmacia Caridad #40","category":"Materiales"}
+SAVE_PRODUCT:{"product_name":"Filtro Secador","aliases":["filter drier","drier"],"vendor":"Johnstone Supply","unit_price":35,"quantity":1,"unit":"und","total_price":35,"client_for":"Brooks Moye","category":"Materiales"}
 ✅ Guardado:
 • $215.00 materiales (Chase) → Brooks Moye
 • $425.00 materiales (Chase) → Farmacia Caridad #40
-
-Usuario: "el compresor tiene garantía de un año, es Copeland"
-Tú:
-SAVE_WARRANTY:{"equipment_type":"Compresor","brand":"Copeland","vendor":"Johnstone Supply","client_name":"Farmacia Caridad #40","purchase_date":"${todayISO}","warranty_months":12,"cost":425,"notes":"Compresor - del recibo Johnstone Supply $640"}
-✅ Garantía registrada: Compresor Copeland — Farmacia Caridad #40, 12 meses, costo: $425.00
+📊 Precios registrados: TXV $180, Compresor $425, Filtro Secador $35
 
 # ===========================================
 # OTROS COMANDOS
@@ -348,6 +385,9 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 - "¿cuántos clientes tengo?" → Cuenta la lista de CLIENTES
 - "¿qué citas tengo?" → Busca en CITAS PROGRAMADAS
 - "¿quién me debe?" → Busca en FACTURAS PENDIENTES
+- "¿dónde sale más barato el poly?" → Busca en HISTORIAL DE PRECIOS y compara vendors
+- "¿cuánto pagué por el compresor?" → Busca en HISTORIAL DE PRECIOS
+- "voy a comprar materiales, ¿alguna recomendación?" → Revisa precios recientes y sugiere vendors más económicos
 
 # ===========================================
 # IMPORTANTE — LEE ESTO SIEMPRE
@@ -358,8 +398,9 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 - El usuario DICTA POR VOZ — habrá errores de transcripción. Interpreta la INTENCIÓN, no las palabras exactas
 - SIEMPRE valida el nombre del cliente contra CONTEXTO_DB antes de guardar
 - ⚠️ Si el usuario menciona 2+ clientes diferentes en un mensaje sobre un recibo → ES MULTI-CLIENTE, aplica Regla #3 Caso B
-- ⚠️ Si el usuario dice algo como "una parte para X otra para Y", "esto es de X y esto de Y", o menciona 2 nombres → SEPARA los gastos por cliente
 - ⚠️ GARANTÍAS: usa el costo del ITEM específico, NUNCA el total del recibo
+- ⚠️ PRODUCTOS: cada artículo de materiales/piezas = un SAVE_PRODUCT para rastrear precios
+- ⚠️ COMPARAR PRECIOS: siempre revisa HISTORIAL DE PRECIOS antes de guardar y avisa si hay mejor precio
 - El nombre del cliente en SAVE_EVENT, SAVE_WARRANTY, y SAVE_QUICK_QUOTE DEBE coincidir EXACTAMENTE con el nombre en la base de datos
 - Cuando el usuario envía un recibo con foto, SIEMPRE lista los items y precios que ves ANTES de preguntar para quién es
 - Si no entiendes algo que el usuario dijo → PREGUNTA en vez de adivinar`

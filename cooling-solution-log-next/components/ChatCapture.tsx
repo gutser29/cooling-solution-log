@@ -153,7 +153,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -273,8 +273,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     syncingRef.current = true
     setSyncing(true)
     try {
- // === DATA SYNC (sin fotos — pasan directo a Drive por separado) ===
-      const events = (await db.events.toArray()).map(e => ({ ...e, receipt_photos: undefined, photo: undefined }))
+      // === DATA SYNC (sin fotos — pasan directo a Drive por separado) ===
+      const events = await db.events.toArray()
       const clients = await db.clients.toArray()
       const jobs = await db.jobs.toArray()
       const employees = await db.employees.toArray()
@@ -289,11 +289,13 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const client_locations = await db.client_locations.toArray()
       const bitacora = await db.bitacora.toArray()
       const warranties = await db.warranties.toArray()
+      let product_prices: any[] = []
+      try { product_prices = await db.table('product_prices').toArray() } catch {}
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_documents, client_locations, bitacora, warranties })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_documents, client_locations, bitacora, warranties, product_prices })
       })
 
       if (res.ok) {
@@ -450,6 +452,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       await mergeArray(db.client_locations, data.client_locations)
       await mergeArray(db.bitacora, data.bitacora)
       await mergeArray(db.warranties, data.warranties)
+      try { await mergeArray(db.table('product_prices'), data.product_prices) } catch {}
 
       console.log('✅ Data restored')
 
@@ -667,6 +670,20 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             `${name}: ${count} foto(s)`
           ).join('\n')
         }
+
+        // Historial de precios de productos
+        try {
+          const prices = await db.table('product_prices').toArray()
+          if (prices.length > 0) {
+            ctx += '\n\nHISTORIAL DE PRECIOS:\n' + prices
+              .sort((a: any, b: any) => b.timestamp - a.timestamp)
+              .slice(0, 100)
+              .map((p: any) => {
+                const d = new Date(p.timestamp).toLocaleDateString('es-PR')
+                return `[${d}] ${p.product_name} | ${p.vendor} | $${p.unit_price} x${p.quantity} ${p.unit || 'und'} | ${p.client_for || 'stock'}`
+              }).join('\n')
+          }
+        } catch {}
 
         dbContextRef.current = ctx
         
@@ -1298,6 +1315,35 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           needsSync = true
         } catch (e) {
           console.error('SAVE_JOB error:', e)
+        }
+      }
+
+      // ====== PROCESS SAVE_PRODUCT (precio de producto) ======
+      const productMatches = assistantText.match(/SAVE_PRODUCT:\s*\{/gi)
+      if (productMatches && productMatches.length > 0) {
+        const allProducts = extractAllJSON(assistantText, 'SAVE_PRODUCT:')
+        for (const prodData of allProducts) {
+          try {
+            const now = Date.now()
+            await db.table('product_prices').add({
+              product_name: prodData.product_name || '',
+              aliases: prodData.aliases || [],
+              vendor: prodData.vendor || '',
+              unit_price: prodData.unit_price || 0,
+              quantity: prodData.quantity || 1,
+              unit: prodData.unit || 'und',
+              total_price: prodData.total_price || (prodData.unit_price * (prodData.quantity || 1)),
+              client_for: prodData.client_for || '',
+              category: prodData.category || 'Materiales',
+              notes: prodData.notes || '',
+              timestamp: now,
+              created_at: now
+            })
+            savedItems.push(`Precio: ${prodData.product_name} @ $${prodData.unit_price} (${prodData.vendor})`)
+            needsSync = true
+          } catch (e) {
+            console.error('SAVE_PRODUCT error:', e)
+          }
         }
       }
 
