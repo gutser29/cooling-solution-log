@@ -188,6 +188,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef2 = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const recognitionRef = useRef<any>(null)
   const dbContextRef = useRef<string>('')
@@ -1613,14 +1614,23 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         )}
 
         <div className="max-w-2xl mx-auto flex items-end gap-1.5 p-3">
-          <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handlePhotoSelect} className="hidden" />
+          <input ref={fileInputRef} type="file" accept="*/*" multiple onChange={handlePhotoSelect} className="hidden" />
           
-          <button
+      <button
             onClick={() => fileInputRef.current?.click()}
             disabled={loading}
             className="bg-[#1a2332] hover:bg-[#222d3e] rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:opacity-50 flex-shrink-0 transition-colors"
           >
             📷
+          </button>
+          
+          <input ref={fileInputRef2} type="file" accept="application/pdf,.pdf,image/*" multiple onChange={handlePhotoSelect} className="hidden" />
+          <button
+            onClick={() => fileInputRef2.current?.click()}
+            disabled={loading}
+            className="bg-[#1a2332] hover:bg-[#222d3e] rounded-full w-11 h-11 flex items-center justify-center text-lg disabled:opacity-50 flex-shrink-0 transition-colors"
+          >
+            📎
           </button>
           
           <button
