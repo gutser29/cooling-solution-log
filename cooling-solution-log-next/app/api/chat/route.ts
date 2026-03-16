@@ -465,9 +465,9 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
         }
       }
 
-      const response = await openai.chat.completions.create({
+    const response = await openai.chat.completions.create({
         model: gptModel,
-        max_tokens: 1500,
+        max_completion_tokens: 1500,
         messages: gptMessages
       })
 
