@@ -406,7 +406,7 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 - Si no entiendes algo que el usuario dijo → PREGUNTA en vez de adivinar`
 
     // ====== DECIDIR MODELO ======
-    const useClaude = preferredModel === 'claude' || (preferredModel === 'auto' && hasPhotos)
+    const useClaude = preferredModel === 'claude'
 
     if (useClaude) {
       // ====== CLAUDE ======
@@ -467,7 +467,7 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 
     const response = await openai.chat.completions.create({
         model: gptModel,
-        max_completion_tokens: 1500,
+        max_completion_tokens: 4000,
         messages: gptMessages
       })
 
