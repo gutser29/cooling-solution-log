@@ -1417,6 +1417,155 @@ export function generateProductivityReport(
 }
 
 // ============ CSV EXPORT ============
+
+// ============ INCOME BY CLIENT REPORT ============
+export function generateIncomeByClientReport(
+  events: EventRecord[],
+  clients: Client[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string
+) {
+  const income = events.filter(e =>
+    e.timestamp >= startDate &&
+    e.timestamp <= endDate &&
+    e.type === 'income'
+  )
+
+  const byClient: Record<string, { total: number; count: number; retention: number; events: EventRecord[] }> = {}
+  income.forEach(e => {
+    const name = e.client || 'Sin cliente'
+    if (!byClient[name]) byClient[name] = { total: 0, count: 0, retention: 0, events: [] }
+    byClient[name].total += e.amount
+    byClient[name].count++
+    byClient[name].events.push(e)
+  })
+
+  // Check retention per client
+  clients.forEach(c => {
+    const name = `${c.first_name} ${c.last_name}`
+    if (byClient[name] && (c as any).retention_percent > 0) {
+      const pct = (c as any).retention_percent
+      const facturado = byClient[name].total / (1 - pct / 100)
+      byClient[name].retention = facturado - byClient[name].total
+    }
+  })
+
+  const totalIncome = income.reduce((s, e) => s + e.amount, 0)
+  const totalRetention = Object.values(byClient).reduce((s, c) => s + c.retention, 0)
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 20, marginR = 20
+
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+
+  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Ingresos por Cliente — ${periodLabel}`, marginL, 27)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`${formatDate(startDate)} — ${formatDate(endDate)}`, marginL, 33)
+  doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 38)
+
+  let y = 48
+  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y); y += 8
+
+  // Summary
+  doc.setFontSize(12); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('RESUMEN', marginL, y); doc.setFont('helvetica', 'normal'); y += 8
+  doc.setFontSize(10)
+  doc.setTextColor(60, 60, 60); doc.text('Total Recibido', marginL + 5, y)
+  doc.setTextColor(34, 197, 94); doc.setFont('helvetica', 'bold')
+  doc.text(formatCurrency(totalIncome), 130, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 6
+
+  if (totalRetention > 0) {
+    doc.setTextColor(60, 60, 60); doc.text('Retención Hacienda (estimada)', marginL + 5, y)
+    doc.setTextColor(239, 68, 68); doc.text(formatCurrency(totalRetention), 130, y, { align: 'right' }); y += 6
+    doc.setTextColor(60, 60, 60); doc.text('Total Facturado (estimado)', marginL + 5, y)
+    doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+    doc.text(formatCurrency(totalIncome + totalRetention), 130, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 6
+  }
+
+  doc.setTextColor(60, 60, 60); doc.text('Total Clientes', marginL + 5, y)
+  doc.text(String(Object.keys(byClient).length), 130, y, { align: 'right' }); y += 6
+  doc.text('Total Pagos', marginL + 5, y)
+  doc.text(String(income.length), 130, y, { align: 'right' }); y += 12
+
+  // Table
+  const rows = Object.entries(byClient)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([name, data]) => {
+      const row = [
+        name,
+        String(data.count),
+        formatCurrency(data.total),
+      ]
+      if (data.retention > 0) {
+        row.push(formatCurrency(data.retention))
+        row.push(formatCurrency(data.total + data.retention))
+      } else {
+        row.push('-')
+        row.push('-')
+      }
+      return row
+    })
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Cliente', '# Pagos', 'Recibido', 'Retención', 'Facturado']],
+    body: rows,
+    headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: {
+      0: { cellWidth: 55 },
+      2: { halign: 'right' as const },
+      3: { halign: 'right' as const },
+      4: { halign: 'right' as const }
+    }
+  })
+
+  // Detail per client
+  let detailY = (doc as any).lastAutoTable.finalY + 15
+
+  Object.entries(byClient)
+    .sort((a, b) => b[1].total - a[1].total)
+    .forEach(([name, data]) => {
+      if (detailY > pageH - 60) { doc.addPage(); detailY = 20 }
+      doc.setFontSize(10); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
+      doc.text(`${name} — ${formatCurrency(data.total)}`, marginL, detailY)
+      if (data.retention > 0) {
+        doc.setTextColor(239, 68, 68); doc.setFontSize(8)
+        doc.text(`(Retención: ${formatCurrency(data.retention)})`, marginL + 90, detailY)
+      }
+      doc.setFont('helvetica', 'normal')
+
+      autoTable(doc, {
+        startY: detailY + 3,
+        head: [['Fecha', 'Monto', 'Método', 'Nota']],
+        body: data.events.sort((a, b) => a.timestamp - b.timestamp).map(e => [
+          formatDateShort(e.timestamp),
+          formatCurrency(e.amount),
+          getPaymentLabel(e.payment_method),
+          e.note || '-'
+        ]),
+        headStyles: { fillColor: [60, 60, 60], textColor: [255, 255, 255], fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        margin: { left: marginL + 5 }
+      })
+      detailY = (doc as any).lastAutoTable.finalY + 12
+    })
+
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+  }
+
+  doc.save(`Ingresos-por-Cliente-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
 export function exportEventsCSV(
   events: EventRecord[],
   startDate: number,

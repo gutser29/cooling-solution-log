@@ -8,7 +8,8 @@ import {
   generateARReport,
   generatePaymentMethodReport,
   generatePhotoReport,
-  generateInvoiceNumber
+  generateInvoiceNumber,
+  generateIncomeByClientReport
 } from '@/lib/pdfGenerator'
 
 interface ChatMessage {
@@ -883,6 +884,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const invoices = await db.invoices.toArray()
         generateARReport(invoices)
         setMessages(prev => [...prev, { role: 'assistant', content: '✅ Reporte de cuentas por cobrar generado' }])
+        return
+      }
+
+      if (data.type === 'GENERATE_INCOME_REPORT') {
+        const { period, periodLabel } = data.payload
+        const { startDate, endDate } = getDateRange(period, periodLabel)
+        const events = await db.events.toArray()
+        const clients = await db.clients.toArray()
+        generateIncomeByClientReport(events, clients, startDate, endDate, periodLabel || 'este año')
+        setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de ingresos por cliente generado (${periodLabel})` }])
         return
       }
 

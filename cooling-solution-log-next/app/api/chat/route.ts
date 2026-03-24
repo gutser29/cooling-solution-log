@@ -43,6 +43,18 @@ export async function POST(request: Request) {
         userText.includes('cuentas por cobrar') || userText.includes('me deben dinero')) {
       return NextResponse.json({ type: 'GENERATE_AR' })
     }
+    if (userText.includes('ingresos por cliente') || userText.includes('reporte de ingresos') ||
+        userText.includes('dinero recibido') || userText.includes('cobros por cliente') ||
+        userText.includes('income report') || userText.includes('cuanto me han pagado')) {
+      let period: 'month' | 'year' = 'year'
+      let periodLabel = 'este año'
+      if (userText.includes('mes') || userText.includes('month')) { period = 'month'; periodLabel = 'este mes' }
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
+      for (const m of months) {
+        if (userText.includes(m)) { period = 'month'; periodLabel = m; break }
+      }
+      return NextResponse.json({ type: 'GENERATE_INCOME_REPORT', payload: { period, periodLabel } })
+    }
 
     // ====== SYSTEM PROMPT ======
     const now = new Date()

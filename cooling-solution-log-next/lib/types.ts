@@ -71,7 +71,7 @@ export interface Employee {
   last_name: string
   phone?: string
   default_daily_rate: number
-  retention_percent: number
+  retention_percent?: number
   specialties?: string
   active: boolean
   created_at: number
