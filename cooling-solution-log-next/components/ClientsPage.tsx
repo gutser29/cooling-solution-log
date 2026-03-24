@@ -23,6 +23,7 @@ interface QuickQuote {
   markup: number
   status: 'pending' | 'approved' | 'rejected' | 'invoiced'
   notes?: string
+  retention_percent?: number
   created_at: number
   updated_at?: number
   responded_at?: number
@@ -200,7 +201,8 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   }
 
   const startNew = () => {
-    setEditForm({ first_name: '', last_name: '', phone: '', email: '', address: '', type: 'residential', notes: '' })
+    setEditForm({ first_name: '', last_name: '', phone: '', email: '', address: '', type: 'residential', notes: '', retention_percent: '0' })
+
     setViewMode('new')
   }
 
@@ -212,7 +214,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         last_name: editForm.last_name || selectedClient.last_name,
         phone: editForm.phone || '', email: editForm.email || '',
         address: editForm.address || '', type: editForm.type || selectedClient.type,
-        notes: editForm.notes || '', updated_at: Date.now()
+       notes: editForm.notes || '', retention_percent: Number(editForm.retention_percent) || 0, updated_at: Date.now()
       })
       const updated = await db.clients.get(selectedClient.id)
       if (updated) { setSelectedClient(updated); setViewMode('detail'); loadClients() }
@@ -227,7 +229,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         first_name: editForm.first_name || '', last_name: editForm.last_name || '',
         phone: editForm.phone || '', email: editForm.email || '',
         address: editForm.address || '', type: editForm.type || 'residential',
-        notes: editForm.notes || '', active: true, created_at: now, updated_at: now
+       notes: editForm.notes || '', retention_percent: Number(editForm.retention_percent) || 0, active: true, created_at: now, updated_at: now
       })
       setViewMode('list'); loadClients()
     } catch { alert('Error al crear cliente') }
@@ -435,6 +437,8 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             </div>
             <div><label className="text-xs text-gray-400 mb-1 block">Notas</label>
               <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20" placeholder="Notas..." /></div>
+            <div><label className="text-xs text-gray-400 mb-1 block">⚠️ Retención Hacienda (%)</label>
+              <input type="number" step="0.5" value={editForm.retention_percent || ''} onChange={e => setEditForm(f => ({ ...f, retention_percent: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="0 = sin retención" /></div>
           </div>
           {!isNew && selectedClient && (
             <button onClick={() => setConfirmAction({ show: true, title: selectedClient.active ? 'Desactivar' : 'Reactivar', message: `¿${selectedClient.active ? 'Desactivar' : 'Reactivar'} a ${selectedClient.first_name}?`, action: toggleActive })}

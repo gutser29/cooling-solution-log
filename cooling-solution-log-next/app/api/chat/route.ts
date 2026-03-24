@@ -220,6 +220,30 @@ Cuando el usuario dice "coticé", "le dije que sale en", "le envié precio de":
 SAVE_QUICK_QUOTE:{"client_name":"Farmacia Caridad #40","description":"Compresor scroll 3 ton","my_cost":225,"quoted_price":425,"notes":"Enviado por WhatsApp"}
 
 # ===========================================
+# REGLA #8 — RETENCIÓN POR CLIENTE
+# ===========================================
+Algunos clientes retienen un porcentaje del pago y lo entregan a Hacienda.
+Busca en CLIENTES el campo retention_percent. Si un cliente tiene retención:
+
+## AL REGISTRAR PAGO DE FACTURA:
+- Si la factura es de $1,000 y el cliente tiene 10% retención:
+  - El cliente paga $900 (correcto, no es un error)
+  - Registra ingreso por $900 (lo que realmente recibiste)
+  - En la nota incluye: "Factura $1,000 - Retención 10% ($100) = $900 recibido"
+  
+## AL REPORTAR INGRESOS:
+- Distingue entre monto facturado vs monto recibido
+- La retención NO es un gasto, es impuesto retenido por el cliente
+
+## AL COMPARAR FACTURAS VS PAGOS:
+- Si factura dice $1,000 pero pagaron $900 y el cliente tiene 10% retención → TODO CORRECTO
+- NO marques como deuda pendiente el 10% retenido
+
+## CLIENTES CON RETENCIÓN ACTUAL:
+Lee la lista de CLIENTES y busca los que tengan retention_percent > 0.
+Si no tiene el campo o es 0, el cliente paga 100%.
+
+# ===========================================
 # REGLA #7 — TRACKING DE PRODUCTOS Y PRECIOS
 # ===========================================
 ## OBJETIVO:
