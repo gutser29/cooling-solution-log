@@ -1,8 +1,5 @@
-'use client'
-
 import { useState, useEffect } from 'react'
 import { db } from '@/lib/db'
-import type { EventRecord, ClientPhoto } from '@/lib/types'
 
 interface ReceiptsPageProps {
   onNavigate: (page: string) => void
@@ -14,6 +11,7 @@ interface ReceiptItem {
   category: string
   amount: number
   vendor?: string
+  client?: string
   payment_method?: string
   date: number
   type: 'event' | 'client_photo'
@@ -24,27 +22,43 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
   const [receipts, setReceipts] = useState<ReceiptItem[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptItem | null>(null)
-  const [filter, setFilter] = useState<string>('all')
+  const [filterClient, setFilterClient] = useState<string>('all')
+  const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [clients, setClients] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
 
-  useEffect(() => {
-    loadReceipts()
-  }, [])
+  useEffect(() => { loadReceipts() }, [])
 
   const loadReceipts = async () => {
     try {
       const allReceipts: ReceiptItem[] = []
 
-      // 1. Obtener fotos de eventos (gastos con foto)
+      // 1. Fotos de eventos (gastos con receipt_photos o photo)
       const events = await db.events.toArray()
       events.forEach(e => {
-        if (e.photo) {
+        if (e.receipt_photos && e.receipt_photos.length > 0) {
+          e.receipt_photos.forEach((photo: string, idx: number) => {
+            allReceipts.push({
+              id: e.id! * 1000 + idx,
+              photo,
+              category: e.category || 'Sin categoría',
+              amount: e.amount,
+              vendor: e.vendor,
+              client: e.client || 'General',
+              payment_method: e.payment_method,
+              date: e.timestamp,
+              type: 'event',
+              note: e.note
+            })
+          })
+        } else if ((e as any).photo) {
           allReceipts.push({
             id: e.id!,
-            photo: e.photo,
+            photo: (e as any).photo,
             category: e.category || 'Sin categoría',
             amount: e.amount,
             vendor: e.vendor,
+            client: e.client || 'General',
             payment_method: e.payment_method,
             date: e.timestamp,
             type: 'event',
@@ -53,19 +67,26 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
         }
       })
 
-      // 2. Obtener fotos de client_photos con categoría 'receipt'
+      // 2. Fotos de client_photos con categoría 'receipt'
       const clientPhotos = await db.client_photos.toArray()
       clientPhotos.forEach(p => {
         if (p.category === 'receipt') {
-          allReceipts.push({
-            id: p.id!,
-            photo: p.photo_data,
-            category: 'Recibo',
-            amount: 0,
-            date: p.timestamp,
-            type: 'client_photo',
-            note: p.description
-          })
+          // Evitar duplicados — si ya existe un evento con la misma descripción y fecha similar, skip
+          const isDuplicate = allReceipts.some(r => 
+            Math.abs(r.date - p.timestamp) < 60000 && r.note === p.description
+          )
+          if (!isDuplicate) {
+            allReceipts.push({
+              id: p.id! + 100000,
+              photo: p.photo_data,
+              category: 'Recibo',
+              amount: 0,
+              client: p.client_name || 'General',
+              date: p.timestamp,
+              type: 'client_photo',
+              note: p.description
+            })
+          }
         }
       })
 
@@ -73,8 +94,12 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
       allReceipts.sort((a, b) => b.date - a.date)
       setReceipts(allReceipts)
 
-      // Obtener categorías únicas
-      const uniqueCats = [...new Set(allReceipts.map(r => r.category).filter(Boolean))]
+      // Clientes únicos
+      const uniqueClients = [...new Set(allReceipts.map(r => r.client || 'General'))].sort()
+      setClients(uniqueClients)
+
+      // Categorías únicas
+      const uniqueCats = [...new Set(allReceipts.map(r => r.category).filter(Boolean))].sort()
       setCategories(uniqueCats)
 
     } catch (error) {
@@ -85,20 +110,29 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
   }
 
   const filteredReceipts = receipts.filter(r => {
-    if (filter === 'all') return true
-    return r.category === filter
+    if (filterClient !== 'all' && (r.client || 'General') !== filterClient) return false
+    if (filterCategory !== 'all' && r.category !== filterCategory) return false
+    return true
   })
 
   const formatDate = (ts: number) => {
-    return new Date(ts).toLocaleDateString('es-PR', { 
-      weekday: 'short',
-      month: 'short', 
-      day: 'numeric',
-      year: 'numeric'
+    return new Date(ts).toLocaleDateString('es-PR', {
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
     })
   }
 
   const formatCurrency = (n: number) => `$${n.toFixed(2)}`
+
+  const getPaymentLabel = (method?: string): string => {
+    if (!method) return ''
+    const labels: Record<string, string> = {
+      cash: 'Efectivo', ath_movil: 'ATH Móvil', capital_one: 'Capital One',
+      chase_visa: 'Chase Visa', paypal: 'PayPal', check: 'Cheque',
+      sams_mastercard: "Sam's MC", transfer: 'Transferencia',
+      ach: 'ACH', credit_card: 'Tarjeta', zelle: 'Zelle'
+    }
+    return labels[method] || method
+  }
 
   // Agrupar por mes
   const groupedReceipts: Record<string, ReceiptItem[]> = {}
@@ -107,6 +141,9 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
     if (!groupedReceipts[monthKey]) groupedReceipts[monthKey] = []
     groupedReceipts[monthKey].push(r)
   })
+
+  // Stats por cliente filtrado
+  const totalAmount = filteredReceipts.reduce((sum, r) => sum + r.amount, 0)
 
   if (loading) {
     return (
@@ -130,14 +167,29 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
         <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
       </div>
 
-      {/* Filtro por categoría */}
-      <div className="p-4">
+      {/* Filtros */}
+      <div className="p-4 space-y-2">
+        {/* Filtro por cliente */}
         <select
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
+          value={filterClient}
+          onChange={e => setFilterClient(e.target.value)}
           className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
         >
-          <option value="all">Todas las categorías ({receipts.length})</option>
+          <option value="all">👤 Todos los clientes ({receipts.length})</option>
+          {clients.map(c => (
+            <option key={c} value={c}>
+              {c} ({receipts.filter(r => (r.client || 'General') === c).length})
+            </option>
+          ))}
+        </select>
+
+        {/* Filtro por categoría */}
+        <select
+          value={filterCategory}
+          onChange={e => setFilterCategory(e.target.value)}
+          className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="all">📂 Todas las categorías</option>
           {categories.map(cat => (
             <option key={cat} value={cat}>
               {cat} ({receipts.filter(r => r.category === cat).length})
@@ -146,17 +198,23 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
         </select>
 
         {/* Stats */}
-        <div className="mt-3 bg-[#111a2e] rounded-xl p-3 border border-white/5">
+        <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
           <div className="flex justify-between text-sm">
-            <span className="text-gray-400">Total recibos:</span>
+            <span className="text-gray-400">Recibos:</span>
             <span className="font-medium">{filteredReceipts.length}</span>
           </div>
-          <div className="flex justify-between text-sm mt-1">
-            <span className="text-gray-400">Total monto:</span>
-            <span className="font-medium text-red-400">
-              {formatCurrency(filteredReceipts.reduce((sum, r) => sum + r.amount, 0))}
-            </span>
-          </div>
+          {totalAmount > 0 && (
+            <div className="flex justify-between text-sm mt-1">
+              <span className="text-gray-400">Total:</span>
+              <span className="font-medium text-red-400">{formatCurrency(totalAmount)}</span>
+            </div>
+          )}
+          {filterClient !== 'all' && (
+            <div className="flex justify-between text-sm mt-1">
+              <span className="text-gray-400">Cliente:</span>
+              <span className="font-medium text-blue-400">{filterClient}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -166,41 +224,41 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
           <div className="text-center py-12 text-gray-500">
             <p className="text-4xl mb-2">🧾</p>
             <p>No hay recibos guardados</p>
-            <p className="text-xs mt-2">Añade fotos de recibos en 💵 Gastos</p>
+            <p className="text-xs mt-2">Sube fotos de recibos en el chat 💬</p>
           </div>
         ) : (
           Object.entries(groupedReceipts).map(([month, monthReceipts]) => (
             <div key={month} className="mb-6">
-              <h3 className="text-sm font-medium text-gray-400 mb-3 capitalize sticky top-16 bg-[#0b1220] py-2">
-                {month} ({monthReceipts.length} recibos)
+              <h3 className="text-sm font-medium text-gray-400 mb-3 capitalize sticky top-16 bg-[#0b1220] py-2 z-10">
+                📅 {month} — {monthReceipts.length} recibo{monthReceipts.length > 1 ? 's' : ''}
+                {monthReceipts.some(r => r.amount > 0) && (
+                  <span className="text-red-400 ml-2">
+                    {formatCurrency(monthReceipts.reduce((s, r) => s + r.amount, 0))}
+                  </span>
+                )}
               </h3>
-              
-              {/* Grid de recibos */}
+
               <div className="grid grid-cols-2 gap-3">
                 {monthReceipts.map(r => (
-                  <div 
+                  <div
                     key={`${r.type}-${r.id}`}
                     className="bg-[#111a2e] rounded-xl overflow-hidden border border-white/5 cursor-pointer hover:border-white/20 transition-colors"
                     onClick={() => setSelectedReceipt(r)}
                   >
-                    {/* Thumbnail */}
                     <div className="aspect-square relative">
-                      <img 
-                        src={r.photo} 
-                        alt="Recibo" 
-                        className="w-full h-full object-cover"
-                      />
-                      {r.amount > 0 && (
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                          <p className="text-white font-bold text-sm">{formatCurrency(r.amount)}</p>
-                        </div>
-                      )}
+                      <img src={r.photo} alt="Recibo" className="w-full h-full object-cover" />
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                        {r.amount > 0 && <p className="text-white font-bold text-sm">{formatCurrency(r.amount)}</p>}
+                        {r.client && r.client !== 'General' && (
+                          <p className="text-blue-300 text-xs truncate">{r.client}</p>
+                        )}
+                      </div>
                     </div>
-                    
-                    {/* Info */}
                     <div className="p-2">
-                      <p className="text-sm font-medium text-gray-200 truncate">{r.category}</p>
-                      {r.vendor && <p className="text-xs text-gray-500 truncate">📍 {r.vendor}</p>}
+                      <p className="text-sm font-medium text-gray-200 truncate">{r.vendor || r.category}</p>
+                      {r.payment_method && (
+                        <p className="text-xs text-gray-500">{getPaymentLabel(r.payment_method)}</p>
+                      )}
                       <p className="text-xs text-gray-600 mt-1">{formatDate(r.date)}</p>
                     </div>
                   </div>
@@ -216,46 +274,54 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
         <>
           <div className="fixed inset-0 bg-black/80 z-40" onClick={() => setSelectedReceipt(null)} />
           <div className="fixed inset-4 bg-[#111a2e] rounded-2xl z-50 overflow-hidden flex flex-col border border-white/10">
-            {/* Header del modal */}
             <div className="bg-[#111a2e] p-4 border-b border-white/10 flex justify-between items-center flex-shrink-0">
               <div>
-                <h2 className="text-lg font-bold">{selectedReceipt.category}</h2>
+                <h2 className="text-lg font-bold">{selectedReceipt.vendor || selectedReceipt.category}</h2>
                 {selectedReceipt.amount > 0 && (
                   <p className="text-red-400 font-bold">{formatCurrency(selectedReceipt.amount)}</p>
+                )}
+                {selectedReceipt.client && selectedReceipt.client !== 'General' && (
+                  <p className="text-blue-400 text-sm">👤 {selectedReceipt.client}</p>
                 )}
               </div>
               <button onClick={() => setSelectedReceipt(null)} className="text-gray-400 text-2xl">✕</button>
             </div>
-            
-            {/* Imagen */}
+
             <div className="flex-1 overflow-auto p-4">
-              <img 
-                src={selectedReceipt.photo} 
-                alt="Recibo" 
-                className="w-full rounded-xl"
-              />
-              
-              {/* Detalles */}
+              <img src={selectedReceipt.photo} alt="Recibo" className="w-full rounded-xl" />
+
               <div className="mt-4 bg-[#0b1220] rounded-xl p-3 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Fecha:</span>
                   <span>{new Date(selectedReceipt.date).toLocaleString('es-PR')}</span>
                 </div>
+                {selectedReceipt.client && selectedReceipt.client !== 'General' && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Cliente:</span>
+                    <span className="text-blue-400">{selectedReceipt.client}</span>
+                  </div>
+                )}
                 {selectedReceipt.vendor && (
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">Lugar:</span>
+                    <span className="text-gray-400">Tienda:</span>
                     <span>{selectedReceipt.vendor}</span>
+                  </div>
+                )}
+                {selectedReceipt.category && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Categoría:</span>
+                    <span>{selectedReceipt.category}</span>
                   </div>
                 )}
                 {selectedReceipt.payment_method && (
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">Método de pago:</span>
-                    <span>{selectedReceipt.payment_method}</span>
+                    <span className="text-gray-400">Pago:</span>
+                    <span>{getPaymentLabel(selectedReceipt.payment_method)}</span>
                   </div>
                 )}
                 {selectedReceipt.note && (
                   <div className="text-sm">
-                    <span className="text-gray-400 block mb-1">Nota:</span>
+                    <span className="text-gray-400 block mb-1">Detalle:</span>
                     <span className="text-gray-200">{selectedReceipt.note}</span>
                   </div>
                 )}
