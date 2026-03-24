@@ -213,12 +213,34 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   doc.text('Total', labelX, y)
   doc.text(formatCurrency(invoice.total), valueX, y, { align: 'right' })
 
-  y += 6
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(30, 30, 30)
-  doc.text('Amount due', labelX, y)
-  doc.text(`${formatCurrency(invoice.total)} USD`, valueX, y, { align: 'right' })
-  doc.setFont('helvetica', 'normal')
+  if (invoice.deposit_enabled && invoice.deposit_amount) {
+    y += 8
+    doc.setDrawColor(200, 170, 50)
+    doc.setLineWidth(0.3)
+    doc.line(labelX, y - 2, valueX, y - 2)
+    y += 2
+    doc.setTextColor(180, 140, 20)
+    doc.text(`Depósito (${invoice.deposit_type === 'percentage' ? invoice.deposit_value + '%' : 'fijo'})`, labelX, y)
+    doc.text(`-${formatCurrency(invoice.deposit_amount)}`, valueX, y, { align: 'right' })
+    y += 8
+    doc.setDrawColor(200, 170, 50)
+    doc.line(labelX, y - 2, valueX, y - 2)
+    y += 2
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    doc.setTextColor(220, 120, 20)
+    doc.text('BALANCE PENDIENTE', labelX - 10, y)
+    doc.text(`${formatCurrency(invoice.balance_due || 0)} USD`, valueX, y, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+  } else {
+    y += 6
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 30, 30)
+    doc.text('Amount due', labelX, y)
+    doc.text(`${formatCurrency(invoice.total)} USD`, valueX, y, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+  }
 
   // === NOTES (paginación línea por línea) ===
   if (invoice.notes) {
