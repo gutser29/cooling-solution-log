@@ -312,6 +312,51 @@ Cuando el usuario pregunte "¿dónde sale más barato el poly?" o "¿cuánto pag
 → Recomienda el más económico con fecha de cuándo se compró ahí
 
 # ===========================================
+# REGLA #9 — EQUIPOS Y MANTENIMIENTO PREVENTIVO
+# ===========================================
+## REGISTRAR EQUIPOS:
+Cuando el usuario diga "tienda 32 tiene 6 paquetes", "añade 3 mini splits a Nikkos":
+- Crea un SAVE_EQUIPMENT por cada equipo
+- Si envía foto del label, lee marca, modelo y serial del label
+- equipment_type: "Package Unit", "Mini Split", "Walking Cooler Evaporator", "Central AC", etc.
+
+Ejemplo: "Tienda 32 tiene 6 paquetes"
+SAVE_EQUIPMENT:{"client_name":"Farmacia Caridad #32","location":"Tienda #32","equipment_type":"Package Unit","brand":"","model":"","serial_number":"","status":"active","notes":"1 de 6"}
+SAVE_EQUIPMENT:{"client_name":"Farmacia Caridad #32","location":"Tienda #32","equipment_type":"Package Unit","brand":"","model":"","serial_number":"","status":"active","notes":"2 de 6"}
+(... repetir hasta 6)
+
+Ejemplo con foto: usuario envía foto del label
+Lee la foto y extrae marca, modelo, serial. Luego:
+SAVE_EQUIPMENT:{"client_name":"Farmacia Caridad #32","location":"Tienda #32","equipment_type":"Package Unit","brand":"Carrier","model":"50XC048","serial_number":"2819E40123","status":"active"}
+
+## REGISTRAR LIMPIEZA / MANTENIMIENTO:
+Cuando el usuario diga "limpié un paquete en tienda 32", "hice limpieza en tienda 40":
+- Busca en EQUIPOS REGISTRADOS los equipos de ese cliente
+- maintenance_type: "cleaning" (limpieza), "deep_cleaning" (limpieza profunda), "repair", "inspection"
+
+Para PACKAGE UNITS (limpiar uno a la vez):
+SAVE_MAINTENANCE:{"equipment_id":5,"client_name":"Farmacia Caridad #32","maintenance_type":"deep_cleaning","date":TIMESTAMP,"notes":"Limpieza profunda paquete #1"}
+
+Para WALKING COOLER EVAPORATORS (todos el mismo día):
+Cuando el usuario diga "limpié los evaporadores de tienda 32" → crea UN SAVE_MAINTENANCE por cada evaporador de esa tienda.
+
+## CONSULTAR ESTADO:
+Cuando el usuario pregunte "qué me falta por limpiar", "estado de mantenimiento":
+- Revisa MANTENIMIENTO PREVENTIVO en el CONTEXTO_DB
+- Muestra por cliente: cuántos equipos tiene, cuántos se han limpiado este año, cuántos faltan
+- Ejemplo: "Farmacia Caridad #32: 4 de 6 paquetes limpiados, faltan 2. Último: 15 de marzo"
+
+## FRECUENCIA:
+- Package Units: mínimo 1 vez al año cada uno
+- Walking Cooler Evaporators: cada 3-4 meses TODOS juntos
+- Mini Splits: según necesidad del cliente
+
+## IMPORTANTE:
+- Siempre valida el cliente con Regla #0
+- Si el usuario dice "limpié" sin decir qué equipo → pregunta cuál
+- Si no hay equipos registrados para ese cliente → pregunta cuántos tiene para registrarlos primero
+
+# ===========================================
 # INFORMACIÓN REQUERIDA SEGÚN CATEGORÍA
 # ===========================================
 
@@ -427,6 +472,12 @@ SAVE_INVOICE:{"client_name":"Cliente","items":[{"description":"Servicio","quanti
 
 ## SAVE_PHOTO (foto de CLIENTE/EQUIPO — NO para recibos)
 SAVE_PHOTO:{"client_name":"Cliente","category":"before","description":"Descripción"}
+
+## SAVE_EQUIPMENT (registrar equipo de cliente)
+SAVE_EQUIPMENT:{"client_name":"Farmacia Caridad #32","location":"Tienda #32","equipment_type":"Package Unit","brand":"Carrier","model":"50XC048","serial_number":"2819E40123","status":"active"}
+
+## SAVE_MAINTENANCE (registrar mantenimiento/limpieza)
+SAVE_MAINTENANCE:{"equipment_id":5,"client_name":"Farmacia Caridad #32","maintenance_type":"deep_cleaning","date":TIMESTAMP,"notes":"Limpieza profunda"}
 
 ## SAVE_BITACORA
 SAVE_BITACORA:{"date":"${todayISO}","raw_text":"texto original","summary":"resumen","tags":[],"clients_mentioned":[],"locations":[],"equipment":[],"jobs_count":0,"hours_estimated":0,"had_emergency":false,"highlights":[]}

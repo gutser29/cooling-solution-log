@@ -154,7 +154,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -293,11 +293,15 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       const warranties = await db.warranties.toArray()
       let product_prices: any[] = []
       try { product_prices = await db.table('product_prices').toArray() } catch {}
+      let equipment: any[] = []
+      try { equipment = await db.table('equipment').toArray() } catch {}
+      let maintenance_logs: any[] = []
+      try { maintenance_logs = await db.table('maintenance_logs').toArray() } catch {}
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_documents, client_locations, bitacora, warranties, product_prices })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_documents, client_locations, bitacora, warranties, product_prices, equipment, maintenance_logs })
       })
 
       if (res.ok) {
@@ -455,6 +459,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       await mergeArray(db.bitacora, data.bitacora)
       await mergeArray(db.warranties, data.warranties)
       try { await mergeArray(db.table('product_prices'), data.product_prices) } catch {}
+      try { await mergeArray(db.table('equipment'), data.equipment) } catch {}
+      try { await mergeArray(db.table('maintenance_logs'), data.maintenance_logs) } catch {}
 
       console.log('✅ Data restored')
 
@@ -672,6 +678,39 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             `${name}: ${count} foto(s)`
           ).join('\n')
         }
+
+        // Equipos y mantenimiento preventivo
+        try {
+          const equip = await db.table('equipment').toArray()
+          if (equip.length > 0) {
+            ctx += '\n\nEQUIPOS REGISTRADOS:\n' + equip.map((eq: any) => {
+              return `[ID:${eq.id}] ${eq.equipment_type} ${eq.brand || ''} ${eq.model || ''} | ${eq.client_name} @ ${eq.location || 'N/A'} | Serial: ${eq.serial_number || 'N/A'} | Status: ${eq.status}`
+            }).join('\n')
+
+            const logs = await db.table('maintenance_logs').toArray()
+            const currentYear = new Date().getFullYear()
+            const yearStart = new Date(currentYear, 0, 1).getTime()
+
+            // Resumen de mantenimiento por cliente
+            const byClient: Record<string, { total: number; done: number; lastDate: number }> = {}
+            equip.forEach((eq: any) => {
+              const key = eq.client_name || 'Sin cliente'
+              if (!byClient[key]) byClient[key] = { total: 0, done: 0, lastDate: 0 }
+              byClient[key].total++
+              const eqLogs = logs.filter((l: any) => l.equipment_id === eq.id && l.date >= yearStart)
+              if (eqLogs.length > 0) {
+                byClient[key].done++
+                const lastLog = eqLogs.sort((a: any, b: any) => b.date - a.date)[0]
+                if (lastLog.date > byClient[key].lastDate) byClient[key].lastDate = lastLog.date
+              }
+            })
+
+            ctx += '\n\nMANTENIMIENTO PREVENTIVO (este año):\n' + Object.entries(byClient).map(([name, data]) => {
+              const lastStr = data.lastDate ? new Date(data.lastDate).toLocaleDateString('es-PR') : 'Nunca'
+              return `${name}: ${data.done}/${data.total} equipos limpiados | Último: ${lastStr} | Faltan: ${data.total - data.done}`
+            }).join('\n')
+          }
+        } catch {}
 
         // Historial de precios de productos
         try {
@@ -1395,6 +1434,59 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         }
       }
 
+      // ====== PROCESS SAVE_EQUIPMENT ======
+      const equipMatches = assistantText.match(/SAVE_EQUIPMENT:\s*\{/gi)
+      if (equipMatches && equipMatches.length > 0) {
+        const allEquip = extractAllJSON(assistantText, 'SAVE_EQUIPMENT:')
+        for (const eq of allEquip) {
+          try {
+            const now = Date.now()
+            await db.table('equipment').add({
+              client_name: eq.client_name || '',
+              client_id: eq.client_id,
+              location: eq.location || '',
+              equipment_type: eq.equipment_type || '',
+              brand: eq.brand || '',
+              model: eq.model || '',
+              serial_number: eq.serial_number || '',
+              status: eq.status || 'active',
+              notes: eq.notes || '',
+              created_at: now
+            })
+            savedItems.push(`Equipo: ${eq.equipment_type} ${eq.brand || ''} → ${eq.client_name}`)
+            needsSync = true
+          } catch (e) {
+            console.error('SAVE_EQUIPMENT error:', e)
+          }
+        }
+      }
+
+      // ====== PROCESS SAVE_MAINTENANCE ======
+      const maintMatches = assistantText.match(/SAVE_MAINTENANCE:\s*\{/gi)
+      if (maintMatches && maintMatches.length > 0) {
+        const allMaint = extractAllJSON(assistantText, 'SAVE_MAINTENANCE:')
+        for (const m of allMaint) {
+          try {
+            const now = Date.now()
+            await db.table('maintenance_logs').add({
+              equipment_id: m.equipment_id,
+              client_name: m.client_name || '',
+              client_id: m.client_id,
+              maintenance_type: m.maintenance_type || 'cleaning',
+              date: m.date || now,
+              notes: m.notes || '',
+              technician: m.technician || 'Sergio',
+              photos: [],
+              created_at: now
+            })
+            savedItems.push(`Mantenimiento: ${m.maintenance_type} → ${m.client_name}`)
+            needsSync = true
+            contextLoadedRef.current = false
+          } catch (e) {
+            console.error('SAVE_MAINTENANCE error:', e)
+          }
+        }
+      }
       // ====================================================================
       // BUILD FINAL MESSAGE — show everything we saved in one message
       // ====================================================================
