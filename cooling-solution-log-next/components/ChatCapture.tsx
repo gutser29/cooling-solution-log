@@ -275,7 +275,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
     setSyncing(true)
     try {
       // === DATA SYNC (sin fotos — pasan directo a Drive por separado) ===
-      const events = await db.events.toArray()
+      const events = (await db.events.toArray()).map(e => ({ ...e, receipt_photos: undefined, photo: undefined }))
       const clients = await db.clients.toArray()
       const jobs = await db.jobs.toArray()
       const employees = await db.employees.toArray()
@@ -587,7 +587,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         let ctx = ''
         
         // Events (últimos 50)
-        const events = await db.events.orderBy('timestamp').reverse().limit(50).toArray()
+        const events = await db.events.orderBy('timestamp').reverse().limit(200).toArray()
         if (events.length > 0) {
           ctx += 'EVENTOS RECIENTES:\n' + events.map(e => {
             const d = new Date(e.timestamp).toLocaleDateString('es-PR')
