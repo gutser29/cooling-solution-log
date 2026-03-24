@@ -36,6 +36,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [formNotes, setFormNotes] = useState('')
   const [formDueDays, setFormDueDays] = useState(30)
   const [formServiceDate, setFormServiceDate] = useState('')
+  const [formDepositEnabled, setFormDepositEnabled] = useState(false)
+  const [formDepositType, setFormDepositType] = useState<'percentage' | 'fixed'>('percentage')
+  const [formDepositValue, setFormDepositValue] = useState(50)
   const [showClientPicker, setShowClientPicker] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
@@ -140,6 +143,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormNotes('')
     setFormDueDays(type === 'quote' ? 15 : 30)
     setFormServiceDate('')
+    setFormDepositEnabled(false)
+    setFormDepositType('percentage')
+    setFormDepositValue(50)
     setSelected(null)
   }
 
@@ -160,6 +166,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormNotes(inv.notes || '')
     setFormDueDays(inv.due_date ? Math.round((inv.due_date - inv.issue_date) / 86400000) : 30)
     setFormServiceDate(inv.service_date ? new Date(inv.service_date).toISOString().split('T')[0] : '')
+    setFormDepositEnabled(inv.deposit_enabled || false)
+    setFormDepositType(inv.deposit_type || 'percentage')
+    setFormDepositValue(inv.deposit_value || 50)
     setViewMode('edit')
   }
 
@@ -175,6 +184,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const taxAmount = subtotal * (formTaxRate / 100)
     const total = subtotal + taxAmount
     const dueDate = now + formDueDays * 86400000
+    const depositAmount = formDepositEnabled ? (formDepositType === 'percentage' ? total * (formDepositValue / 100) : formDepositValue) : 0
+    const balanceDue = total - depositAmount
 
     if (selected?.id && viewMode === 'edit') {
       await db.invoices.update(selected.id, {
@@ -189,6 +200,11 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         total,
         notes: formNotes.trim() || undefined,
         service_date: formServiceDate ? new Date(formServiceDate + 'T12:00:00').getTime() : undefined,
+        deposit_enabled: formDepositEnabled || undefined,
+        deposit_type: formDepositEnabled ? formDepositType : undefined,
+        deposit_value: formDepositEnabled ? formDepositValue : undefined,
+        deposit_amount: formDepositEnabled ? depositAmount : undefined,
+        balance_due: formDepositEnabled ? balanceDue : undefined,
         due_date: formType === 'invoice' ? dueDate : undefined,
         expiration_date: formType === 'quote' ? dueDate : undefined,
         updated_at: now
@@ -208,6 +224,11 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         total,
         notes: formNotes.trim() || undefined,
         service_date: formServiceDate ? new Date(formServiceDate + 'T12:00:00').getTime() : undefined,
+        deposit_enabled: formDepositEnabled || undefined,
+        deposit_type: formDepositEnabled ? formDepositType : undefined,
+        deposit_value: formDepositEnabled ? formDepositValue : undefined,
+        deposit_amount: formDepositEnabled ? depositAmount : undefined,
+        balance_due: formDepositEnabled ? balanceDue : undefined,
         status: 'draft',
         issue_date: now,
         due_date: formType === 'invoice' ? dueDate : undefined,
@@ -478,8 +499,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
               ))}
             </div>
           </div>
-
-          {/* Tax & Totals */}
+{/* Tax & Totals & Deposit */}
           <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
             <div className="flex justify-between items-center mb-3">
               <p className="text-sm text-gray-400">Subtotal</p>
@@ -500,6 +520,64 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
             <div className="flex justify-between items-center pt-3 border-t border-white/10">
               <p className="text-lg font-bold text-gray-200">TOTAL</p>
               <p className="text-lg font-bold text-green-400">{fmt(total)}</p>
+            </div>
+
+            {/* Depósito */}
+            <div className="mt-4 pt-3 border-t border-white/10">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm text-gray-400">💰 Requiere depósito</p>
+                <button
+                  onClick={() => setFormDepositEnabled(!formDepositEnabled)}
+                  className={`w-12 h-6 rounded-full transition-colors ${formDepositEnabled ? 'bg-blue-600' : 'bg-gray-700'}`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${formDepositEnabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+              {formDepositEnabled && (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setFormDepositType('percentage')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-medium ${formDepositType === 'percentage' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}
+                    >
+                      % Porcentaje
+                    </button>
+                    <button
+                      onClick={() => setFormDepositType('fixed')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-medium ${formDepositType === 'fixed' ? 'bg-blue-600 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}
+                    >
+                      $ Cantidad Fija
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={formDepositValue || ''}
+                      onChange={e => setFormDepositValue(Number(e.target.value) || 0)}
+                      placeholder={formDepositType === 'percentage' ? '50' : '0.00'}
+                      className="w-24 bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600"
+                    />
+                    <span className="text-sm text-gray-500">{formDepositType === 'percentage' ? '%' : 'USD'}</span>
+                  </div>
+                  {(() => {
+                    const depAmt = formDepositType === 'percentage' ? total * (formDepositValue / 100) : formDepositValue
+                    const bal = total - depAmt
+                    return (
+                      <div className="bg-[#0b1220] rounded-lg p-3 space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">Depósito ({formDepositType === 'percentage' ? `${formDepositValue}%` : 'fijo'})</span>
+                          <span className="text-yellow-400 font-medium">-{fmt(depAmt)}</span>
+                        </div>
+                        <div className="flex justify-between text-lg font-bold pt-1 border-t border-white/10">
+                          <span className="text-gray-200">BALANCE PENDIENTE</span>
+                          <span className="text-orange-400">{fmt(bal > 0 ? bal : 0)}</span>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
             </div>
           </div>
 
@@ -598,10 +676,22 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                   <span className="text-gray-300">{fmt(selected.tax_amount)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-lg font-bold pt-2">
+             <div className="flex justify-between text-lg font-bold pt-2">
                 <span className="text-gray-200">Total</span>
                 <span className="text-green-400">{fmt(selected.total)}</span>
               </div>
+              {selected.deposit_enabled && selected.deposit_amount && (
+                <div className="mt-3 pt-3 border-t border-yellow-800/30 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-yellow-400">Depósito ({selected.deposit_type === 'percentage' ? `${selected.deposit_value}%` : 'fijo'})</span>
+                    <span className="text-yellow-400 font-medium">-{fmt(selected.deposit_amount)}</span>
+                  </div>
+                  <div className="flex justify-between text-lg font-bold">
+                    <span className="text-orange-400">BALANCE PENDIENTE</span>
+                    <span className="text-orange-400">{fmt(selected.balance_due || 0)}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

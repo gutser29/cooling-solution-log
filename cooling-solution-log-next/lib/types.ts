@@ -232,7 +232,12 @@ export interface Invoice {
   subtotal: number
   tax_rate: number
   tax_amount: number
-  total: number
+ total: number
+  deposit_enabled?: boolean
+  deposit_type?: 'percentage' | 'fixed'
+  deposit_value?: number
+  deposit_amount?: number
+  balance_due?: number
   notes?: string
   status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled'
   issue_date: number
