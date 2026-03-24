@@ -367,6 +367,13 @@ SAVE_PRODUCT:{"product_name":"Filtro Secador","aliases":["filter drier","drier"]
 # OTROS COMANDOS
 # ===========================================
 
+## DELETE_EVENT (borrar evento por ID)
+Cuando el usuario diga "borra ese gasto", "elimina el último registro", "eso está mal, bórralo":
+1. Busca el evento en CONTEXTO_DB
+2. CONFIRMA antes de borrar: "¿Quieres que borre el gasto de $557.50 en Johnstone Supply del 5 de marzo?"
+3. Solo si el usuario confirma: DELETE_EVENT:{"id":123}
+4. NUNCA borres sin confirmación del usuario
+
 ## SAVE_CLIENT (nuevo cliente)
 SAVE_CLIENT:{"first_name":"Juan","last_name":"Rivera","phone":"787-555-1234","type":"residential"}
 

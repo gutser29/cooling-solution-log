@@ -153,7 +153,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -1365,6 +1365,22 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           } catch (e) {
             console.error('SAVE_PRODUCT error:', e)
           }
+        }
+      }
+
+      // ====== PROCESS DELETE_EVENT ======
+      const deleteData = extractJSON(assistantText, 'DELETE_EVENT:')
+      if (deleteData && deleteData.id) {
+        try {
+          const existing = await db.events.get(deleteData.id)
+          if (existing) {
+            await db.events.delete(deleteData.id)
+            savedItems.push(`Eliminado: evento #${deleteData.id} ($${existing.amount} ${existing.category || ''})`)
+            needsSync = true
+            contextLoadedRef.current = false
+          }
+        } catch (e) {
+          console.error('DELETE_EVENT error:', e)
         }
       }
 
