@@ -949,6 +949,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         for (let i = 0; i < allEvents.length; i++) {
           const evData = allEvents[i]
           try {
+           const eventPhotos = receiptPhotosRef.current.length > 0 ? [...receiptPhotosRef.current] : []
             await db.events.add({
               timestamp: evData.timestamp || Date.now(),
               type: evData.type,
@@ -962,9 +963,23 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
               vehicle_id: evData.vehicle_id,
               note: evData.note,
               expense_type: evData.expense_type || 'business',
-              receipt_photos: receiptPhotosRef.current.length > 0 ? receiptPhotosRef.current : undefined
+              receipt_photos: eventPhotos.length > 0 ? eventPhotos : undefined
             })
-            savedItems.push(`${evData.type === 'income' ? 'Ingreso' : 'Gasto'}: $${evData.amount} ${evData.category || ''}${evData.client ? ` (${evData.client})` : ''}`)
+            // Guardar cada foto del recibo en client_photos para sync y búsqueda
+            if (eventPhotos.length > 0) {
+              const now = Date.now()
+              for (const photo of eventPhotos) {
+                await db.client_photos.add({
+                  client_name: evData.client || 'General',
+                  category: 'receipt',
+                  description: `Recibo ${evData.vendor || ''} $${evData.amount} - ${evData.category || ''}`,
+                  photo_data: photo,
+                  timestamp: evData.timestamp || now,
+                  created_at: now
+                })
+              }
+            }
+            savedItems.push(`${evData.type === 'income' ? 'Ingreso' : 'Gasto'}: $${evData.amount} ${evData.category || ''}${evData.client ? ` (${evData.client})` : ''}${eventPhotos.length > 0 ? ' 📷' : ''}`)
             needsSync = true
           } catch (e) {
             console.error('SAVE_EVENT error:', e)
