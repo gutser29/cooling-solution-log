@@ -599,7 +599,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           ctx += 'EVENTOS RECIENTES:\n' + events.map(e => {
             const d = new Date(e.timestamp).toLocaleDateString('es-PR')
             const hasPhoto = e.receipt_photos && e.receipt_photos.length > 0 ? ' 📷' : ''
-            return `[${d}] ${e.type} ${e.category} $${e.amount} ${e.vendor || e.client || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}${hasPhoto}`
+            return `[ID:${e.id}][${d}] ${e.type} ${e.category} $${e.amount} ${e.vendor || e.client || ''} ${e.expense_type === 'personal' ? '[PERSONAL]' : ''}${hasPhoto}`
           }).join('\n')
         }
 

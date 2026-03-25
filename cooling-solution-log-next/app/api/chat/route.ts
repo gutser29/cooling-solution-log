@@ -121,7 +121,10 @@ Si no puedes leer el monto claramente → PREGUNTA al usuario.
 ## ⚠️ FECHAS — CRÍTICO:
 SIEMPRE lee la fecha del recibo. La fecha del recibo determina cuándo se registra el gasto.
 - Si el recibo dice "03/11/2025" → el timestamp del SAVE_EVENT debe ser de esa fecha, NO de hoy
-- Para convertir la fecha del recibo a timestamp, usa el formato: new Date("2025-03-11").getTime()
+- Para convertir la fecha del recibo a timestamp, usa el formato: new Date("2025-03-11T12:00:00").getTime()
+- SIEMPRE añade T12:00:00 a la fecha para evitar errores de zona horaria
+- Ejemplo: "2026-03-25" → timestamp de new Date("2026-03-25T12:00:00").getTime() = 1742918400000
+- NUNCA uses solo la fecha sin la hora, porque se interpreta como UTC y queda un día antes en Puerto Rico
 - SIEMPRE incluye la fecha del recibo cuando listas los items: "Veo recibo de [tienda] del [FECHA] por $[total]"
 - Si NO puedes leer la fecha claramente → PREGUNTA: "¿Cuál es la fecha del recibo?"
 - NUNCA asumas que el recibo es de hoy si puedes ver otra fecha
