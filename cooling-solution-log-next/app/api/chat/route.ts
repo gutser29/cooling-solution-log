@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
 export const runtime = 'nodejs'
 
@@ -521,6 +522,7 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 
     // ====== DECIDIR MODELO ======
     const useClaude = preferredModel === 'claude'
+    const useGemini = preferredModel === 'gemini'
 
     if (useClaude) {
       // ====== CLAUDE ======
@@ -555,6 +557,37 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
         .trim()
 
       return NextResponse.json({ type: 'TEXT', text, model: 'claude' })
+
+    } else if (useGemini) {
+      // ====== GEMINI ======
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
+      const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro-preview-05-06' })
+
+      const geminiHistory = messages.slice(0, -1).map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content }]
+      }))
+
+      const lastGeminiMsg = messages[messages.length - 1]
+      const parts: any[] = []
+
+      if (lastGeminiMsg.photos && lastGeminiMsg.photos.length > 0) {
+        lastGeminiMsg.photos.forEach(photo => {
+          const base64Data = photo.replace(/^data:image\/\w+;base64,/, '')
+          parts.push({ inlineData: { mimeType: 'image/jpeg', data: base64Data } })
+        })
+      }
+      parts.push({ text: lastGeminiMsg.content || 'Analiza esta imagen.' })
+
+      const chat = geminiModel.startChat({
+        history: geminiHistory,
+        systemInstruction: systemPrompt,
+      })
+
+      const result = await chat.sendMessage(parts)
+      const text = result.response.text()
+
+      return NextResponse.json({ type: 'TEXT', text, model: 'gemini' })
 
     } else {
       // ====== GPT ======

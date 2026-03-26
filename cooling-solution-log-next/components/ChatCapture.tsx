@@ -198,7 +198,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   const syncingRef = useRef(false)
   // ====== Ref para fotos de recibos pendientes ======
   const receiptPhotosRef = useRef<string[]>([])
-  const [aiModel, setAiModel] = useState<'auto' | 'gpt' | 'claude'>('auto')
+  const [aiModel, setAiModel] = useState<'auto' | 'gpt' | 'claude' | 'gemini'>('auto')
   const [showQuickActions, setShowQuickActions] = useState(true)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
   const [todayStats, setTodayStats] = useState({ gastos: 0, ingresos: 0, count: 0 })
@@ -1546,15 +1546,14 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setAiModel(prev => prev === 'auto' ? 'gpt' : prev === 'gpt' ? 'claude' : 'auto')}
+          <button onClick={() => setAiModel(prev => prev === 'auto' ? 'gpt' : prev === 'gpt' ? 'claude' : prev === 'claude' ? 'gemini' : 'auto')}
             className={`text-xs px-2 py-1 rounded-lg font-medium ${
               aiModel === 'auto' ? 'bg-white/20 text-white' :
               aiModel === 'gpt' ? 'bg-green-500/30 text-green-300' :
               'bg-orange-500/30 text-orange-300'
             }`}
           >
-            {aiModel === 'auto' ? '⚡ Auto' : aiModel === 'gpt' ? '🟢 GPT' : '🟠 Claude'}
+            {aiModel === 'auto' ? '⚡ Auto' : aiModel === 'gpt' ? '🟢 GPT' : aiModel === 'claude' ? '🟠 Claude' : '🔵 Gemini'}
           </button>
           <button
             onClick={clearChat}
