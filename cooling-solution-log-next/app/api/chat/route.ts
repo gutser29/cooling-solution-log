@@ -587,9 +587,8 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 
       const chat = geminiModel.startChat({
         history: geminiHistory,
-        systemInstruction: systemPrompt,
+        systemInstruction: { role: 'user', parts: [{ text: systemPrompt }] },
       })
-
       const result = await chat.sendMessage(parts)
       const text = result.response.text()
 
