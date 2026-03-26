@@ -563,10 +563,16 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
       const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro-preview-05-06' })
 
-      const geminiHistory = messages.slice(0, -1).map(m => ({
-        role: m.role === 'user' ? 'user' : 'model',
-        parts: [{ text: m.content }]
-      }))
+      const geminiHistory = messages.slice(0, -1)
+        .filter(m => m.content && !m.content.startsWith('✅'))
+        .map(m => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: m.content }]
+        }))
+      // Gemini requiere que el primer mensaje sea del usuario
+      while (geminiHistory.length > 0 && geminiHistory[0].role === 'model') {
+        geminiHistory.shift()
+      }
 
       const lastGeminiMsg = messages[messages.length - 1]
       const parts: any[] = []
