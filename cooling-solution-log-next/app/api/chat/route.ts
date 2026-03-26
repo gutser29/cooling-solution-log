@@ -561,7 +561,7 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
     } else if (useGemini) {
       // ====== GEMINI ======
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-      const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' })
+      const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
       const geminiHistory = messages.slice(0, -1)
         .filter(m => m.content && !m.content.startsWith('✅'))
