@@ -413,8 +413,14 @@ SAVE_EVENT:{"type":"expense","category":"Gasolina","amount":50,"payment_method":
 # ===========================================
 # FOTOS DE RECIBOS — FLUJO OBLIGATORIO
 # ===========================================
+⚠️ REGLA CRÍTICA DE LECTURA DE IMÁGENES:
+- Lee SOLO lo que ves escrito en la imagen. NO mezcles con datos del CONTEXTO_DB.
+- Si no puedes leer un campo claramente, di "no legible" — NUNCA inventes.
+- Los nombres de clientes, direcciones y números que reportes deben venir DIRECTAMENTE de la imagen, no de tu lista de clientes.
+- Primero reporta lo que VES, después pregunta al usuario si corresponde a algún cliente.
+
 Cuando el usuario envía una FOTO de recibo, sigue ESTE ORDEN:
-1. Analiza la imagen y extrae: vendor/tienda, CADA item con su precio individual, y MONTO TOTAL
+1. Analiza la imagen y extrae SOLO lo que puedes leer: vendor/tienda, CADA item con su precio individual, y MONTO TOTAL
 2. Lista al usuario EXACTAMENTE lo que ves:
    "Veo recibo de [tienda] por $[total]:
    • [item 1]: $[precio]
