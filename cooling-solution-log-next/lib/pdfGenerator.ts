@@ -190,6 +190,25 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     y += rowHeight
   })
 
+  // === NOTES (antes de totales, con label) ===
+  if (invoice.notes) {
+    y += 10
+    y = checkPageBreak(10, y)
+    doc.setFontSize(9)
+    doc.setTextColor(0, 130, 130)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Nota:', marginL, y)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(80, 80, 80)
+    y += 5
+    const noteLines = doc.splitTextToSize(invoice.notes, pageW - marginL - marginR)
+    for (let i = 0; i < noteLines.length; i++) {
+      y = checkPageBreak(5, y)
+      doc.text(noteLines[i], marginL, y)
+      y += 4
+    }
+  }
+
   // === TOTALS ===
   y = checkPageBreak(40, y)
   y += 10
@@ -242,20 +261,6 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     doc.setFont('helvetica', 'normal')
   }
 
-  // === NOTES (paginación línea por línea) ===
-  if (invoice.notes) {
-    y += 20
-    y = checkPageBreak(10, y)
-    const noteLines = doc.splitTextToSize(invoice.notes, pageW - marginL - marginR)
-    for (let i = 0; i < noteLines.length; i++) {
-      y = checkPageBreak(5, y)
-      doc.setFontSize(9)
-      doc.setTextColor(80, 80, 80)
-      doc.setFont('helvetica', 'normal')
-      doc.text(noteLines[i], marginL, y)
-      y += 4.5
-    }
-  }
 
   // === PAID STAMP ===
   if (invoice.status === 'paid' && invoice.paid_date) {
