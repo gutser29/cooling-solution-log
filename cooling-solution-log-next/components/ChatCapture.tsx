@@ -475,9 +475,9 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           const listData = await listRes.json()
           const driveFiles = listData.files || []
 
-          const localPhotos = await db.client_photos.toArray()
+        const localPhotos = await db.client_photos.toArray()
           const localIds = new Set(localPhotos.map((p: any) => p.id))
-
+          const localTimestamps = new Set(localPhotos.map((p: any) => `${p.timestamp}_${p.client_name}`))
           const metaFiles = driveFiles.filter((f: any) => f.name.endsWith('_meta.json'))
           console.log(`📷 Found ${metaFiles.length} photos in Drive, ${localPhotos.length} local`)
 
@@ -487,7 +487,10 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
               const photoIdMatch = metaFile.name.match(/photo_(\d+)_meta\.json/)
               if (!photoIdMatch) continue
               const photoId = parseInt(photoIdMatch[1])
-              if (localIds.has(photoId)) continue
+            // Skip si ya existe por ID o por timestamp+cliente
+              if (localIds.has(photoId)) {
+                // Verify it's actually the same photo, not just same ID from different device
+              }
 
               const metaDl = await fetch(`https://www.googleapis.com/drive/v3/files/${metaFile.id}?alt=media`, {
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -503,8 +506,15 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
                 photoData = await dataDl.text()
               }
 
-              const fullRecord = { ...metaData, photo_data: photoData, drive_synced: true }
-              await db.client_photos.put(fullRecord)
+             const fullRecord = { ...metaData, photo_data: photoData, drive_synced: true }
+              const exists = localPhotos.some((p: any) => 
+                p.timestamp === fullRecord.timestamp && 
+                p.client_name === fullRecord.client_name &&
+                p.category === fullRecord.category
+              )
+              if (exists) continue
+              delete fullRecord.id
+              await db.client_photos.add(fullRecord)
               restored++
               console.log(`📷 Restored photo ${photoId}`)
             } catch (photoErr) {
