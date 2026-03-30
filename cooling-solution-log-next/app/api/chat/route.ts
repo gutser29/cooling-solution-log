@@ -521,8 +521,8 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
 - Si no entiendes algo que el usuario dijo → PREGUNTA en vez de adivinar`
 
     // ====== DECIDIR MODELO ======
-    const useClaude = preferredModel === 'claude'
-    const useGemini = preferredModel === 'gemini'
+   const useClaude = preferredModel === 'claude'
+    const useGemini = preferredModel === 'gemini' || preferredModel === 'auto'
 
     if (useClaude) {
       // ====== CLAUDE ======
