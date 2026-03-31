@@ -155,7 +155,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -1437,6 +1437,36 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             console.error('SAVE_PRODUCT error:', e)
           }
         }
+      }
+
+      // ====== PROCESS SAVE_BANK_TRANSACTION ======
+      const bankMatches = assistantText.match(/SAVE_BANK_TRANSACTION:\s*\{/gi)
+      if (bankMatches && bankMatches.length > 0) {
+        const allBankTx = extractAllJSON(assistantText, 'SAVE_BANK_TRANSACTION:')
+        for (const tx of allBankTx) {
+          try {
+            const now = Date.now()
+            const txDate = tx.date ? new Date(tx.date).getTime() : now
+            await db.bank_transactions.add({
+              account_id: null,
+              account_name: tx.account || '',
+              statement_id: null,
+              date: txDate,
+              description: tx.description || '',
+              amount: tx.amount || 0,
+              direction: tx.direction || 'debit',
+              category: tx.category || 'purchase',
+              match_status: 'pending',
+              match_event_id: null,
+              match_type: null,
+              created_at: now
+            })
+          } catch (e) {
+            console.error('SAVE_BANK_TRANSACTION error:', e)
+          }
+        }
+        savedItems.push(`${allBankTx.length} transacciones bancarias guardadas (${allBankTx[0]?.account || ''})`)
+        needsSync = true
       }
 
       // ====== PROCESS DELETE_EVENT ======

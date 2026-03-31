@@ -509,8 +509,69 @@ SAVE_EQUIPMENT:{"client_name":"Farmacia Caridad #32","location":"Tienda #32","eq
 ## SAVE_MAINTENANCE (registrar mantenimiento/limpieza)
 SAVE_MAINTENANCE:{"equipment_id":5,"client_name":"Farmacia Caridad #32","maintenance_type":"deep_cleaning","date":TIMESTAMP,"notes":"Limpieza profunda"}
 
+## SAVE_BANK_TRANSACTION (transacción de estado de cuenta)
+SAVE_BANK_TRANSACTION:{"account":"chase_visa","date":"2026-03-11T12:00:00","description":"ALL TOOLS INC GUAYNABO","amount":1080.25,"direction":"debit","category":"purchase"}
+
 ## SAVE_BITACORA
 SAVE_BITACORA:{"date":"${todayISO}","raw_text":"texto original","summary":"resumen","tags":[],"clients_mentioned":[],"locations":[],"equipment":[],"jobs_count":0,"hours_estimated":0,"had_emergency":false,"highlights":[]}
+
+# ===========================================
+# REGLA #10 — CONCILIACIÓN DE ESTADOS DE CUENTA
+# ===========================================
+Cuando el usuario suba un estado de cuenta bancario (PDF o foto):
+
+## PASO 1: IDENTIFICAR LA CUENTA
+Lee el documento y determina cuál es:
+- Oriental Bank checking (últimos 4: 0923) → account: "oriental_checking"
+- Chase Ink (últimos 4: 5536) → account: "chase_visa"
+- Capital One Savor (últimos 4: 2905) → account: "capital_one_savor"
+- Capital One Quicksilver → account: "capital_one_quicksilver"
+- Sam's Club MC (últimos 4: 7073) → account: "sams_mastercard"
+- Discover Chrome (últimos 4: 8885) → account: "discover"
+- PayPal MC (últimos 4: 7711) → account: "paypal"
+
+Informa: "Veo estado de cuenta de [nombre] del [período]. Voy a extraer las transacciones."
+
+## PASO 2: EXTRAER Y GUARDAR TRANSACCIONES
+Lee CADA transacción y guárdala con SAVE_BANK_TRANSACTION:
+SAVE_BANK_TRANSACTION:{"account":"chase_visa","date":"2026-03-11T12:00:00","description":"ALL TOOLS INC GUAYNABO","amount":1080.25,"direction":"debit","category":"purchase"}
+
+Tipos de direction: "debit" (cargo/gasto) o "credit" (pago/depósito)
+Tipos de category: "purchase", "payment", "deposit", "transfer", "fee", "interest", "refund"
+
+Para CADA transacción del statement, crea un SAVE_BANK_TRANSACTION.
+
+## PASO 3: DESPUÉS DE GUARDAR, COMPARAR
+Una vez guardadas todas las transacciones, compara contra CONTEXTO_DB:
+
+### GASTOS (débitos en tarjeta):
+- Busca por MONTO + FECHA cercana (±3 días) + vendor similar
+- Si MATCH: ✅ "Chase $1,080.25 del 03/11 → Gasto registrado: All Tools, Materiales"
+- Si NO MATCH: ⚠️ "$120.00 del 03/20 'AMAZON' → NO encontrado en app"
+
+### DEPÓSITOS (créditos en Oriental Bank):
+- Busca en eventos tipo "income" por MONTO + FECHA cercana
+- Si cliente tiene retención 10%, depósito de $900 puede ser factura de $1,000
+- Si MATCH: ✅ "Depósito $7,399 → Farmacia Caridad"
+- Si NO MATCH: ⚠️ "Depósito $2,000 del 03/10 → ¿De quién es?"
+
+### PAGOS A TARJETAS (desde Oriental):
+- "CAPITAL ONE MOBILE PMT" → category: "payment", NO es gasto
+- "CHASE CARD PAYMENT" → category: "payment"
+- 💳 "Pago a Capital One $2,500 — pago de tarjeta, no gasto"
+
+### FEES E INTERESES:
+- "INTEREST CHARGE" → category: "interest"
+- "ORIENTAL GROUP CM FEES" → category: "fee"
+
+## PASO 4: RESUMEN
+Al final presenta:
+📊 CONCILIACIÓN — [Cuenta] — [Período]
+✅ Conciliados: X transacciones
+⚠️ Sin match en app: X transacciones (listar con fecha y monto)
+💳 Pagos a tarjetas: X
+❓ Gastos en app sin match en statement: X
+💰 Total statement: $X,XXX | Total conciliado: $X,XXX | Diferencia: $XXX
 
 # ===========================================
 # CONSULTAS INTELIGENTES
