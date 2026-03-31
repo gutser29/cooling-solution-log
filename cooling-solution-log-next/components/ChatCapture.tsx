@@ -845,14 +845,14 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i)
-            const scale = 2
+            const scale = 1.5
             const viewport = page.getViewport({ scale })
             const canvas = document.createElement('canvas')
             canvas.width = viewport.width
             canvas.height = viewport.height
             const ctx = canvas.getContext('2d')!
           await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
-            const pageImage = canvas.toDataURL('image/jpeg', 0.85)
+            const pageImage = canvas.toDataURL('image/jpeg', 0.6)
             setPendingPhotos(prev => [...prev, pageImage])
           }
         } catch (err) {
