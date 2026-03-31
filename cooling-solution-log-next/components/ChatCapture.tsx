@@ -8,8 +8,9 @@ import {
   generateARReport,
   generatePaymentMethodReport,
   generatePhotoReport,
-  generateInvoiceNumber,
-  generateIncomeByClientReport
+generateInvoiceNumber,
+  generateIncomeByClientReport,
+  generateReconciliationReport
 } from '@/lib/pdfGenerator'
 
 interface ChatMessage {
@@ -943,6 +944,35 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const clients = await db.clients.toArray()
         generateIncomeByClientReport(events, clients, startDate, endDate, periodLabel || 'este año')
         setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de ingresos por cliente generado (${periodLabel})` }])
+        return
+      }
+
+      if (userText.includes('conciliacion') || userText.includes('conciliación') ||
+        userText.includes('estados de cuenta') || userText.includes('statement') ||
+        userText.includes('matchear') || userText.includes('comparar tarjetas') ||
+        userText.includes('reporte bancario') || userText.includes('oriental bank')) {
+      let period: 'month' | 'year' = 'year'
+      let periodLabel = 'este año'
+      if (userText.includes('mes') || userText.includes('marzo')) { period = 'month'; periodLabel = 'este mes' }
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
+      for (const m of months) {
+        if (userText.includes(m)) { period = 'month'; periodLabel = m; break }
+      }
+      let cardFilter = undefined
+      if (userText.includes('chase')) cardFilter = 'chase_visa'
+      else if (userText.includes('capital')) cardFilter = 'capital_one'
+      else if (userText.includes('sams') || userText.includes("sam's")) cardFilter = 'sams_mastercard'
+      else if (userText.includes('paypal')) cardFilter = 'paypal'
+      else if (userText.includes('discover')) cardFilter = 'discover'
+      return NextResponse.json({ type: 'GENERATE_RECONCILIATION', payload: { period, periodLabel, cardFilter } })
+    }
+
+    if (data.type === 'GENERATE_RECONCILIATION') {
+        const { period, periodLabel, cardFilter } = data.payload
+        const { startDate, endDate } = getDateRange(period, periodLabel)
+        const events = await db.events.toArray()
+        generateReconciliationReport(events, startDate, endDate, periodLabel || 'este año', cardFilter)
+        setMessages(prev => [...prev, { role: 'assistant', content: `✅ Reporte de conciliación generado (${periodLabel})${cardFilter ? ' - ' + cardFilter : ''}` }])
         return
       }
 

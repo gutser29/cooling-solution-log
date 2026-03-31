@@ -1714,6 +1714,257 @@ export function generateIncomeByClientReport(
 
   doc.save(`Ingresos-por-Cliente-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
+
+// PEGA ESTO EN pdfGenerator.ts ANTES DE export function exportEventsCSV
+
+export function generateReconciliationReport(
+  events: EventRecord[],
+  startDate: number,
+  endDate: number,
+  periodLabel: string,
+  cardFilter?: string
+) {
+  const expenses = events.filter(e =>
+    e.timestamp >= startDate && e.timestamp <= endDate && e.type === 'expense'
+  ).sort((a, b) => a.timestamp - b.timestamp)
+
+  const income = events.filter(e =>
+    e.timestamp >= startDate && e.timestamp <= endDate && e.type === 'income'
+  ).sort((a, b) => a.timestamp - b.timestamp)
+
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const marginL = 15, marginR = 15
+
+  const addFooter = () => {
+    const totalPages = doc.getNumberOfPages()
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i)
+      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+      doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
+      doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+      doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
+      doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+    }
+  }
+
+  // === HEADER ===
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  doc.setFontSize(16); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
+  doc.setFontSize(12); doc.setTextColor(40, 40, 40); doc.text(`Conciliación Bancaria — ${periodLabel}`, marginL, 27)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`${formatDate(startDate)} — ${formatDate(endDate)}`, marginL, 33)
+  doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 38)
+
+  let y = 48
+
+  // === RESUMEN GENERAL ===
+  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
+  const totalIncome = income.reduce((s, e) => s + e.amount, 0)
+
+  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y)
+  y += 8
+  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+  doc.text('RESUMEN GENERAL', marginL, y); doc.setFont('helvetica', 'normal'); y += 7
+  doc.setFontSize(10)
+  doc.setTextColor(220, 50, 50); doc.text(`Total Gastos: ${formatCurrency(totalExpenses)} (${expenses.length} transacciones)`, marginL + 5, y); y += 6
+  doc.setTextColor(34, 197, 94); doc.text(`Total Ingresos: ${formatCurrency(totalIncome)} (${income.length} depósitos)`, marginL + 5, y); y += 6
+  const net = totalIncome - totalExpenses
+  doc.setTextColor(net >= 0 ? 34 : 220, net >= 0 ? 197 : 50, net >= 0 ? 94 : 50)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`Neto: ${formatCurrency(net)}`, marginL + 5, y)
+  doc.setFont('helvetica', 'normal'); y += 12
+
+  // =============================================
+  // SECCIÓN 1: GASTOS POR TARJETA
+  // =============================================
+  doc.setFontSize(13); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
+  doc.text('GASTOS POR TARJETA / MÉTODO DE PAGO', marginL, y)
+  doc.setFont('helvetica', 'normal'); y += 8
+
+  // Agrupar por método de pago
+  const byCard: Record<string, EventRecord[]> = {}
+  expenses.forEach(e => {
+    const method = e.payment_method || 'cash'
+    if (!byCard[method]) byCard[method] = []
+    byCard[method].push(e)
+  })
+
+  // Resumen por tarjeta
+  const cardSummary = Object.entries(byCard)
+    .sort((a, b) => b[1].reduce((s, e) => s + e.amount, 0) - a[1].reduce((s, e) => s + e.amount, 0))
+    .map(([method, evts]) => [
+      getPaymentLabel(method),
+      String(evts.length),
+      formatCurrency(evts.reduce((s, e) => s + e.amount, 0))
+    ])
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Tarjeta / Método', '# Transacciones', 'Total']],
+    body: cardSummary,
+    headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: { 2: { halign: 'right' as const } }
+  })
+  y = (doc as any).lastAutoTable.finalY + 12
+
+  // Detalle por cada tarjeta
+  const cardOrder = cardFilter
+    ? Object.entries(byCard).filter(([m]) => m === cardFilter)
+    : Object.entries(byCard).sort((a, b) =>
+        b[1].reduce((s, e) => s + e.amount, 0) - a[1].reduce((s, e) => s + e.amount, 0)
+      )
+
+  cardOrder.forEach(([method, evts]) => {
+    const cardTotal = evts.reduce((s, e) => s + e.amount, 0)
+
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+
+    // Card header
+    doc.setFontSize(11); doc.setTextColor(0, 100, 150); doc.setFont('helvetica', 'bold')
+    doc.text(`💳 ${getPaymentLabel(method)} — ${formatCurrency(cardTotal)} (${evts.length} cargos)`, marginL, y)
+    doc.setFont('helvetica', 'normal'); y += 3
+
+    // Agrupar por mes dentro de la tarjeta
+    const byMonth: Record<string, EventRecord[]> = {}
+    evts.forEach(e => {
+      const d = new Date(e.timestamp)
+      const key = d.toLocaleDateString('es-PR', { year: 'numeric', month: 'long' })
+      if (!byMonth[key]) byMonth[key] = []
+      byMonth[key].push(e)
+    })
+
+    Object.entries(byMonth).forEach(([month, monthEvts]) => {
+      const monthTotal = monthEvts.reduce((s, e) => s + e.amount, 0)
+
+      if (y > pageH - 40) { doc.addPage(); y = 20 }
+
+      autoTable(doc, {
+        startY: y,
+        head: [[`${month} — ${getPaymentLabel(method)}`, 'Categoría', 'Cliente', 'Monto']],
+        body: monthEvts.sort((a, b) => a.timestamp - b.timestamp).map(e => [
+          `${formatDateShort(e.timestamp)} — ${e.vendor || e.note || '-'}`,
+          e.category || '-',
+          e.client || '-',
+          formatCurrency(e.amount)
+        ]),
+        foot: [['', '', `Total ${month}:`, formatCurrency(monthTotal)]],
+        headStyles: { fillColor: [60, 80, 120], textColor: [255, 255, 255], fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        footStyles: { fillColor: [240, 240, 240], textColor: [30, 30, 30], fontSize: 8, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 65 },
+          3: { halign: 'right' as const, cellWidth: 25 }
+        }
+      })
+      y = (doc as any).lastAutoTable.finalY + 8
+    })
+
+    y += 5
+  })
+
+  // =============================================
+  // SECCIÓN 2: INGRESOS / DEPÓSITOS (Oriental Bank)
+  // =============================================
+  if (income.length > 0) {
+    doc.addPage(); y = 20
+
+    doc.setFontSize(13); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
+    doc.text('INGRESOS / DEPÓSITOS — Oriental Bank', marginL, y)
+    doc.setFont('helvetica', 'normal'); y += 3
+
+    doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+    doc.text('Compare esta lista con el estado de cuenta de Oriental Bank', marginL, y + 5)
+    y += 12
+
+    // Resumen por método de cobro
+    const byIncomeMethod: Record<string, { total: number; count: number }> = {}
+    income.forEach(e => {
+      const m = getPaymentLabel(e.payment_method) || 'Sin método'
+      if (!byIncomeMethod[m]) byIncomeMethod[m] = { total: 0, count: 0 }
+      byIncomeMethod[m].total += e.amount
+      byIncomeMethod[m].count++
+    })
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Método de Cobro', '# Depósitos', 'Total']],
+      body: Object.entries(byIncomeMethod)
+        .sort((a, b) => b[1].total - a[1].total)
+        .map(([m, d]) => [m, String(d.count), formatCurrency(d.total)]),
+      headStyles: { fillColor: [34, 140, 94], textColor: [255, 255, 255], fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      columnStyles: { 2: { halign: 'right' as const } }
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+
+    // Agrupar ingresos por mes
+    const incByMonth: Record<string, EventRecord[]> = {}
+    income.forEach(e => {
+      const d = new Date(e.timestamp)
+      const key = d.toLocaleDateString('es-PR', { year: 'numeric', month: 'long' })
+      if (!incByMonth[key]) incByMonth[key] = []
+      incByMonth[key].push(e)
+    })
+
+    Object.entries(incByMonth).forEach(([month, monthInc]) => {
+      const monthTotal = monthInc.reduce((s, e) => s + e.amount, 0)
+
+      if (y > pageH - 40) { doc.addPage(); y = 20 }
+
+      autoTable(doc, {
+        startY: y,
+        head: [[`${month} — Ingresos`, 'Cliente', 'Método', 'Monto']],
+        body: monthInc.sort((a, b) => a.timestamp - b.timestamp).map(e => [
+          `${formatDateShort(e.timestamp)} — ${e.note || '-'}`,
+          e.client || '-',
+          getPaymentLabel(e.payment_method),
+          formatCurrency(e.amount)
+        ]),
+        foot: [['', '', `Total ${month}:`, formatCurrency(monthTotal)]],
+        headStyles: { fillColor: [34, 140, 94], textColor: [255, 255, 255], fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        footStyles: { fillColor: [240, 248, 240], textColor: [30, 30, 30], fontSize: 8, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 55 },
+          3: { halign: 'right' as const, cellWidth: 25 }
+        }
+      })
+      y = (doc as any).lastAutoTable.finalY + 8
+    })
+
+    // Resumen por cliente
+    y += 5
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+
+    const incByClient: Record<string, { total: number; count: number }> = {}
+    income.forEach(e => {
+      const cl = e.client || 'Sin cliente'
+      if (!incByClient[cl]) incByClient[cl] = { total: 0, count: 0 }
+      incByClient[cl].total += e.amount
+      incByClient[cl].count++
+    })
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Cliente', '# Pagos', 'Total Recibido']],
+      body: Object.entries(incByClient)
+        .sort((a, b) => b[1].total - a[1].total)
+        .map(([cl, d]) => [cl, String(d.count), formatCurrency(d.total)]),
+      headStyles: { fillColor: [34, 140, 94], textColor: [255, 255, 255], fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      columnStyles: { 2: { halign: 'right' as const } }
+    })
+  }
+
+  // === FOOTERS ===
+  addFooter()
+
+  const suffix = cardFilter ? `-${getPaymentLabel(cardFilter).replace(/\s+/g, '-')}` : ''
+  doc.save(`Conciliacion${suffix}-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
 export function exportEventsCSV(
   events: EventRecord[],
   startDate: number,
