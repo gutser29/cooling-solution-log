@@ -865,17 +865,22 @@ export function generatePayrollReport(
 }
 
 // ============ EXPENSES WITH RECEIPT PHOTOS REPORT ============
+
 export function generateExpenseReceiptsReport(
   events: EventRecord[],
   startDate: number,
   endDate: number,
-  periodLabel: string
+  periodLabel: string,
+  clientFilter?: string
 ) {
-  const withPhotos = events.filter(e =>
+  let filtered = events.filter(e =>
     e.timestamp >= startDate && e.timestamp <= endDate &&
-    e.type === 'expense' &&
-    ((e.receipt_photos && e.receipt_photos.length > 0) || e.photo)
+    e.type === 'expense'
   )
+
+  if (clientFilter && clientFilter !== 'all') {
+    filtered = filtered.filter(e => e.client === clientFilter)
+  }
 
   const doc = new jsPDF()
   const pageW = doc.internal.pageSize.getWidth()
@@ -886,73 +891,211 @@ export function generateExpenseReceiptsReport(
   try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
 
   doc.setFontSize(16); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
-  doc.setFontSize(12); doc.setTextColor(40, 40, 40); doc.text(`Gastos con Recibos - ${periodLabel}`, marginL, 27)
+  const title = clientFilter && clientFilter !== 'all'
+    ? `Gastos — ${clientFilter} — ${periodLabel}`
+    : `Gastos — ${periodLabel}`
+  doc.setFontSize(12); doc.setTextColor(40, 40, 40); doc.text(title, marginL, 27)
   doc.setFontSize(9); doc.setTextColor(100, 100, 100)
-  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 33)
-  doc.text(`Total: ${withPhotos.length} gastos con recibos`, marginL, 38)
+  doc.text(`${formatDate(startDate)} — ${formatDate(endDate)}`, marginL, 33)
 
-  const totalAmount = withPhotos.reduce((s, e) => s + e.amount, 0)
-  doc.setFont('helvetica', 'bold'); doc.text(`Monto Total: ${formatCurrency(totalAmount)}`, marginL, 43); doc.setFont('helvetica', 'normal')
+  const totalAmount = filtered.reduce((s, e) => s + e.amount, 0)
+  const withPhotos = filtered.filter(e => (e.receipt_photos && e.receipt_photos.length > 0) || e.photo)
 
+  doc.text(`Total gastos: ${filtered.length} | Con recibo: ${withPhotos.length}`, marginL, 38)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11); doc.setTextColor(220, 50, 50)
+  doc.text(`Total: ${formatCurrency(totalAmount)}`, marginL, 44)
+  doc.setFont('helvetica', 'normal')
+
+  // === RESUMEN POR CATEGORÍA ===
   let y = 52
-  let currentPage = 1
+  const byCat: Record<string, { total: number; count: number }> = {}
+  filtered.forEach(e => {
+    const cat = e.category || 'Sin categoría'
+    if (!byCat[cat]) byCat[cat] = { total: 0, count: 0 }
+    byCat[cat].total += e.amount
+    byCat[cat].count++
+  })
 
-  const addExpFooter = () => {
+  autoTable(doc, {
+    startY: y,
+    head: [['Categoría', '# Gastos', 'Total']],
+    body: Object.entries(byCat)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([cat, data]) => [cat, String(data.count), formatCurrency(data.total)]),
+    headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: { 2: { halign: 'right' as const } }
+  })
+
+  y = (doc as any).lastAutoTable.finalY + 10
+
+  // === RESUMEN POR CLIENTE ===
+  if (!clientFilter || clientFilter === 'all') {
+    const byClient: Record<string, { total: number; count: number }> = {}
+    filtered.forEach(e => {
+      const cl = e.client || 'General'
+      if (!byClient[cl]) byClient[cl] = { total: 0, count: 0 }
+      byClient[cl].total += e.amount
+      byClient[cl].count++
+    })
+
+    if (Object.keys(byClient).length > 1) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Cliente', '# Gastos', 'Total']],
+        body: Object.entries(byClient)
+          .sort((a, b) => b[1].total - a[1].total)
+          .map(([cl, data]) => [cl, String(data.count), formatCurrency(data.total)]),
+        headStyles: { fillColor: [60, 60, 60], textColor: [255, 255, 255], fontSize: 9 },
+        bodyStyles: { fontSize: 9 },
+        columnStyles: { 2: { halign: 'right' as const } }
+      })
+      y = (doc as any).lastAutoTable.finalY + 10
+    }
+  }
+
+  // === RESUMEN POR MES ===
+  const byMonth: Record<string, { total: number; count: number }> = {}
+  filtered.forEach(e => {
+    const d = new Date(e.timestamp)
+    const key = d.toLocaleDateString('es-PR', { year: 'numeric', month: 'long' })
+    if (!byMonth[key]) byMonth[key] = { total: 0, count: 0 }
+    byMonth[key].total += e.amount
+    byMonth[key].count++
+  })
+
+  if (Object.keys(byMonth).length > 1) {
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+    autoTable(doc, {
+      startY: y,
+      head: [['Mes', '# Gastos', 'Total']],
+      body: Object.entries(byMonth).map(([month, data]) => [
+        month, String(data.count), formatCurrency(data.total)
+      ]),
+      headStyles: { fillColor: [100, 100, 100], textColor: [255, 255, 255], fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      columnStyles: { 2: { halign: 'right' as const } }
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // === MÉTODO DE PAGO ===
+  const byMethod: Record<string, { total: number; count: number }> = {}
+  filtered.forEach(e => {
+    const method = getPaymentLabel(e.payment_method) || 'Sin método'
+    if (!byMethod[method]) byMethod[method] = { total: 0, count: 0 }
+    byMethod[method].total += e.amount
+    byMethod[method].count++
+  })
+
+  if (y > pageH - 60) { doc.addPage(); y = 20 }
+  autoTable(doc, {
+    startY: y,
+    head: [['Método de Pago', '# Gastos', 'Total']],
+    body: Object.entries(byMethod)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([method, data]) => [method, String(data.count), formatCurrency(data.total)]),
+    headStyles: { fillColor: [80, 80, 150], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: { 2: { halign: 'right' as const } }
+  })
+
+  y = (doc as any).lastAutoTable.finalY + 10
+
+  // === DETALLE DE CADA GASTO ===
+  if (y > pageH - 60) { doc.addPage(); y = 20 }
+  doc.setFontSize(11); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
+  doc.text('DETALLE DE GASTOS', marginL, y)
+  doc.setFont('helvetica', 'normal')
+  y += 5
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Fecha', 'Categoría', 'Vendor/Cliente', 'Método', 'Monto', 'Nota']],
+    body: filtered.sort((a, b) => b.timestamp - a.timestamp).map(e => [
+      formatDateShort(e.timestamp),
+      e.category || '-',
+      e.vendor || e.client || '-',
+      getPaymentLabel(e.payment_method),
+      formatCurrency(e.amount),
+      (e.note || '-').substring(0, 40)
+    ]),
+    headStyles: { fillColor: [0, 150, 150], textColor: [255, 255, 255], fontSize: 8 },
+    bodyStyles: { fontSize: 8 },
+    columnStyles: {
+      0: { cellWidth: 22 },
+      4: { halign: 'right' as const, cellWidth: 22 },
+      5: { cellWidth: 40 }
+    }
+  })
+
+  y = (doc as any).lastAutoTable.finalY + 15
+
+  // === FOTOS DE RECIBOS ===
+  if (withPhotos.length > 0) {
+    if (y > pageH - 40) { doc.addPage(); y = 20 }
+    doc.setFontSize(11); doc.setTextColor(0, 150, 150); doc.setFont('helvetica', 'bold')
+    doc.text('FOTOS DE RECIBOS', marginL, y)
+    doc.setFont('helvetica', 'normal')
+    y += 8
+
+    withPhotos.sort((a, b) => b.timestamp - a.timestamp).forEach((event, idx) => {
+      if (y > pageH - 130) { doc.addPage(); y = 20 }
+
+      const contentW = pageW - marginL - marginR
+      doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.3)
+      doc.setFillColor(248, 248, 248); doc.roundedRect(marginL, y, contentW, 22, 2, 2, 'FD')
+
+      doc.setFontSize(10); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
+      doc.text(`#${idx + 1} — ${formatDateShort(event.timestamp)}`, marginL + 4, y + 6)
+      doc.setFont('helvetica', 'normal')
+
+      doc.setFontSize(9)
+      doc.text(`${formatCurrency(event.amount)}`, marginL + 4, y + 12)
+      doc.text(`${event.category || '-'}`, marginL + 40, y + 12)
+      doc.text(`${getPaymentLabel(event.payment_method)}`, marginL + 80, y + 12)
+      doc.text(`${event.vendor || event.client || '-'}`, marginL + 4, y + 18)
+
+      if (event.expense_type === 'personal') {
+        doc.setTextColor(168, 85, 247); doc.text('PERSONAL', pageW - marginR - 25, y + 6)
+      }
+      y += 26
+
+      const eventPhotos: string[] = []
+      if (event.receipt_photos && event.receipt_photos.length > 0) eventPhotos.push(...event.receipt_photos)
+      else if (event.photo) eventPhotos.push(event.photo)
+
+      eventPhotos.forEach((photoData) => {
+        if (y > pageH - 120) { doc.addPage(); y = 20 }
+        const imgW = 160, imgH = 100, imgX = (pageW - imgW) / 2
+        try {
+          const imgSrc = photoData.startsWith('data:') ? photoData : `data:image/jpeg;base64,${photoData}`
+          doc.addImage(imgSrc, imgX, y, imgW, imgH)
+          doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2); doc.rect(imgX, y, imgW, imgH)
+        } catch {
+          doc.setDrawColor(200, 200, 200); doc.rect(imgX, y, imgW, imgH)
+          doc.setFontSize(9); doc.setTextColor(150, 150, 150); doc.text('Imagen no disponible', imgX + 50, y + 50)
+        }
+        y += imgH + 8
+      })
+      y += 10
+    })
+  }
+
+  // === FOOTERS ===
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i)
     doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
     doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
     doc.setFontSize(8); doc.setTextColor(150, 150, 150)
     doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
-  }
-
-  withPhotos.sort((a, b) => b.timestamp - a.timestamp).forEach((event, idx) => {
-    if (y > pageH - 130) { addExpFooter(); doc.addPage(); currentPage++; y = 20 }
-
-    const contentW = pageW - marginL - marginR
-    doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.3)
-    doc.setFillColor(248, 248, 248); doc.roundedRect(marginL, y, contentW, 22, 2, 2, 'FD')
-
-    doc.setFontSize(10); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
-    doc.text(`#${idx + 1} — ${formatDateShort(event.timestamp)}`, marginL + 4, y + 6); doc.setFont('helvetica', 'normal')
-
-    doc.setFontSize(9)
-    doc.text(`Monto: ${formatCurrency(event.amount)}`, marginL + 4, y + 12)
-    doc.text(`Categoría: ${event.category || '-'}`, marginL + 60, y + 12)
-    doc.text(`Método: ${getPaymentLabel(event.payment_method)}`, marginL + 120, y + 12)
-
-    doc.setTextColor(80, 80, 80); doc.text(`Detalle: ${event.vendor || event.note || '-'}`, marginL + 4, y + 18)
-    if (event.expense_type === 'personal') {
-      doc.setTextColor(168, 85, 247); doc.text('PERSONAL', pageW - marginR - 25, y + 6)
-    }
-    y += 26
-
-    const eventPhotos: string[] = []
-    if (event.receipt_photos && event.receipt_photos.length > 0) eventPhotos.push(...event.receipt_photos)
-    else if (event.photo) eventPhotos.push(event.photo)
-
-    eventPhotos.forEach((photoData) => {
-      if (y > pageH - 120) { addExpFooter(); doc.addPage(); currentPage++; y = 20 }
-      const imgW = 160, imgH = 100, imgX = (pageW - imgW) / 2
-      try {
-        const imgSrc = photoData.startsWith('data:') ? photoData : `data:image/jpeg;base64,${photoData}`
-        doc.addImage(imgSrc, imgX, y, imgW, imgH)
-        doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2); doc.rect(imgX, y, imgW, imgH)
-      } catch {
-        doc.setDrawColor(200, 200, 200); doc.rect(imgX, y, imgW, imgH)
-        doc.setFontSize(9); doc.setTextColor(150, 150, 150); doc.text('Imagen no disponible', imgX + 50, y + 50)
-      }
-      y += imgH + 8
-    })
-    y += 10
-  })
-
-  addExpFooter()
-  const totalPages = doc.getNumberOfPages()
-  for (let i = 1; i <= totalPages; i++) {
-    doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150, 150, 150)
     doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
   }
 
-  doc.save(`Gastos-Recibos-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+  const suffix = clientFilter && clientFilter !== 'all' ? `-${clientFilter.replace(/\s+/g, '-')}` : ''
+  doc.save(`Gastos${suffix}-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
 // ============ ACCOUNTANT REPORT ============
