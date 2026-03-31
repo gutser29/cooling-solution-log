@@ -658,10 +658,20 @@ Para preguntas sobre datos, usa el CONTEXTO_DB. Ejemplos:
       const lastGeminiMsg = messages[messages.length - 1]
       const parts: any[] = []
 
-      if (lastGeminiMsg.photos && lastGeminiMsg.photos.length > 0) {
+     if (lastGeminiMsg.photos && lastGeminiMsg.photos.length > 0) {
         lastGeminiMsg.photos.forEach(photo => {
-          const base64Data = photo.replace(/^data:image\/\w+;base64,/, '')
-          parts.push({ inlineData: { mimeType: 'image/jpeg', data: base64Data } })
+          let mimeType = 'image/jpeg'
+          let base64Data = photo
+          if (photo.startsWith('data:application/pdf')) {
+            mimeType = 'application/pdf'
+            base64Data = photo.replace(/^data:application\/pdf;base64,/, '')
+          } else if (photo.startsWith('data:image/png')) {
+            mimeType = 'image/png'
+            base64Data = photo.replace(/^data:image\/png;base64,/, '')
+          } else {
+            base64Data = photo.replace(/^data:image\/\w+;base64,/, '')
+          }
+          parts.push({ inlineData: { mimeType, data: base64Data } })
         })
       }
       parts.push({ text: lastGeminiMsg.content || 'Analiza esta imagen.' })
