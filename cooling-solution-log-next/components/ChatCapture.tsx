@@ -833,13 +833,34 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
   }
 
   // ============ FOTOS ============
-  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     for (const f of files) {
-      const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f) })
       if (f.type === 'application/pdf') {
-        setPendingPhotos(prev => [...prev, b64])
+        // Convertir PDF a imágenes
+        try {
+          const pdfjsLib = await import('pdfjs-dist')
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+          const arrayBuffer = await f.arrayBuffer()
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i)
+            const scale = 2
+            const viewport = page.getViewport({ scale })
+            const canvas = document.createElement('canvas')
+            canvas.width = viewport.width
+            canvas.height = viewport.height
+            const ctx = canvas.getContext('2d')!
+          await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
+            const pageImage = canvas.toDataURL('image/jpeg', 0.85)
+            setPendingPhotos(prev => [...prev, pageImage])
+          }
+        } catch (err) {
+          console.error('PDF conversion error:', err)
+          alert('Error al leer el PDF. Intenta con screenshot.')
+        }
       } else {
+        const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(f) })
         const compressed = await compressImage(b64)
         setPendingPhotos(prev => [...prev, compressed])
       }
