@@ -978,10 +978,13 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         return
       }
 
-      if (data.type === 'RUN_RECONCILIATION') {
+     if (data.type === 'RUN_RECONCILIATION') {
         try {
-          const bankTx = await db.bank_transactions.toArray()
-          const events = await db.events.toArray()
+          const { period, periodLabel } = data.payload || { period: 'all', periodLabel: 'todo' }
+          const { startDate, endDate } = period === 'all' ? { startDate: 0, endDate: Date.now() } : getDateRange(period, periodLabel)
+          const allBankTx = await db.bank_transactions.toArray()
+          const bankTx = allBankTx.filter(t => t.date >= startDate && t.date <= endDate)
+          const events = (await db.events.toArray()).filter(e => e.timestamp >= startDate && e.timestamp <= endDate)
           const invoices = await db.invoices.toArray()
 
           let matched = 0
@@ -1750,6 +1753,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('warranties') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               🛡️ Garantías
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('bank') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              🏦 Estados de Cuenta
             </button>
             <button onClick={async () => {
               setShowMenu(false)

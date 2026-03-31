@@ -76,10 +76,18 @@ export async function POST(request: Request) {
       else if (userText.includes('discover')) cardFilter = 'discover'
       return NextResponse.json({ type: 'GENERATE_RECONCILIATION', payload: { period, periodLabel, cardFilter } })
     }
-    if (userText.includes('genera conciliacion') || userText.includes('genera conciliación') ||
+   if (userText.includes('genera conciliacion') || userText.includes('genera conciliación') ||
         userText.includes('concilia todo') || userText.includes('cruza los statements') ||
         userText.includes('reconcilia')) {
-      return NextResponse.json({ type: 'RUN_RECONCILIATION' })
+      let period: 'month' | 'year' | 'all' = 'all'
+      let periodLabel = 'todo'
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
+      for (const m of months) {
+        if (userText.includes(m)) { period = 'month'; periodLabel = m; break }
+      }
+      if (userText.includes('del año') || userText.includes('este año')) { period = 'year'; periodLabel = 'este año' }
+      if (userText.includes('mes') && period === 'all') { period = 'month'; periodLabel = 'este mes' }
+      return NextResponse.json({ type: 'RUN_RECONCILIATION', payload: { period, periodLabel } })
     }
 
     // ====== SYSTEM PROMPT ======
