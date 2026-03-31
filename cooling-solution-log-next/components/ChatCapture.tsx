@@ -840,7 +840,7 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         // Convertir PDF a imágenes
         try {
           const pdfjsLib = await import('pdfjs-dist')
-          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
           const arrayBuffer = await f.arrayBuffer()
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
           for (let i = 1; i <= pdf.numPages; i++) {
