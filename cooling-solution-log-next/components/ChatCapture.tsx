@@ -978,6 +978,75 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         return
       }
 
+      if (data.type === 'RUN_RECONCILIATION') {
+        try {
+          const bankTx = await db.bank_transactions.toArray()
+          const events = await db.events.toArray()
+          const invoices = await db.invoices.toArray()
+
+          let matched = 0
+          let unmatched = 0
+          const results: string[] = []
+
+          for (const tx of bankTx) {
+            if (tx.match_status === 'matched') { matched++; continue }
+            if (tx.category === 'payment' || tx.category === 'fee' || tx.category === 'interest') continue
+
+            const txDate = tx.date
+            const txAmt = tx.amount
+
+            // Buscar match por monto exacto + fecha cercana (±5 días)
+            const match = events.find(e => {
+              const amtMatch = Math.abs(e.amount - txAmt) < 0.02
+              const dateMatch = Math.abs(e.timestamp - txDate) < 5 * 86400000
+              const typeMatch = tx.direction === 'debit' ? e.type === 'expense' : e.type === 'income'
+              return amtMatch && dateMatch && typeMatch && !bankTx.some(other => other.match_event_id === e.id && other.id !== tx.id)
+            })
+
+            if (match) {
+              await db.bank_transactions.update(tx.id!, { match_status: 'matched', match_event_id: match.id, match_type: 'exact' })
+              matched++
+            } else {
+              // Buscar match probable (mismo monto, fecha más lejana)
+              const probable = events.find(e => {
+                const amtMatch = Math.abs(e.amount - txAmt) < 0.02
+                const dateMatch = Math.abs(e.timestamp - txDate) < 15 * 86400000
+                const typeMatch = tx.direction === 'debit' ? e.type === 'expense' : e.type === 'income'
+                return amtMatch && dateMatch && typeMatch && !bankTx.some(other => other.match_event_id === e.id && other.id !== tx.id)
+              })
+
+              if (probable) {
+                await db.bank_transactions.update(tx.id!, { match_status: 'probable', match_event_id: probable.id, match_type: 'probable' })
+                results.push(`❓ ${tx.account_name} $${txAmt} "${tx.description}" → posible match con ${probable.vendor || probable.client || probable.category} del ${new Date(probable.timestamp).toLocaleDateString('es-PR')}`)
+                matched++
+              } else {
+                await db.bank_transactions.update(tx.id!, { match_status: 'unmatched' })
+                results.push(`⚠️ ${tx.account_name} $${txAmt} del ${new Date(txDate).toLocaleDateString('es-PR')} "${tx.description}" → SIN MATCH`)
+                unmatched++
+              }
+            }
+          }
+
+          // Resumen
+          const total = bankTx.filter(t => t.category !== 'payment' && t.category !== 'fee' && t.category !== 'interest').length
+          let msg = `📊 CONCILIACIÓN COMPLETADA\n\n`
+          msg += `✅ Conciliados: ${matched} de ${total}\n`
+          msg += `⚠️ Sin match: ${unmatched}\n\n`
+
+          if (results.length > 0) {
+            msg += `DETALLES:\n${results.join('\n')}`
+          } else {
+            msg += `Todo conciliado correctamente.`
+          }
+
+          setMessages(prev => [...prev, { role: 'assistant', content: msg }])
+        } catch (e) {
+          console.error('Reconciliation error:', e)
+          setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error al reconciliar: ' + (e as any)?.message }])
+        }
+        return
+      }
+
       if (data.type === 'GENERATE_PDF') {
         const { category, period, type, payment_method } = data.payload || {}
         const { startDate, endDate } = getDateRange(period || 'month')

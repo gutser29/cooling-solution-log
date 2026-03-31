@@ -76,6 +76,11 @@ export async function POST(request: Request) {
       else if (userText.includes('discover')) cardFilter = 'discover'
       return NextResponse.json({ type: 'GENERATE_RECONCILIATION', payload: { period, periodLabel, cardFilter } })
     }
+    if (userText.includes('genera conciliacion') || userText.includes('genera conciliación') ||
+        userText.includes('concilia todo') || userText.includes('cruza los statements') ||
+        userText.includes('reconcilia')) {
+      return NextResponse.json({ type: 'RUN_RECONCILIATION' })
+    }
 
     // ====== SYSTEM PROMPT ======
     const now = new Date()
