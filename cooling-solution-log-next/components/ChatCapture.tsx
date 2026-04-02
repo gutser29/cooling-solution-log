@@ -1010,6 +1010,45 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         return
       }
 
+      if (data.type === 'NEXT_RECONCILIATION_PAGE') {
+        try {
+          const resultsStr = localStorage.getItem('cs_reconciliation_results')
+          const offset = parseInt(localStorage.getItem('cs_reconciliation_offset') || '0')
+          if (!resultsStr) {
+            setMessages(prev => [...prev, { role: 'assistant', content: 'No hay resultados de conciliación pendientes. Dime "reconcilia" para generar una nueva.' }])
+            return
+          }
+          const results = JSON.parse(resultsStr)
+          const nextBatch = results.slice(offset, offset + 10)
+
+          if (nextBatch.length === 0) {
+            setMessages(prev => [...prev, { role: 'assistant', content: '✅ Ya viste todas las transacciones pendientes. Dime "reconcilia" para actualizar.' }])
+            localStorage.removeItem('cs_reconciliation_results')
+            localStorage.removeItem('cs_reconciliation_offset')
+            return
+          }
+
+          const newOffset = offset + 10
+          localStorage.setItem('cs_reconciliation_offset', String(newOffset))
+
+          const remaining = results.length - newOffset
+          let msg = `📋 TRANSACCIONES ${offset + 1}-${offset + nextBatch.length} de ${results.length}:\n\n`
+          msg += nextBatch.join('\n')
+          if (remaining > 0) {
+            msg += `\n\n📋 Quedan ${remaining} más. Dime "siguientes" para ver las próximas 10.`
+          } else {
+            msg += `\n\n✅ Esas son todas. Dime "reconcilia" para actualizar después de registrar gastos.`
+            localStorage.removeItem('cs_reconciliation_results')
+            localStorage.removeItem('cs_reconciliation_offset')
+          }
+
+          setMessages(prev => [...prev, { role: 'assistant', content: msg }])
+        } catch (e) {
+          setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error: ' + (e as any)?.message }])
+        }
+        return
+      }
+
      if (data.type === 'RUN_RECONCILIATION') {
         try {
           const { period, periodLabel } = data.payload || { period: 'all', periodLabel: 'todo' }
@@ -1090,15 +1129,31 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
 
           // Resumen
           const total = bankTx.filter(t => t.category !== 'payment' && t.category !== 'fee' && t.category !== 'interest').length
+          const unmatchedList = results.filter(r => r.startsWith('⚠️'))
+          const probableList = results.filter(r => r.startsWith('❓'))
+
           let msg = `📊 CONCILIACIÓN COMPLETADA\n\n`
           msg += `✅ Conciliados: ${matched} de ${total}\n`
-          msg += `⚠️ Sin match: ${unmatched}\n\n`
+          msg += `⚠️ Sin match: ${unmatched}\n`
+          if (probableList.length > 0) msg += `❓ Probables: ${probableList.length}\n`
+          msg += `\n`
 
-          if (results.length > 0) {
-            msg += `DETALLES:\n${results.join('\n')}`
-          } else {
+          if (results.length === 0) {
             msg += `Todo conciliado correctamente.`
+          } else {
+            // Mostrar solo los primeros 10
+            const first10 = results.slice(0, 10)
+            msg += `MOSTRANDO 1-${first10.length} de ${results.length}:\n${first10.join('\n')}`
+            if (results.length > 10) {
+              msg += `\n\n📋 Quedan ${results.length - 10} más. Cuando termines con estas, dime "siguientes" o "más transacciones" para ver las próximas 10.`
+            }
           }
+
+          // Guardar las pendientes en localStorage para paginación
+          try {
+            localStorage.setItem('cs_reconciliation_results', JSON.stringify(results))
+            localStorage.setItem('cs_reconciliation_offset', '10')
+          } catch {}
 
           setMessages(prev => [...prev, { role: 'assistant', content: msg }])
         } catch (e) {

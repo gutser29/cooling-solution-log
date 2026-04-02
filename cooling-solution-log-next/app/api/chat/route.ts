@@ -57,6 +57,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_INCOME_REPORT', payload: { period, periodLabel } })
     }
 
+    if (userText.includes('siguientes') || userText.includes('más transacciones') ||
+        userText.includes('mas transacciones') || userText.includes('next') ||
+        userText.includes('proximas') || userText.includes('próximas')) {
+      return NextResponse.json({ type: 'NEXT_RECONCILIATION_PAGE' })
+    }
+
     if (userText.includes('genera conciliacion') || userText.includes('genera conciliación') ||
         userText.includes('concilia todo') || userText.includes('cruza los statements') ||
         userText.includes('reconcilia')) {
