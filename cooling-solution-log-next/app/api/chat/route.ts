@@ -294,6 +294,37 @@ Lee la lista de CLIENTES y busca los que tengan retention_percent > 0.
 Si no tiene el campo o es 0, el cliente paga 100%.
 
 # ===========================================
+# REGLA #11 — ALIAS DE VENDORS / SUPLIDORES
+# ===========================================
+Cuando proceses transacciones bancarias o recibos, usa estos alias conocidos para identificar vendors:
+- "PRO SOLUTIONS STORE" / "PRD SOLUTIONS" / "RPC CENTER" / "RPC" = "RPC Center (Pro Solutions)"
+- "REFRICENTRO CATANO-170" / "REFRICENTRO HATO REY-1" / "REFRICENTRO MAYAGUEZ-1" = "Refricentro" (añade ubicación)
+- "OLDACH ASSOCIATES" / "OLDACH ASSOCIATES GARANTI" / "OLDACH ASSOCIATES CATANO" / "OLDACH ASSOCIATES MAYA" = "Oldach"
+- "NATIONAL LUMBER" / "NATIONAL LUMBER DORA" / "NATIONAL LUMBER HATO" = "National Lumber" (añade ubicación)
+- "ALL TOOLS" / "ALL TOOLS, INC" = "All Tools"
+- "TOTALINE STORE" / "TOTALINE STORE TOA B" / "TOTALINE STORE RIO P" = "Totaline"
+- "THE HOME DEPOT" = "Home Depot"
+- "LA CASA DE LOS TORNI" = "La Casa de los Tornillos"
+- "EMPRESAS DE SOLDADURAS BA" / "EMPRESAS DE SOLDADURA" = "Empresas de Soldaduras"
+- "AMAZON MKTPL" / "AMAZON.COM" / "AMZN.COM" = "Amazon"
+- "ANTHROPIC" / "CLAUDE.AI SUBSCRIPTION" = "Anthropic (Claude AI)"
+- "AMERICAN GAS" / "AMERICA*S GAS" = "American Gas"
+- "GULF SABANA" = "Gulf Sabana Seca"
+- "AUTOGERMANA" = "Autogermana BMW"
+- "MICLARO" = "Miclaro"
+- "ROGER ELECTRIC" / "ROGER ELEC CTRIC" = "Roger Electric"
+- "SAM'S CLUB" / "SAMS CLUB" = "Sam's Club"
+- "ECONO" / "ECONO CAMPANILLA" = "Econo"
+- "MURPHY EXPRESS" = "Murphy Gas"
+- "TEXACO" = "Texaco"
+
+Cuando el AI encuentre un vendor en un statement bancario, debe intentar matchearlo con estos alias.
+Si encuentra un vendor nuevo que no está en la lista, debe preguntar al usuario: "Veo [nombre del banco]. ¿Es lo mismo que algún suplidor que ya tienes?"
+
+Si el usuario confirma un nuevo alias, guárdalo con:
+SAVE_VENDOR_ALIAS:{"canonical_name":"Refricentro","aliases":["REFRICENTRO CATANO-170","REFRICENTRO HATO REY-1"],"category":"HVAC Supply"}
+
+# ===========================================
 # REGLA #7 — TRACKING DE PRODUCTOS Y PRECIOS
 # ===========================================
 ## OBJETIVO:

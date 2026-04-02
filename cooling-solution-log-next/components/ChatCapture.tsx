@@ -155,7 +155,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -745,6 +745,16 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }
         } catch {}
 
+        // Vendor aliases para contexto
+        try {
+          const aliases = await db.vendor_aliases.toArray()
+          if (aliases.length > 0) {
+            ctx += '\n\nALIAS DE VENDORS:\n' + aliases.map((a: any) =>
+              `${a.canonical_name}: ${(a.aliases || []).join(', ')}`
+            ).join('\n')
+          }
+        } catch {}
+
         // Historial de precios de productos
         try {
           const prices = await db.table('product_prices').toArray()
@@ -1007,6 +1017,7 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           const allBankTx = await db.bank_transactions.toArray()
           const bankTx = allBankTx.filter(t => t.date >= startDate && t.date <= endDate)
           const events = (await db.events.toArray()).filter(e => e.timestamp >= startDate && e.timestamp <= endDate)
+          const vendorAliases = await db.vendor_aliases.toArray()
           const invoices = await db.invoices.toArray()
 
           let matched = 0
@@ -1020,11 +1031,31 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             const txDate = tx.date
             const txAmt = tx.amount
 
-            // Buscar match por monto exacto + fecha cercana (±5 días)
+            // Función para verificar si vendor del banco matchea con vendor del evento
+            const vendorMatch = (bankDesc: string, eventVendor: string): boolean => {
+              if (!bankDesc || !eventVendor) return false
+              const bd = bankDesc.toLowerCase()
+              const ev = eventVendor.toLowerCase()
+              // Match directo
+              if (bd.includes(ev) || ev.includes(bd)) return true
+              // Match por aliases
+              for (const alias of vendorAliases) {
+                const canonical = (alias.canonical_name || '').toLowerCase()
+                const aliases = (alias.aliases || []).map((a: string) => a.toLowerCase())
+                const allNames = [canonical, ...aliases]
+                const bankInAlias = allNames.some(name => bd.includes(name) || name.includes(bd.substring(0, 10)))
+                const eventInAlias = allNames.some(name => ev.includes(name) || name.includes(ev))
+                if (bankInAlias && eventInAlias) return true
+              }
+              return false
+            }
+
+            // Match exacto: mismo monto + fecha cercana + tipo correcto
             const match = events.find(e => {
               const amtMatch = Math.abs(e.amount - txAmt) < 0.02
               const dateMatch = Math.abs(e.timestamp - txDate) < 5 * 86400000
               const typeMatch = tx.direction === 'debit' ? e.type === 'expense' : e.type === 'income'
+              const vMatch = vendorMatch(tx.description, e.vendor || e.client || '')
               return amtMatch && dateMatch && typeMatch && !bankTx.some(other => other.match_event_id === e.id && other.id !== tx.id)
             })
 
@@ -1032,12 +1063,17 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
               await db.bank_transactions.update(tx.id!, { match_status: 'matched', match_event_id: match.id, match_type: 'exact' })
               matched++
             } else {
-              // Buscar match probable (mismo monto, fecha más lejana)
+              // Match probable: mismo monto + fecha más lejana O mismo vendor + fecha cercana
               const probable = events.find(e => {
                 const amtMatch = Math.abs(e.amount - txAmt) < 0.02
                 const dateMatch = Math.abs(e.timestamp - txDate) < 15 * 86400000
                 const typeMatch = tx.direction === 'debit' ? e.type === 'expense' : e.type === 'income'
-                return amtMatch && dateMatch && typeMatch && !bankTx.some(other => other.match_event_id === e.id && other.id !== tx.id)
+                const vMatch = vendorMatch(tx.description, e.vendor || e.client || '')
+                // Monto exacto + fecha lejana
+                const byAmount = amtMatch && dateMatch && typeMatch
+                // Vendor matchea + monto cercano (±10%) + fecha cercana
+                const byVendor = vMatch && Math.abs(e.amount - txAmt) / txAmt < 0.1 && Math.abs(e.timestamp - txDate) < 10 * 86400000 && typeMatch
+                return (byAmount || byVendor) && !bankTx.some(other => other.match_event_id === e.id && other.id !== tx.id)
               })
 
               if (probable) {
@@ -1551,6 +1587,31 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           } catch (e) {
             console.error('SAVE_PRODUCT error:', e)
           }
+        }
+      }
+
+      // ====== PROCESS SAVE_VENDOR_ALIAS ======
+      const aliasData = extractJSON(assistantText, 'SAVE_VENDOR_ALIAS:')
+      if (aliasData) {
+        try {
+          const now = Date.now()
+          const existing = (await db.vendor_aliases.toArray()).find((a: any) => a.canonical_name === aliasData.canonical_name)
+          if (existing) {
+            const mergedAliases = [...new Set([...(existing.aliases || []), ...(aliasData.aliases || [])])]
+            await db.vendor_aliases.update(existing.id!, { aliases: mergedAliases })
+            savedItems.push(`Alias actualizado: ${aliasData.canonical_name} (${mergedAliases.length} aliases)`)
+          } else {
+            await db.vendor_aliases.add({
+              canonical_name: aliasData.canonical_name || '',
+              aliases: aliasData.aliases || [],
+              category: aliasData.category || '',
+              created_at: now
+            })
+            savedItems.push(`Nuevo vendor: ${aliasData.canonical_name}`)
+          }
+          needsSync = true
+        } catch (e) {
+          console.error('SAVE_VENDOR_ALIAS error:', e)
         }
       }
 
