@@ -723,6 +723,28 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }
         } catch {}
 
+        // Transacciones bancarias
+        try {
+          const bankTx = await db.bank_transactions.toArray()
+          if (bankTx.length > 0) {
+            const byAccount: Record<string, any[]> = {}
+            bankTx.forEach((t: any) => {
+              const acct = t.account_name || 'unknown'
+              if (!byAccount[acct]) byAccount[acct] = []
+              byAccount[acct].push(t)
+            })
+            ctx += '\n\nTRANSACCIONES BANCARIAS GUARDADAS:\n'
+            Object.entries(byAccount).forEach(([acct, txs]) => {
+              const debits = txs.filter(t => t.direction === 'debit').reduce((s, t) => s + t.amount, 0)
+              const credits = txs.filter(t => t.direction === 'credit').reduce((s, t) => s + t.amount, 0)
+              const matched = txs.filter(t => t.match_status === 'matched').length
+              const unmatched = txs.filter(t => t.match_status === 'unmatched').length
+              const pending = txs.filter(t => t.match_status === 'pending').length
+              ctx += `${acct}: ${txs.length} transacciones | Débitos: $${debits.toFixed(2)} | Créditos: $${credits.toFixed(2)} | ✅${matched} ⚠️${unmatched} ⏳${pending}\n`
+            })
+          }
+        } catch {}
+
         // Historial de precios de productos
         try {
           const prices = await db.table('product_prices').toArray()
