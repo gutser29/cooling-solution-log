@@ -270,6 +270,29 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
     doc.setFont('helvetica', 'normal')
   }
 
+  // Retención Hacienda
+  if (invoice.retention_percent && invoice.retention_percent > 0) {
+    const retAmt = invoice.retention_amount ?? (invoice.total * invoice.retention_percent / 100)
+    const netAmt = invoice.total - retAmt
+    y += 10
+    y = checkPageBreak(20, y)
+    doc.setDrawColor(220, 170, 0)
+    doc.setLineWidth(0.2)
+    doc.line(labelX, y - 2, valueX, y - 2)
+    doc.setFontSize(9)
+    doc.setTextColor(160, 120, 0)
+    doc.text(`Retención Hacienda (${invoice.retention_percent}%)`, labelX, y)
+    doc.text(`-${formatCurrency(retAmt)}`, valueX, y, { align: 'right' })
+    y += 7
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(34, 120, 34)
+    doc.text('NETO A RECIBIR', labelX, y)
+    doc.text(`${formatCurrency(netAmt)} USD`, valueX, y, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+  }
+
 
   // === PAID STAMP ===
   if (invoice.status === 'paid' && invoice.paid_date) {
@@ -1595,17 +1618,8 @@ export function generateIncomeByClientReport(
     if (!byClient[name]) byClient[name] = { total: 0, count: 0, retention: 0, events: [] }
     byClient[name].total += e.amount
     byClient[name].count++
+    byClient[name].retention += e.retention_amount || 0
     byClient[name].events.push(e)
-  })
-
-  // Check retention per client
-  clients.forEach(c => {
-    const name = `${c.first_name} ${c.last_name}`.trim()
-    if (byClient[name] && (c as any).retention_percent > 0) {
-      const pct = (c as any).retention_percent
-      const facturado = byClient[name].total / (1 - pct / 100)
-      byClient[name].retention = facturado - byClient[name].total
-    }
   })
 
   const totalIncome = income.reduce((s, e) => s + e.amount, 0)

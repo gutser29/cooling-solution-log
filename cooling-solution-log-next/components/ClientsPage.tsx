@@ -323,7 +323,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         last_name: (editForm.last_name || selectedClient.last_name).trim(),
         phone: editForm.phone || '', email: editForm.email || '',
         address: editForm.address || '', type: editForm.type || selectedClient.type,
-       notes: editForm.notes || '', updated_at: Date.now(), ...(Number((editForm as any).retention_percent) ? { retention_percent: Number((editForm as any).retention_percent) } : {})
+       notes: editForm.notes || '', updated_at: Date.now(), retention_percent: Number((editForm as Client).retention_percent) || undefined
       })
       const updated = await db.clients.get(selectedClient.id)
       if (updated) { setSelectedClient(updated); setViewMode('detail'); loadClients() }
@@ -338,7 +338,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         first_name: (editForm.first_name || '').trim(), last_name: (editForm.last_name || '').trim(),
         phone: editForm.phone || '', email: editForm.email || '',
         address: editForm.address || '', type: editForm.type || 'residential',
-       notes: editForm.notes || '', active: true, created_at: now, updated_at: now, ...(Number((editForm as any).retention_percent) ? { retention_percent: Number((editForm as any).retention_percent) } : {})
+       notes: editForm.notes || '', active: true, created_at: now, updated_at: now, retention_percent: Number((editForm as Client).retention_percent) || undefined
       })
       setViewMode('list'); loadClients()
     } catch { alert('Error al crear cliente') }
@@ -550,7 +550,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <div><label className="text-xs text-gray-400 mb-1 block">Notas</label>
               <textarea value={editForm.notes || ''} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm h-20" placeholder="Notas..." /></div>
             <div><label className="text-xs text-gray-400 mb-1 block">⚠️ Retención Hacienda (%)</label>
-              <input type="number" step="0.5" value={(editForm as any).retention_percent || ''} onChange={e => setEditForm(f => ({ ...f, retention_percent: Number(e.target.value) || 0 } as any))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="0 = sin retención" /></div>
+              <input type="number" step="0.5" value={(editForm as Client).retention_percent || ''} onChange={e => setEditForm(f => ({ ...f, retention_percent: Number(e.target.value) || undefined }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="0 = sin retención" /></div>
           </div>
           {!isNew && selectedClient && (
             <button onClick={() => setConfirmAction({ show: true, title: selectedClient.active ? 'Desactivar' : 'Reactivar', message: `¿${selectedClient.active ? 'Desactivar' : 'Reactivar'} a ${selectedClient.first_name}?`, action: toggleActive })}

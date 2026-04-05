@@ -25,6 +25,7 @@ export interface EventRecord {
   expense_type?: 'personal' | 'business'
   location_id?: number
   receipt_photos?: string[]
+  retention_amount?: number
 }
 
 // ========== CLIENT LOCATIONS ==========
@@ -60,6 +61,7 @@ export interface Client {
   address?: string
   type: 'residential' | 'commercial'
   notes?: string
+  retention_percent?: number
   created_at: number
   updated_at?: number
   active: boolean
@@ -249,6 +251,9 @@ export interface Invoice {
   updated_at: number
   location_id?: number
   location_name?: string
+  retention_percent?: number
+  retention_amount?: number
+  payment_date?: number
 }
 
 // ========== JOB TEMPLATES ==========

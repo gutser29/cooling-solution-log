@@ -10,7 +10,7 @@ interface InvoicesPageProps {
   onNavigate: (page: string) => void
 }
 
-type ViewMode = 'list' | 'create' | 'edit' | 'detail'
+type ViewMode = 'list' | 'create' | 'edit' | 'detail' | 'groupPay'
 type Tab = 'invoices' | 'quotes'
 
 const emptyItem = (): InvoiceItem => ({ description: '', quantity: 1, unit_price: 0, total: 0 })
@@ -46,6 +46,18 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [formLocationId, setFormLocationId] = useState<number | undefined>(undefined)
   const [formLocationName, setFormLocationName] = useState('')
   const [clientLocations, setClientLocations] = useState<ClientLocation[]>([])
+  const [formRetentionPercent, setFormRetentionPercent] = useState(0)
+  // Feature 1: pending payment with custom date
+  const [pendingPayMethod, setPendingPayMethod] = useState<string | null>(null)
+  const [pendingPayDate, setPendingPayDate] = useState('')
+  // Feature 2: group pay
+  const [groupPayClientId, setGroupPayClientId] = useState<number | undefined>()
+  const [groupPayClientName, setGroupPayClientName] = useState('')
+  const [groupPayRetentionPct, setGroupPayRetentionPct] = useState(0)
+  const [groupPaySelected, setGroupPaySelected] = useState<Set<number>>(new Set())
+  const [groupPayDate, setGroupPayDate] = useState(new Date().toISOString().split('T')[0])
+  const [groupPayMethod, setGroupPayMethod] = useState('check')
+  const [groupPayBusy, setGroupPayBusy] = useState(false)
 
   const loadAll = useCallback(async () => {
     const all = await db.invoices.orderBy('created_at').reverse().toArray()
@@ -112,6 +124,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormClientId(c.id)
     setFormLocationId(undefined)
     setFormLocationName('')
+    setFormRetentionPercent(c.retention_percent || 0)
     setShowClientPicker(false)
     setClientSearch('')
     try {
@@ -160,6 +173,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormClientId(undefined)
     setFormLocationId(undefined)
     setFormLocationName('')
+    setFormRetentionPercent(0)
     setClientLocations([])
     setSelected(null)
   }
@@ -187,6 +201,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormClientId(inv.client_id)
     setFormLocationId(inv.location_id)
     setFormLocationName(inv.location_name || '')
+    setFormRetentionPercent(inv.retention_percent || 0)
     if (inv.client_id) {
       db.client_locations.where('client_id').equals(inv.client_id).filter(l => l.active).toArray()
         .then(locs => setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))))
@@ -215,6 +230,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const locationData = formLocationId
       ? { location_id: formLocationId, location_name: formLocationName || undefined }
       : { location_id: undefined, location_name: undefined }
+    const retentionData = formRetentionPercent > 0 ? { retention_percent: formRetentionPercent } : { retention_percent: undefined }
 
     if (selected?.id && viewMode === 'edit') {
       await db.invoices.update(selected.id, {
@@ -224,6 +240,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         client_email: formClientEmail.trim() || undefined,
         client_address: formClientAddress.trim() || undefined,
         ...locationData,
+        ...retentionData,
         items: validItems,
         subtotal,
         tax_rate: formTaxRate,
@@ -250,6 +267,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         client_email: formClientEmail.trim() || undefined,
         client_address: formClientAddress.trim() || undefined,
         ...locationData,
+        ...retentionData,
         items: validItems,
         subtotal,
         tax_rate: formTaxRate,
@@ -275,30 +293,38 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     loadAll()
   }
 
-  const updateStatus = async (inv: Invoice, status: Invoice['status'], paidMethod?: string) => {
+  const updateStatus = async (inv: Invoice, status: Invoice['status'], paidMethod?: string, paymentDateMs?: number, retentionAmount?: number) => {
     if (!inv.id) return
     const now = Date.now()
+    const paymentTs = paymentDateMs || now
     const update: Partial<Invoice> = { status, updated_at: now }
-    
+
     if (status === 'paid') {
-      update.paid_date = now
+      const retention = retentionAmount ?? (inv.retention_percent ? Math.round(inv.total * inv.retention_percent) / 100 : 0)
+      const netAmount = inv.total - retention
+      update.paid_date = paymentTs
+      update.payment_date = paymentTs
       update.paid_method = paidMethod || 'cash'
-      
+      update.retention_amount = retention || undefined
+
       await db.events.add({
-        timestamp: now,
+        timestamp: paymentTs,
         type: 'income',
         status: 'completed',
         category: 'factura',
-        amount: inv.total,
+        amount: netAmount,
         payment_method: paidMethod || 'cash',
         client: inv.client_name,
-        note: `Factura ${inv.invoice_number} pagada`,
+        client_id: inv.client_id,
+        location_id: inv.location_id,
+        retention_amount: retention || undefined,
+        note: retention > 0
+          ? `Factura ${inv.invoice_number} — Retención ${retention.toFixed(2)} = $${netAmount.toFixed(2)} recibido`
+          : `Factura ${inv.invoice_number} pagada`,
         expense_type: 'business'
       })
-      
-      console.log('✅ Income event created:', inv.total, inv.client_name)
     }
-    
+
     await db.invoices.update(inv.id, update)
     loadAll()
     if (selected?.id === inv.id) {
@@ -782,11 +808,39 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                     { key: 'zelle', label: '⚡ Zelle' },
                     { key: 'transfer', label: '🔄 Transferencia' },
                   ].map(method => (
-                    <button key={method.key} onClick={() => updateStatus(selected, 'paid', method.key)} className="py-2.5 rounded-xl text-xs font-medium bg-green-900/30 text-green-400 border border-green-800/30">
+                    <button key={method.key}
+                      onClick={() => { setPendingPayMethod(method.key); setPendingPayDate(new Date().toISOString().split('T')[0]) }}
+                      className={`py-2.5 rounded-xl text-xs font-medium border ${pendingPayMethod === method.key ? 'bg-green-600 text-white border-green-500' : 'bg-green-900/30 text-green-400 border-green-800/30'}`}>
                       {method.label}
                     </button>
                   ))}
                 </div>
+                {pendingPayMethod && (
+                  <div className="bg-[#0b1220] rounded-xl p-3 border border-green-700/40 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs text-gray-400 whitespace-nowrap">📅 Fecha de pago</label>
+                      <input
+                        type="date"
+                        value={pendingPayDate}
+                        onChange={e => setPendingPayDate(e.target.value)}
+                        className="flex-1 bg-[#111a2e] border border-white/10 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      />
+                    </div>
+                    {selected.retention_percent ? (
+                      <div className="text-xs text-yellow-400 bg-yellow-900/20 rounded-lg p-2">
+                        ⚠️ Retención {selected.retention_percent}%: se registrará ${(selected.total * selected.retention_percent / 100).toFixed(2)} retenido, ${(selected.total * (1 - selected.retention_percent / 100)).toFixed(2)} recibido
+                      </div>
+                    ) : null}
+                    <div className="flex gap-2">
+                      <button onClick={() => setPendingPayMethod(null)} className="flex-1 py-2 rounded-lg bg-gray-700 text-gray-300 text-sm">Cancelar</button>
+                      <button onClick={() => {
+                        const dateMs = pendingPayDate ? new Date(pendingPayDate + 'T12:00:00').getTime() : Date.now()
+                        updateStatus(selected, 'paid', pendingPayMethod, dateMs)
+                        setPendingPayMethod(null)
+                      }} className="flex-1 py-2 rounded-lg bg-green-600 text-white text-sm font-medium">✅ Confirmar pago</button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {selected.status !== 'paid' && selected.status !== 'cancelled' && (
@@ -813,6 +867,132 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     )
   }
 
+  // ========== GROUP PAY VIEW ==========
+  if (viewMode === 'groupPay') {
+    const unpaidInvoices = invoices.filter(i => i.type === 'invoice' && (i.status === 'sent' || i.status === 'overdue' || i.status === 'draft'))
+    const clientsWithUnpaid = clients.filter(c => unpaidInvoices.some(i => i.client_id === c.id))
+    const clientUnpaid = groupPayClientId ? unpaidInvoices.filter(i => i.client_id === groupPayClientId) : []
+    const selectedInvoices = clientUnpaid.filter(i => groupPaySelected.has(i.id!))
+    const totalFacturado = selectedInvoices.reduce((s, i) => s + i.total, 0)
+    const totalRetencion = groupPayRetentionPct > 0 ? totalFacturado * groupPayRetentionPct / 100 : 0
+    const totalNeto = totalFacturado - totalRetencion
+
+    const executeGroupPay = async () => {
+      if (selectedInvoices.length === 0 || !groupPayDate) return
+      setGroupPayBusy(true)
+      try {
+        const dateMs = new Date(groupPayDate + 'T12:00:00').getTime()
+        for (const inv of selectedInvoices) {
+          const retention = groupPayRetentionPct > 0 ? inv.total * groupPayRetentionPct / 100 : 0
+          await updateStatus(inv, 'paid', groupPayMethod, dateMs, retention)
+        }
+        setViewMode('list')
+      } catch (e) { alert('Error: ' + String(e)) }
+      finally { setGroupPayBusy(false) }
+    }
+
+    return (
+      <div className="min-h-screen bg-[#0b1220] text-gray-100">
+        <div className="sticky top-0 z-30 bg-gradient-to-r from-yellow-600 to-orange-600 text-white p-4 shadow-lg flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setViewMode('list')} className="text-lg">←</button>
+            <h1 className="text-xl font-bold">💰 Pago Grupal</h1>
+          </div>
+        </div>
+        <div className="p-4 max-w-2xl mx-auto space-y-4">
+
+          {/* Step 1: pick client */}
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+            <p className="text-sm font-semibold text-gray-300 mb-3">👤 Cliente</p>
+            <select value={groupPayClientId ?? ''} onChange={e => {
+              const id = Number(e.target.value) || undefined
+              setGroupPayClientId(id)
+              setGroupPaySelected(new Set())
+              const client = clients.find(c => c.id === id)
+              setGroupPayClientName(client ? `${client.first_name} ${client.last_name}`.trim() : '')
+              setGroupPayRetentionPct(client?.retention_percent || 0)
+            }} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2.5 text-sm">
+              <option value="">Seleccionar cliente...</option>
+              {clientsWithUnpaid.map(c => (
+                <option key={c.id} value={c.id}>{c.first_name} {c.last_name}{c.retention_percent ? ` ⚠️ ${c.retention_percent}%` : ''}</option>
+              ))}
+            </select>
+            {groupPayRetentionPct > 0 && (
+              <p className="text-xs text-yellow-400 mt-2">⚠️ Este cliente tiene retención de Hacienda del {groupPayRetentionPct}%</p>
+            )}
+          </div>
+
+          {/* Step 2: select invoices */}
+          {groupPayClientId && (
+            <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
+              <div className="flex justify-between items-center mb-3">
+                <p className="text-sm font-semibold text-gray-300">🧾 Facturas pendientes</p>
+                <button onClick={() => {
+                  if (groupPaySelected.size === clientUnpaid.length) setGroupPaySelected(new Set())
+                  else setGroupPaySelected(new Set(clientUnpaid.map(i => i.id!)))
+                }} className="text-xs text-blue-400">
+                  {groupPaySelected.size === clientUnpaid.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                </button>
+              </div>
+              {clientUnpaid.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No hay facturas pendientes</p>
+              ) : clientUnpaid.map(inv => (
+                <label key={inv.id} className="flex items-center gap-3 py-2.5 border-b border-white/5 last:border-0 cursor-pointer">
+                  <input type="checkbox" checked={groupPaySelected.has(inv.id!)}
+                    onChange={e => setGroupPaySelected(prev => { const s = new Set(prev); e.target.checked ? s.add(inv.id!) : s.delete(inv.id!); return s })}
+                    className="w-4 h-4 rounded" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-200">#{inv.invoice_number}</p>
+                    <p className="text-xs text-gray-500">{fmtDate(inv.issue_date)}{inv.service_date ? ` • Svc: ${fmtDate(inv.service_date)}` : ''}</p>
+                  </div>
+                  <p className="text-sm font-medium text-green-400">{fmt(inv.total)}</p>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {/* Step 3: payment details + summary */}
+          {selectedInvoices.length > 0 && (
+            <>
+              <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-3">
+                <p className="text-sm font-semibold text-gray-300">💳 Método y fecha</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <select value={groupPayMethod} onChange={e => setGroupPayMethod(e.target.value)} className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm">
+                    {[['cash','💵 Efectivo'],['check','📝 Cheque'],['ach','🏦 ACH'],['ath_movil','📱 ATH Móvil'],['transfer','🔄 Transferencia'],['zelle','⚡ Zelle'],['credit_card','💳 Tarjeta']].map(([k,l]) => (
+                      <option key={k} value={k}>{l}</option>
+                    ))}
+                  </select>
+                  <input type="date" value={groupPayDate} onChange={e => setGroupPayDate(e.target.value)}
+                    className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200" />
+                </div>
+              </div>
+
+              <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-2">
+                <p className="text-sm font-semibold text-gray-300 mb-1">📊 Resumen</p>
+                <div className="flex justify-between text-sm"><span className="text-gray-400">Facturas seleccionadas</span><span className="text-gray-200">{selectedInvoices.length}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-400">Total facturado</span><span className="text-gray-200">{fmt(totalFacturado)}</span></div>
+                {totalRetencion > 0 && (
+                  <>
+                    <div className="flex justify-between text-sm"><span className="text-yellow-400">Retención Hacienda ({groupPayRetentionPct}%)</span><span className="text-yellow-400">-{fmt(totalRetencion)}</span></div>
+                    <div className="flex justify-between text-lg font-bold pt-2 border-t border-white/10"><span className="text-green-400">Neto a recibir</span><span className="text-green-400">{fmt(totalNeto)}</span></div>
+                  </>
+                )}
+                {totalRetencion === 0 && (
+                  <div className="flex justify-between text-lg font-bold pt-2 border-t border-white/10"><span className="text-green-400">Total a recibir</span><span className="text-green-400">{fmt(totalFacturado)}</span></div>
+                )}
+              </div>
+
+              <button onClick={executeGroupPay} disabled={groupPayBusy || !groupPayDate}
+                className="w-full py-4 rounded-xl text-base font-bold bg-green-600 text-white disabled:opacity-50">
+                {groupPayBusy ? 'Procesando...' : `✅ Confirmar pago de ${selectedInvoices.length} factura${selectedInvoices.length > 1 ? 's' : ''}`}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   // ========== LIST VIEW ==========
   return (
     <div className="min-h-screen bg-[#0b1220] text-gray-100">
@@ -821,12 +1001,14 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           <button onClick={() => onNavigate('dashboard')} className="text-lg">←</button>
           <h1 className="text-xl font-bold">🧾 Facturación</h1>
         </div>
-        <button
-          onClick={() => startCreate(tab === 'quotes' ? 'quote' : 'invoice')}
-          className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium"
-        >
-          + {tab === 'quotes' ? 'Cotización' : 'Factura'}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => { setGroupPayClientId(undefined); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()); setGroupPayDate(new Date().toISOString().split('T')[0]); setGroupPayMethod('check'); setViewMode('groupPay') }}
+            className="bg-yellow-600 rounded-lg px-3 py-1.5 text-sm font-medium">💰 Grupal</button>
+          <button onClick={() => startCreate(tab === 'quotes' ? 'quote' : 'invoice')}
+            className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">
+            + {tab === 'quotes' ? 'Cotización' : 'Factura'}
+          </button>
+        </div>
       </div>
 
       <div className="flex border-b border-white/10">

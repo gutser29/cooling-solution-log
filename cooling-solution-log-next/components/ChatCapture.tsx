@@ -618,7 +618,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         const clients = await db.clients.toArray().then(all => all.filter(c => c.active === true || (c.active as any) === 1))
         if (clients.length > 0) {
         ctx += '\n\nCLIENTES:\n' + clients.map(c =>
-            `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}${c.address ? ' | 📍 ' + c.address : ''}${(c as any).retention_percent ? ' | ⚠️ Retención: ' + (c as any).retention_percent + '%' : ''}${c.notes ? ' | ' + c.notes : ''}`
+            `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}${c.address ? ' | 📍 ' + c.address : ''}${c.retention_percent ? ' | ⚠️ Retención: ' + c.retention_percent + '%' : ''}${c.notes ? ' | ' + c.notes : ''}`
           ).join('\n')
         }
 
