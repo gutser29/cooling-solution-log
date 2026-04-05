@@ -144,8 +144,13 @@ export default function ReportsPage({ onNavigate }: ReportsPageProps) {
           break
         }
         case 'accountant': {
-          const invoices = await db.invoices.toArray()
-          generateAccountantReport(events, invoices, startDate, endDate, label)
+          const [invoices, employees, bankTxs, bankAccounts] = await Promise.all([
+            db.invoices.toArray(),
+            db.employees.toArray(),
+            db.bank_transactions.toArray(),
+            db.bank_accounts.toArray(),
+          ])
+          generateAccountantReport(events, invoices, employees, bankTxs, bankAccounts, startDate, endDate, label)
           showMsg(`✅ Reporte para contable de ${label}`)
           break
         }

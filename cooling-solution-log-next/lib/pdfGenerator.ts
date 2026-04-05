@@ -1130,123 +1130,657 @@ export function generateExpenseReceiptsReport(
   doc.save(`Gastos${suffix}-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
-// ============ ACCOUNTANT REPORT ============
+// ============ ACCOUNTANT REPORT (multi-page) ============
 export function generateAccountantReport(
   events: EventRecord[],
   invoices: Invoice[],
+  employees: Employee[],
+  bankTxs: any[],
+  bankAccounts: any[],
   startDate: number,
   endDate: number,
   periodLabel: string
 ) {
-  const filtered = events.filter(e => e.timestamp >= startDate && e.timestamp <= endDate)
-  const businessEvents = filtered.filter(e => e.expense_type !== 'personal')
-  const personalExpenses = filtered.filter(e => e.type === 'expense' && e.expense_type === 'personal')
-
-  const income = businessEvents.filter(e => e.type === 'income')
-  const expenses = businessEvents.filter(e => e.type === 'expense')
-  const totalIncome = income.reduce((s, e) => s + e.amount, 0)
-  const totalExpense = expenses.reduce((s, e) => s + e.amount, 0)
-  const totalPersonal = personalExpenses.reduce((s, e) => s + e.amount, 0)
-  const profit = totalIncome - totalExpense
-
-  const periodInvoices = invoices.filter(inv => inv.type === 'invoice' && inv.created_at >= startDate && inv.created_at <= endDate)
-  const taxCollected = periodInvoices.reduce((s, inv) => s + (inv.tax_amount || 0), 0)
-
-  const expByCat: Record<string, number> = {}
-  expenses.forEach(e => { expByCat[e.category || 'Otros'] = (expByCat[e.category || 'Otros'] || 0) + e.amount })
-  const incByCat: Record<string, number> = {}
-  income.forEach(e => { incByCat[e.category || 'Otros'] = (incByCat[e.category || 'Otros'] || 0) + e.amount })
-  const expByMethod: Record<string, number> = {}
-  expenses.forEach(e => { expByMethod[e.payment_method || 'other'] = (expByMethod[e.payment_method || 'other'] || 0) + e.amount })
-
   const doc = new jsPDF()
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
-  const marginL = 20, marginR = 20
+  const mL = 14, mR = 14
 
-  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - marginR - 40, 10, 40, 17) } catch { }
+  // Guard: if y is too close to bottom, add page and reset
+  const chk = (y: number, reserve = 45): number => {
+    if (y > pageH - reserve) { doc.addPage(); return 20 }
+    return y
+  }
 
-  doc.setFontSize(18); doc.setTextColor(0, 150, 150); doc.text(COMPANY_NAME, marginL, 18)
-  doc.setFontSize(13); doc.setTextColor(40, 40, 40); doc.text(`Reporte para Contable - ${periodLabel}`, marginL, 27)
-  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
-  doc.text(`${formatDate(startDate)} - ${formatDate(endDate)}`, marginL, 33)
-  doc.text(`Generado: ${formatDate(Date.now())}`, marginL, 38)
+  // Draw a section header bar + title, return new y
+  const sec = (title: string, y: number, r: number, g: number, b: number): number => {
+    doc.setDrawColor(r, g, b); doc.setLineWidth(0.6); doc.line(mL, y, pageW - mR, y); y += 7
+    doc.setFontSize(13); doc.setTextColor(r, g, b); doc.setFont('helvetica', 'bold')
+    doc.text(title, mL, y); doc.setFont('helvetica', 'normal')
+    return y + 8
+  }
 
-  let y = 48
-  doc.setDrawColor(0, 150, 150); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y); y += 8
+  const addFooter = () => {
+    const total = doc.getNumberOfPages()
+    for (let i = 1; i <= total; i++) {
+      doc.setPage(i)
+      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+      doc.line(mL, pageH - 14, pageW - mR, pageH - 14)
+      doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+      doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 7, { align: 'center' })
+      doc.text(`Pág ${i} de ${total}`, pageW - mR, pageH - 7, { align: 'right' })
+    }
+  }
+
+  // ── DATA PREPARATION ────────────────────────────────────────────────
+  const incomeEvents = events
+    .filter(e => e.type === 'income' && e.timestamp >= startDate && e.timestamp <= endDate)
+    .sort((a, b) => a.timestamp - b.timestamp)
+
+  const allExpenses = events
+    .filter(e => e.type === 'expense' && e.timestamp >= startDate && e.timestamp <= endDate)
+    .sort((a, b) => a.timestamp - b.timestamp)
+
+  const bizExpenses    = allExpenses.filter(e => e.expense_type !== 'personal')
+  const personalExpenses = allExpenses.filter(e => e.expense_type === 'personal')
+  const payrollEvents  = bizExpenses.filter(e => e.employee_id != null)
+  const nonPayrollBiz  = bizExpenses.filter(e => e.employee_id == null)
+
+  // Invoices: paid_date / payment_date for period classification
+  const periodInvoices = invoices.filter(inv => {
+    if (inv.type !== 'invoice') return false
+    const ts = inv.paid_date || inv.payment_date || inv.created_at
+    return ts >= startDate && ts <= endDate
+  })
+  const pendingInvoices = invoices.filter(inv =>
+    inv.type === 'invoice' && (inv.status === 'sent' || inv.status === 'overdue')
+  )
+
+  const totalIncome    = incomeEvents.reduce((s, e) => s + e.amount, 0)
+  const totalRetention = incomeEvents.reduce((s, e) => s + (e.retention_amount || 0), 0)
+  const totalBizExp    = nonPayrollBiz.reduce((s, e) => s + e.amount, 0)
+  const totalPayroll   = payrollEvents.reduce((s, e) => s + e.amount, 0)
+  const totalPersonal  = personalExpenses.reduce((s, e) => s + e.amount, 0)
+  const taxCollected   = periodInvoices.reduce((s, i) => s + (i.tax_amount || 0), 0)
+  const invRetention   = periodInvoices.reduce((s, i) => s + (i.retention_amount || 0), 0)
+  const effectiveRetention = Math.max(totalRetention, invRetention)
+  const profit         = totalIncome - totalBizExp - totalPayroll
+  const arTotal        = pendingInvoices.reduce((s, i) => s + i.total, 0)
+  const periodBankTxs  = bankTxs.filter(t => t.date >= startDate && t.date <= endDate)
+
+  // Helper: group events by YYYY-MM
+  const groupByMonth = (evts: EventRecord[]): Record<string, EventRecord[]> => {
+    const map: Record<string, EventRecord[]> = {}
+    evts.forEach(e => {
+      const key = new Date(e.timestamp).toISOString().slice(0, 7)
+      if (!map[key]) map[key] = []
+      map[key].push(e)
+    })
+    return map
+  }
+
+  const monthLabel = (isoKey: string) =>
+    new Date(isoKey + '-15').toLocaleDateString('es-PR', { year: 'numeric', month: 'long' })
+
+  const statusLabel = (s: string) =>
+    s === 'paid' ? 'Pagada' : s === 'overdue' ? 'Vencida' : s === 'sent' ? 'Enviada' : s === 'cancelled' ? 'Cancelada' : 'Borrador'
+
+  // ── SECCIÓN 1: PORTADA ───────────────────────────────────────────────
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - mR - 45, 8, 45, 20) } catch {}
+  doc.setFontSize(22); doc.setTextColor(0, 130, 130); doc.setFont('helvetica', 'bold')
+  doc.text(COMPANY_NAME, mL, 22); doc.setFont('helvetica', 'normal')
+  doc.setFontSize(16); doc.setTextColor(40, 40, 40)
+  doc.text(`Reporte Contable — ${periodLabel}`, mL, 33)
+  doc.setFontSize(10); doc.setTextColor(100, 100, 100)
+  doc.text(`Período: ${formatDate(startDate)} — ${formatDate(endDate)}`, mL, 41)
+  doc.text(`Generado: ${formatDate(Date.now())}`, mL, 47)
+
+  let y = 56
+  doc.setDrawColor(0, 130, 130); doc.setLineWidth(0.8); doc.line(mL, y, pageW - mR, y); y += 8
   doc.setFontSize(12); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
-  doc.text('RESUMEN EJECUTIVO', marginL, y); doc.setFont('helvetica', 'normal'); y += 8
+  doc.text('RESUMEN EJECUTIVO', mL, y); doc.setFont('helvetica', 'normal'); y += 4
 
-  const summaryData = [
-    ['Ingresos Brutos', formatCurrency(totalIncome)], ['Gastos de Negocio', formatCurrency(totalExpense)],
-    ['Ganancia/Pérdida Neta', formatCurrency(profit)],
-    ['Margen', totalIncome > 0 ? ((profit / totalIncome) * 100).toFixed(1) + '%' : 'N/A'],
-    ['', ''],
-    ['IVU Cobrado (en facturas)', formatCurrency(taxCollected)],
-    ['Gastos Personales (no deducibles)', formatCurrency(totalPersonal)],
-    ['Total Transacciones', String(filtered.length)]
-  ]
-
-  doc.setFontSize(10)
-  summaryData.forEach(([label, value]) => {
-    if (label === '') { y += 4; return }
-    doc.setTextColor(60, 60, 60); doc.text(label, marginL + 5, y)
-    doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
-    doc.text(value, 120, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 6
+  autoTable(doc, {
+    startY: y,
+    body: [
+      ['Ingresos Brutos del Período',            formatCurrency(totalIncome),              ''],
+      ['Gastos de Negocio (sin nómina)',          formatCurrency(totalBizExp),              ''],
+      ['Nómina / Empleados',                      formatCurrency(totalPayroll),             ''],
+      ['GANANCIA / PÉRDIDA NETA',                 formatCurrency(profit),                  profit >= 0 ? '✓' : '⚠'],
+      ['Margen Neto',                             totalIncome > 0 ? ((profit / totalIncome) * 100).toFixed(1) + '%' : 'N/A', ''],
+      ['IVU Cobrado (a remitir a Hacienda)',       formatCurrency(taxCollected),             'Form SC 2915'],
+      ['Retención de Contratistas (estimada)',    formatCurrency(effectiveRetention),       'Form 480 / 499R'],
+      ['Gastos Personales (no deducibles)',       formatCurrency(totalPersonal),            ''],
+      ['Cuentas por Cobrar Pendientes',           formatCurrency(arTotal),                 `${pendingInvoices.length} facturas`],
+    ],
+    styles: { fontSize: 10, cellPadding: 3 },
+    columnStyles: {
+      0: { cellWidth: 102, textColor: [60, 60, 60] as [number,number,number] },
+      1: { cellWidth: 42, halign: 'right' as const, fontStyle: 'bold' as const },
+      2: { cellWidth: 36, textColor: [120, 120, 120] as [number,number,number], fontSize: 8 },
+    },
+    didParseCell: (data: any) => {
+      if (data.section !== 'body') return
+      const row = data.row.raw as string[]
+      if (row[0] === 'GANANCIA / PÉRDIDA NETA') {
+        data.cell.styles.textColor = profit >= 0 ? [34, 140, 34] : [200, 50, 50]
+        data.cell.styles.fontStyle = 'bold'
+        if (data.column.index === 1) data.cell.styles.fontSize = 12
+      }
+      if (row[0] === 'Ingresos Brutos del Período' && data.column.index === 1)
+        data.cell.styles.textColor = [34, 140, 34]
+      if ((row[0] === 'Gastos de Negocio (sin nómina)' || row[0] === 'Nómina / Empleados') && data.column.index === 1)
+        data.cell.styles.textColor = [200, 50, 50]
+    }
   })
+  y = (doc as any).lastAutoTable.finalY + 10
 
-  y += 10
-  doc.setFontSize(11); doc.setTextColor(34, 197, 94); doc.setFont('helvetica', 'bold')
-  doc.text('INGRESOS POR CATEGORÍA', marginL, y); doc.setFont('helvetica', 'normal'); y += 6
-  doc.setFontSize(9)
-  Object.entries(incByCat).sort((a, b) => b[1] - a[1]).forEach(([cat, total]) => {
-    doc.setTextColor(60, 60, 60); doc.text(cat, marginL + 5, y); doc.text(formatCurrency(total), 120, y, { align: 'right' }); y += 5
-  })
+  // Table of contents
+  y = chk(y, 60)
+  doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.setFont('helvetica', 'bold')
+  doc.text('CONTENIDO', mL, y); doc.setFont('helvetica', 'normal'); y += 5
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  ;[
+    '1. Ingresos Detallados',
+    '2. Facturas del Período',
+    '3. Cuentas por Cobrar',
+    '4. Gastos Detallados',
+    '5. Nómina / Empleados',
+    ...(periodBankTxs.length > 0 ? ['6. Conciliación Bancaria'] : []),
+    `${periodBankTxs.length > 0 ? '7' : '6'}. Resumen Final y Obligaciones Fiscales`,
+  ].forEach(item => { doc.text(item, mL + 5, y); y += 5 })
 
-  y += 8
-  doc.setFontSize(11); doc.setTextColor(239, 68, 68); doc.setFont('helvetica', 'bold')
-  doc.text('GASTOS DEDUCIBLES POR CATEGORÍA', marginL, y); doc.setFont('helvetica', 'normal'); y += 6
-  doc.setFontSize(9)
-  Object.entries(expByCat).sort((a, b) => b[1] - a[1]).forEach(([cat, total]) => {
-    doc.setTextColor(60, 60, 60); doc.text(cat, marginL + 5, y); doc.text(formatCurrency(total), 120, y, { align: 'right' }); y += 5
-    if (y > pageH - 40) { doc.addPage(); y = 20 }
-  })
+  // ── SECCIÓN 2: INGRESOS DETALLADOS ──────────────────────────────────
+  doc.addPage(); y = 20
+  y = sec('1. INGRESOS DETALLADOS', y, 34, 140, 94)
 
-  y += 8; if (y > pageH - 60) { doc.addPage(); y = 20 }
-  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
-  doc.text('GASTOS POR MÉTODO DE PAGO', marginL, y); doc.setFont('helvetica', 'normal'); y += 6
-  doc.setFontSize(9)
-  Object.entries(expByMethod).sort((a, b) => b[1] - a[1]).forEach(([method, total]) => {
-    doc.setTextColor(60, 60, 60); doc.text(getPaymentLabel(method), marginL + 5, y)
-    doc.text(formatCurrency(total), 120, y, { align: 'right' }); y += 5
-  })
+  if (incomeEvents.length === 0) {
+    doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+    doc.text('No hay ingresos registrados en este período.', mL + 5, y); y += 10
+  } else {
+    // Build invoice lookup: client_name (lower) + total → invoice_number
+    const invLookup = new Map<string, string>()
+    periodInvoices.forEach(inv => {
+      invLookup.set(`${inv.client_name.toLowerCase().trim()}-${inv.total}`, inv.invoice_number)
+    })
 
-  y += 8; if (y > pageH - 60) { doc.addPage(); y = 20 }
-  doc.setFontSize(11); doc.setTextColor(30, 30, 30); doc.setFont('helvetica', 'bold')
-  doc.text('FACTURAS DEL PERÍODO', marginL, y); doc.setFont('helvetica', 'normal'); y += 3
+    Object.entries(groupByMonth(incomeEvents)).sort().forEach(([key, evts]) => {
+      const ml = monthLabel(key)
+      const mTotal = evts.reduce((s, e) => s + e.amount, 0)
+      const mRet   = evts.reduce((s, e) => s + (e.retention_amount || 0), 0)
+      y = chk(y, 50)
+      doc.setFontSize(9); doc.setTextColor(34, 100, 60); doc.setFont('helvetica', 'bold')
+      doc.text(ml, mL, y); doc.setFont('helvetica', 'normal'); y += 3
 
-  if (periodInvoices.length > 0) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Fecha', 'Cliente', 'Descripción', 'Método Cobro', 'Factura #', 'Retención', 'Monto']],
+        body: evts.map(e => {
+          const invNum = invLookup.get(`${(e.client || '').toLowerCase().trim()}-${e.amount}`) || '-'
+          return [
+            formatDateShort(e.timestamp),
+            (e.client || '-').slice(0, 22),
+            (e.note || e.category || '-').slice(0, 28),
+            getPaymentLabel(e.payment_method),
+            invNum,
+            e.retention_amount ? formatCurrency(e.retention_amount) : '-',
+            formatCurrency(e.amount),
+          ]
+        }),
+        foot: [['', '', '', '', `Total ${ml}:`, mRet > 0 ? formatCurrency(mRet) : '', formatCurrency(mTotal)]],
+        headStyles: { fillColor: [34, 140, 94], textColor: [255, 255, 255], fontSize: 7 },
+        bodyStyles: { fontSize: 8 },
+        footStyles: { fillColor: [220, 245, 225], textColor: [20, 80, 40], fontSize: 8, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 18 },
+          1: { cellWidth: 38 },
+          2: { cellWidth: 44 },
+          3: { cellWidth: 28 },
+          4: { cellWidth: 20 },
+          5: { halign: 'right' as const, cellWidth: 20 },
+          6: { halign: 'right' as const, cellWidth: 22 },
+        },
+      })
+      y = (doc as any).lastAutoTable.finalY + 8
+    })
+
+    // Totals
+    y = chk(y, 30)
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+    doc.setTextColor(34, 140, 94)
+    doc.text('Total Ingresos Brutos:', 110, y)
+    doc.text(formatCurrency(totalIncome), pageW - mR, y, { align: 'right' }); y += 6
+    if (totalRetention > 0) {
+      doc.setTextColor(200, 50, 50)
+      doc.text('(-) Retención Hacienda:', 110, y)
+      doc.text(formatCurrency(totalRetention), pageW - mR, y, { align: 'right' }); y += 6
+      doc.setTextColor(30, 30, 30)
+      doc.text('= Total Neto Recibido:', 110, y)
+      doc.text(formatCurrency(totalIncome - totalRetention), pageW - mR, y, { align: 'right' }); y += 6
+    }
+    doc.setFont('helvetica', 'normal')
+  }
+
+  // ── SECCIÓN 3: FACTURAS ──────────────────────────────────────────────
+  doc.addPage(); y = 20
+  y = sec('2. FACTURAS DEL PERÍODO', y, 0, 100, 160)
+
+  if (periodInvoices.length === 0) {
+    doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+    doc.text('No hay facturas en este período.', mL + 5, y); y += 10
+  } else {
+    const sorted = [...periodInvoices].sort((a, b) => {
+      const ta = a.paid_date || a.payment_date || a.created_at
+      const tb = b.paid_date || b.payment_date || b.created_at
+      return ta - tb
+    })
     autoTable(doc, {
       startY: y,
-      head: [['#', 'Cliente', 'Subtotal', 'IVU', 'Total', 'Status']],
-      body: periodInvoices.map(inv => [
-        inv.invoice_number, inv.client_name, formatCurrency(inv.subtotal),
-        formatCurrency(inv.tax_amount || 0), formatCurrency(inv.total),
-        inv.status === 'paid' ? 'Pagada' : inv.status === 'overdue' ? 'Vencida' : inv.status === 'sent' ? 'Enviada' : 'Borrador'
-      ]),
-      headStyles: { fillColor: [0, 150, 150], fontSize: 8 }, bodyStyles: { fontSize: 8 }
+      head: [['#', 'F.Creación', 'F.Pago', 'Cliente', 'Localidad', 'Subtotal', 'IVU', 'Total', 'Retención', 'Neto', 'Status']],
+      body: sorted.map(inv => {
+        const paidTs = inv.paid_date || inv.payment_date
+        const neto = inv.total - (inv.retention_amount || 0)
+        return [
+          inv.invoice_number,
+          formatDateShort(inv.created_at),
+          paidTs ? formatDateShort(paidTs) : '-',
+          inv.client_name.slice(0, 16),
+          (inv.location_name || '-').slice(0, 14),
+          formatCurrency(inv.subtotal),
+          formatCurrency(inv.tax_amount || 0),
+          formatCurrency(inv.total),
+          inv.retention_amount ? formatCurrency(inv.retention_amount) : '-',
+          formatCurrency(neto),
+          statusLabel(inv.status),
+        ]
+      }),
+      headStyles: { fillColor: [0, 100, 160], textColor: [255, 255, 255], fontSize: 7 },
+      bodyStyles: { fontSize: 7 },
+      columnStyles: {
+        0: { cellWidth: 17 },
+        1: { cellWidth: 17 },
+        2: { cellWidth: 17 },
+        3: { cellWidth: 26 },
+        4: { cellWidth: 20 },
+        5: { halign: 'right' as const, cellWidth: 18 },
+        6: { halign: 'right' as const, cellWidth: 14 },
+        7: { halign: 'right' as const, cellWidth: 18 },
+        8: { halign: 'right' as const, cellWidth: 18 },
+        9: { halign: 'right' as const, cellWidth: 18 },
+        10: { cellWidth: 14 },
+      },
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && data.column.index === 10) {
+          const s = data.cell.raw as string
+          if (s === 'Pagada') data.cell.styles.textColor = [34, 150, 34]
+          else if (s === 'Vencida') data.cell.styles.textColor = [200, 50, 50]
+          else data.cell.styles.textColor = [180, 140, 0]
+        }
+      },
     })
-  } else { y += 5; doc.setFontSize(9); doc.setTextColor(100, 100, 100); doc.text('No hay facturas en este período.', marginL + 5, y) }
+    y = (doc as any).lastAutoTable.finalY + 6
 
-  const totalPages = doc.getNumberOfPages()
-  for (let i = 1; i <= totalPages; i++) {
-    doc.setPage(i); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
-    doc.line(marginL, pageH - 15, pageW - marginR, pageH - 15)
-    doc.setFontSize(8); doc.setTextColor(150, 150, 150)
-    doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 8, { align: 'center' })
-    doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
+    const invTotal  = periodInvoices.reduce((s, i) => s + i.total, 0)
+    const invTax    = periodInvoices.reduce((s, i) => s + (i.tax_amount || 0), 0)
+    const invRet2   = periodInvoices.reduce((s, i) => s + (i.retention_amount || 0), 0)
+    y = chk(y, 20)
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 30, 30)
+    doc.text(`Total Facturado: ${formatCurrency(invTotal)}`, mL, y)
+    doc.text(`IVU Total: ${formatCurrency(invTax)}`, mL + 65, y)
+    if (invRet2 > 0) doc.text(`Retención Total: ${formatCurrency(invRet2)}`, mL + 115, y)
+    doc.setFont('helvetica', 'normal'); y += 10
   }
-  doc.save(`Contable-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
+
+  // ── SECCIÓN 4: CUENTAS POR COBRAR ────────────────────────────────────
+  y = chk(y, 70)
+  y = sec('3. CUENTAS POR COBRAR AL CIERRE', y, 180, 80, 0)
+
+  if (pendingInvoices.length === 0) {
+    doc.setFontSize(9); doc.setTextColor(34, 150, 34)
+    doc.text('✓ No hay facturas pendientes de cobro.', mL + 5, y); y += 10
+  } else {
+    const now = Date.now()
+    autoTable(doc, {
+      startY: y,
+      head: [['#', 'Cliente', 'F.Emisión', 'Vencimiento', 'Días Vencidos', 'Total', 'Status']],
+      body: [...pendingInvoices]
+        .sort((a, b) => (a.due_date || a.created_at) - (b.due_date || b.created_at))
+        .map(inv => {
+          const dueTs = inv.due_date || inv.created_at
+          const days = Math.floor((now - dueTs) / 86400000)
+          return [
+            inv.invoice_number,
+            inv.client_name.slice(0, 24),
+            formatDateShort(inv.created_at),
+            inv.due_date ? formatDateShort(inv.due_date) : '-',
+            days > 0 ? `${days} días` : 'Vigente',
+            formatCurrency(inv.total),
+            inv.status === 'overdue' ? 'Vencida' : 'Enviada',
+          ]
+        }),
+      headStyles: { fillColor: [180, 80, 0], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: {
+        4: { halign: 'center' as const },
+        5: { halign: 'right' as const },
+      },
+      didParseCell: (data: any) => {
+        if (data.section !== 'body') return
+        if (data.column.index === 6 && data.cell.raw === 'Vencida') data.cell.styles.textColor = [200, 50, 50]
+        if (data.column.index === 4 && (data.cell.raw as string) !== 'Vigente') data.cell.styles.textColor = [200, 50, 50]
+      },
+    })
+    y = (doc as any).lastAutoTable.finalY + 5
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(180, 80, 0)
+    doc.text(`Total por Cobrar: ${formatCurrency(arTotal)}`, mL, y)
+    doc.setFont('helvetica', 'normal'); y += 10
+  }
+
+  // ── SECCIÓN 5: GASTOS DETALLADOS ─────────────────────────────────────
+  doc.addPage(); y = 20
+  y = sec('4. GASTOS DETALLADOS', y, 160, 50, 50)
+
+  // ─ Gastos de negocio por mes ─
+  if (nonPayrollBiz.length > 0) {
+    doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+    doc.text('Gastos de Negocio (deducibles)', mL, y); y += 4
+
+    Object.entries(groupByMonth(nonPayrollBiz)).sort().forEach(([key, evts]) => {
+      const ml = monthLabel(key)
+      const mTotal = evts.reduce((s, e) => s + e.amount, 0)
+      y = chk(y, 50)
+      doc.setFontSize(8); doc.setTextColor(130, 40, 40); doc.setFont('helvetica', 'bold')
+      doc.text(ml, mL, y); doc.setFont('helvetica', 'normal'); y += 3
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Fecha', 'Vendor / Descripción', 'Categoría', 'Método / Cuenta', 'Monto', 'Ded.']],
+        body: evts.map(e => [
+          formatDateShort(e.timestamp),
+          (e.vendor || e.note || '-').slice(0, 32),
+          e.category || '-',
+          getPaymentLabel(e.payment_method),
+          formatCurrency(e.amount),
+          'Sí',
+        ]),
+        foot: [['', '', '', `Total ${ml}:`, formatCurrency(mTotal), '']],
+        headStyles: { fillColor: [160, 50, 50], textColor: [255, 255, 255], fontSize: 7 },
+        bodyStyles: { fontSize: 8 },
+        footStyles: { fillColor: [245, 220, 220], textColor: [80, 30, 30], fontSize: 8, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 18 },
+          1: { cellWidth: 58 },
+          2: { cellWidth: 36 },
+          3: { cellWidth: 34 },
+          4: { halign: 'right' as const, cellWidth: 22 },
+          5: { cellWidth: 12, halign: 'center' as const },
+        },
+      })
+      y = (doc as any).lastAutoTable.finalY + 6
+    })
+
+    // Summary by category
+    y = chk(y, 60)
+    const expByCat: Record<string, number> = {}
+    nonPayrollBiz.forEach(e => { expByCat[e.category || 'Otros'] = (expByCat[e.category || 'Otros'] || 0) + e.amount })
+    autoTable(doc, {
+      startY: y,
+      head: [['Resumen por Categoría', 'Total']],
+      body: Object.entries(expByCat).sort((a, b) => b[1] - a[1]).map(([cat, total]) => [cat, formatCurrency(total)]),
+      foot: [['TOTAL GASTOS NEGOCIO', formatCurrency(totalBizExp)]],
+      headStyles: { fillColor: [100, 100, 100], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      footStyles: { fillColor: [240, 240, 240], fontStyle: 'bold', fontSize: 9, textColor: [30, 30, 30] },
+      columnStyles: { 1: { halign: 'right' as const } },
+      tableWidth: 90,
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // ─ Gastos personales ─
+  if (personalExpenses.length > 0) {
+    y = chk(y, 60)
+    doc.setFontSize(10); doc.setTextColor(150, 80, 0); doc.setFont('helvetica', 'bold')
+    doc.text('Gastos Personales (NO deducibles)', mL, y); doc.setFont('helvetica', 'normal'); y += 4
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Fecha', 'Vendor / Descripción', 'Categoría', 'Método / Cuenta', 'Monto', 'Ded.']],
+      body: personalExpenses.map(e => [
+        formatDateShort(e.timestamp),
+        (e.vendor || e.note || '-').slice(0, 32),
+        e.category || '-',
+        getPaymentLabel(e.payment_method),
+        formatCurrency(e.amount),
+        'No',
+      ]),
+      headStyles: { fillColor: [150, 80, 0], textColor: [255, 255, 255], fontSize: 7 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 18 },
+        1: { cellWidth: 58 },
+        2: { cellWidth: 36 },
+        3: { cellWidth: 34 },
+        4: { halign: 'right' as const, cellWidth: 22 },
+        5: { cellWidth: 12, halign: 'center' as const, textColor: [200, 50, 50] as [number,number,number] },
+      },
+    })
+    y = (doc as any).lastAutoTable.finalY + 4
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(150, 80, 0)
+    doc.text(`Total Gastos Personales (no deducibles): ${formatCurrency(totalPersonal)}`, mL, y)
+    doc.setFont('helvetica', 'normal'); y += 10
+  }
+
+  // ── SECCIÓN 6: NÓMINA ────────────────────────────────────────────────
+  if (payrollEvents.length > 0) {
+    doc.addPage(); y = 20
+    y = sec('5. NÓMINA / PAGOS A EMPLEADOS', y, 60, 60, 140)
+
+    const byEmp: Record<number, { name: string; retPct: number; events: EventRecord[]; total: number }> = {}
+    payrollEvents.forEach(e => {
+      const id = e.employee_id!
+      if (!byEmp[id]) {
+        const emp = employees.find(em => em.id === id)
+        byEmp[id] = {
+          name: emp ? `${emp.first_name} ${emp.last_name}`.trim() : `Empleado #${id}`,
+          retPct: emp?.retention_percent || 0,
+          events: [],
+          total: 0,
+        }
+      }
+      byEmp[id].events.push(e)
+      byEmp[id].total += e.amount
+    })
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Empleado', 'Clasificación', 'Retención %', '# Pagos', 'Total Bruto']],
+      body: Object.values(byEmp).sort((a, b) => b.total - a.total).map(emp => [
+        emp.name,
+        emp.retPct > 0 ? 'Contratista (1099)' : 'Empleado (W-2)',
+        emp.retPct > 0 ? `${emp.retPct}%` : '—',
+        String(emp.events.length),
+        formatCurrency(emp.total),
+      ]),
+      foot: [['TOTAL NÓMINA', '', '', String(payrollEvents.length), formatCurrency(totalPayroll)]],
+      headStyles: { fillColor: [60, 60, 140], textColor: [255, 255, 255], fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      footStyles: { fillColor: [240, 240, 240], fontStyle: 'bold', textColor: [30, 30, 30], fontSize: 9 },
+      columnStyles: { 4: { halign: 'right' as const } },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+
+    Object.values(byEmp).sort((a, b) => b.total - a.total).forEach(emp => {
+      y = chk(y, 50)
+      doc.setFontSize(10); doc.setTextColor(60, 60, 140); doc.setFont('helvetica', 'bold')
+      doc.text(`${emp.name}  —  ${emp.retPct > 0 ? 'Contratista' : 'Empleado'}`, mL, y)
+      doc.setFont('helvetica', 'normal')
+      autoTable(doc, {
+        startY: y + 3,
+        head: [['Fecha', 'Monto Bruto', 'Método', 'Retención', 'Nota']],
+        body: [...emp.events].sort((a, b) => a.timestamp - b.timestamp).map(e => [
+          formatDateShort(e.timestamp),
+          formatCurrency(e.amount),
+          getPaymentLabel(e.payment_method),
+          emp.retPct > 0 ? formatCurrency(e.amount * emp.retPct / 100) : '—',
+          e.note || '-',
+        ]),
+        headStyles: { fillColor: [80, 80, 110], textColor: [255, 255, 255], fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        margin: { left: mL + 5 },
+        columnStyles: {
+          1: { halign: 'right' as const },
+          3: { halign: 'right' as const, textColor: [200, 50, 50] as [number,number,number] },
+        },
+      })
+      y = (doc as any).lastAutoTable.finalY + 10
+    })
+  }
+
+  // ── SECCIÓN 7: CONCILIACIÓN BANCARIA ────────────────────────────────
+  if (periodBankTxs.length > 0) {
+    doc.addPage(); y = 20
+    y = sec('6. CONCILIACIÓN BANCARIA', y, 0, 100, 130)
+
+    const byAccount: Record<string, any[]> = {}
+    periodBankTxs.forEach(t => {
+      if (!byAccount[t.account_name]) byAccount[t.account_name] = []
+      byAccount[t.account_name].push(t)
+    })
+
+    for (const [acctName, txList] of Object.entries(byAccount)) {
+      const acct = bankAccounts.find((a: any) => a.payment_method_key === acctName || a.name === acctName)
+      y = chk(y, 65)
+      doc.setFontSize(11); doc.setTextColor(0, 100, 130); doc.setFont('helvetica', 'bold')
+      doc.text(`🏦 ${acct?.name || acctName}`, mL, y); doc.setFont('helvetica', 'normal'); y += 4
+
+      const matched  = txList.filter(t => t.match_status === 'matched').length
+      const probable = txList.filter(t => t.match_status === 'probable').length
+      const unmatched = txList.filter(t => t.match_status !== 'matched' && t.match_status !== 'probable').length
+      const totalDebits  = txList.filter(t => t.direction === 'debit').reduce((s: number, t: any) => s + t.amount, 0)
+      const totalCredits = txList.filter(t => t.direction === 'credit').reduce((s: number, t: any) => s + t.amount, 0)
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Transacciones', 'Conciliadas', 'Probables', 'Sin Match', 'Total Débitos', 'Total Créditos']],
+        body: [[String(txList.length), String(matched), String(probable), String(unmatched), formatCurrency(totalDebits), formatCurrency(totalCredits)]],
+        headStyles: { fillColor: [0, 100, 130], textColor: [255, 255, 255], fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        columnStyles: { 4: { halign: 'right' as const }, 5: { halign: 'right' as const } },
+      })
+      y = (doc as any).lastAutoTable.finalY + 4
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Fecha', 'Descripción Banco', 'Monto Banco', 'Evento App', 'Monto App', 'Estado']],
+        body: [...txList].sort((a: any, b: any) => a.date - b.date).map((tx: any) => {
+          const ev = tx.match_event_id ? events.find(e => e.id === tx.match_event_id) : null
+          return [
+            formatDateShort(tx.date),
+            tx.description.slice(0, 32),
+            tx.direction === 'debit' ? `-${formatCurrency(tx.amount)}` : `+${formatCurrency(tx.amount)}`,
+            ev ? (ev.vendor || ev.client || ev.category || '').slice(0, 22) : '—',
+            ev ? (ev.type === 'expense' ? `-${formatCurrency(ev.amount)}` : `+${formatCurrency(ev.amount)}`) : '—',
+            tx.match_status === 'matched' ? '✓ OK' : tx.match_status === 'probable' ? '? Probable' : '⚠ Sin match',
+          ]
+        }),
+        headStyles: { fillColor: [40, 70, 100], textColor: [255, 255, 255], fontSize: 7 },
+        bodyStyles: { fontSize: 7 },
+        columnStyles: {
+          0: { cellWidth: 18 },
+          1: { cellWidth: 56 },
+          2: { halign: 'right' as const, cellWidth: 24 },
+          3: { cellWidth: 38 },
+          4: { halign: 'right' as const, cellWidth: 24 },
+          5: { cellWidth: 22 },
+        },
+        didParseCell: (data: any) => {
+          if (data.section === 'body' && data.column.index === 5) {
+            const s = data.cell.raw as string
+            if (s.startsWith('✓')) data.cell.styles.textColor = [34, 150, 34]
+            else if (s.startsWith('⚠')) data.cell.styles.textColor = [200, 50, 50]
+            else data.cell.styles.textColor = [180, 140, 0]
+          }
+        },
+      })
+      y = (doc as any).lastAutoTable.finalY + 10
+    }
+  }
+
+  // ── SECCIÓN 8: RESUMEN FINAL ─────────────────────────────────────────
+  doc.addPage(); y = 20
+  const finalSecNum = periodBankTxs.length > 0 ? '7' : '6'
+  y = sec(`${finalSecNum}. RESUMEN FINAL`, y, 60, 60, 60)
+
+  // Balance general
+  autoTable(doc, {
+    startY: y,
+    head: [['BALANCE DEL PERÍODO', '']],
+    body: [
+      ['Ingresos Brutos',                  formatCurrency(totalIncome)],
+      ['(-) Retención Hacienda (estimada)',`(${formatCurrency(effectiveRetention)})`],
+      ['= Ingresos Netos Recibidos',        formatCurrency(totalIncome - effectiveRetention)],
+      ['', ''],
+      ['(-) Gastos Deducibles de Negocio', `(${formatCurrency(totalBizExp)})`],
+      ['(-) Nómina / Empleados',           `(${formatCurrency(totalPayroll)})`],
+      ['= GANANCIA / PÉRDIDA NETA',         formatCurrency(profit)],
+    ].filter(r => r[0] !== ''),
+    headStyles: { fillColor: [60, 60, 60], textColor: [255, 255, 255], fontSize: 10 },
+    bodyStyles: { fontSize: 10 },
+    columnStyles: { 1: { halign: 'right' as const, fontStyle: 'bold' as const } },
+    didParseCell: (data: any) => {
+      if (data.section !== 'body') return
+      const row = data.row.raw as string[]
+      if (row[0] === '= GANANCIA / PÉRDIDA NETA') {
+        data.cell.styles.textColor = profit >= 0 ? [34, 140, 34] : [200, 50, 50]
+        data.cell.styles.fontStyle = 'bold'
+        data.cell.styles.fontSize = 11
+      }
+      if (row[0].startsWith('(-)') && data.column.index === 1) data.cell.styles.textColor = [200, 50, 50]
+      if (row[0] === 'Ingresos Brutos' && data.column.index === 1) data.cell.styles.textColor = [34, 140, 34]
+    },
+  })
+  y = (doc as any).lastAutoTable.finalY + 10
+
+  // Obligaciones fiscales
+  y = chk(y, 70)
+  autoTable(doc, {
+    startY: y,
+    head: [['OBLIGACIONES FISCALES', 'Monto', 'Referencia']],
+    body: [
+      ['IVU Cobrado (a remitir a Hacienda)',        formatCurrency(taxCollected),        'Form SC 2915 / Planilla Mensual'],
+      ['Retención de Contratistas (a reportar)',    formatCurrency(effectiveRetention),  'Form 480.6B / 499R-2'],
+      ['Cuentas por Cobrar Pendientes al Cierre',  formatCurrency(arTotal),             `${pendingInvoices.length} facturas sin cobrar`],
+    ],
+    headStyles: { fillColor: [120, 40, 40], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: {
+      1: { halign: 'right' as const, textColor: [180, 40, 40] as [number,number,number], fontStyle: 'bold' as const },
+      2: { textColor: [100, 100, 100] as [number,number,number], fontSize: 8 },
+    },
+  })
+  y = (doc as any).lastAutoTable.finalY + 10
+
+  // Notes for accountant
+  y = chk(y, 60)
+  doc.setFontSize(10); doc.setTextColor(60, 60, 60); doc.setFont('helvetica', 'bold')
+  doc.text('NOTAS PARA EL CONTABLE', mL, y); doc.setFont('helvetica', 'normal'); y += 6
+  doc.setFontSize(8); doc.setTextColor(100, 100, 100)
+  const notes = [
+    '• Los ingresos se clasifican por fecha del pago registrado en la app.',
+    '• Las facturas se clasifican por fecha de pago (paid_date) cuando disponible, si no por fecha de creación.',
+    '• Los gastos personales están separados y NO deben incluirse como deducciones.',
+    '• La retención de Hacienda es estimada según los campos "retención" de pagos e facturas.',
+    '• El IVU cobrado refleja el total de IVU en facturas del período; verificar contra planillas de Hacienda.',
+    `• Cuentas por cobrar al ${formatDate(endDate)}: ${pendingInvoices.length} facturas, ${formatCurrency(arTotal)}.`,
+    periodBankTxs.length > 0
+      ? `• Conciliación bancaria incluye ${periodBankTxs.length} transacciones importadas de estados de cuenta.`
+      : '• No hay estados de cuenta bancarios importados para este período.',
+  ]
+  notes.forEach(note => { doc.text(note, mL, y); y += 5 })
+
+  addFooter()
+  doc.save(`Reporte-Contable-${periodLabel.replace(/\s+/g, '_')}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
 // ============ DELINQUENT CLIENTS / MOROSOS REPORT ============
