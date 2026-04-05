@@ -210,8 +210,8 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     if (!selectedClient?.id || !editForm) return
     try {
       await db.clients.update(selectedClient.id, {
-        first_name: editForm.first_name || selectedClient.first_name,
-        last_name: editForm.last_name || selectedClient.last_name,
+        first_name: (editForm.first_name || selectedClient.first_name).trim(),
+        last_name: (editForm.last_name || selectedClient.last_name).trim(),
         phone: editForm.phone || '', email: editForm.email || '',
         address: editForm.address || '', type: editForm.type || selectedClient.type,
        notes: editForm.notes || '', updated_at: Date.now(), ...(Number((editForm as any).retention_percent) ? { retention_percent: Number((editForm as any).retention_percent) } : {})
@@ -226,7 +226,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     try {
       const now = Date.now()
       const id = await db.clients.add({
-        first_name: editForm.first_name || '', last_name: editForm.last_name || '',
+        first_name: (editForm.first_name || '').trim(), last_name: (editForm.last_name || '').trim(),
         phone: editForm.phone || '', email: editForm.email || '',
         address: editForm.address || '', type: editForm.type || 'residential',
        notes: editForm.notes || '', active: true, created_at: now, updated_at: now, ...(Number((editForm as any).retention_percent) ? { retention_percent: Number((editForm as any).retention_percent) } : {})
@@ -257,7 +257,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     const quoted = parseFloat(qQuoted) || 0
     try {
       await db.table('quick_quotes').add({
-        client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+        client_name: `${selectedClient.first_name} ${selectedClient.last_name}`.trim(),
         client_id: selectedClient.id,
         description: qDesc,
         my_cost: myCost,
@@ -297,7 +297,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     const compressed = await compressImage(b64)
     const now = Date.now()
     await db.client_photos.add({
-      client_id: selectedClient.id, client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+      client_id: selectedClient.id, client_name: `${selectedClient.first_name} ${selectedClient.last_name}`.trim(),
       category: photoCategory, description: photoDesc, equipment_type: photoEquipment || undefined,
       location: photoLocation || undefined, photo_data: compressed, timestamp: now, visit_date: now, created_at: now
     })
@@ -315,7 +315,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(file) })
     const now = Date.now()
     await db.client_documents.add({
-      client_id: selectedClient.id, client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+      client_id: selectedClient.id, client_name: `${selectedClient.first_name} ${selectedClient.last_name}`.trim(),
       doc_type: docType, file_name: docName || file.name, file_type: fileType, file_data: b64,
       description: docDesc, expiration_date: docExpiration ? new Date(docExpiration).getTime() : undefined,
       timestamp: now, created_at: now

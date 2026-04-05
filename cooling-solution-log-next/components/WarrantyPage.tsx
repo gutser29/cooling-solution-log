@@ -717,7 +717,7 @@ export default function WarrantyPage({ onNavigate }: WarrantyPageProps) {
                     className="w-full bg-[#0b1220] border-b border-white/10 px-3 py-2 text-sm placeholder-gray-600 focus:outline-none" />
                   {filteredClients.map(c => (
                     <button key={c.id} onClick={() => {
-                      setFormClientName(`${c.first_name} ${c.last_name}`);
+                      setFormClientName(`${c.first_name} ${c.last_name}`.trim());
                       setShowClientPicker(false); setClientSearch('');
                     }} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/5 border-b border-white/5">
                       {c.first_name} {c.last_name} {c.phone && <span className="text-gray-500 text-xs ml-2">{c.phone}</span>}

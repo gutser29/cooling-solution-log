@@ -101,7 +101,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   }
 
   const pickClient = (c: Client) => {
-    setFormClientName(`${c.first_name} ${c.last_name}`)
+    setFormClientName(`${c.first_name} ${c.last_name}`.trim())
     setFormClientPhone(c.phone || '')
     setFormClientEmail(c.email || '')
     setFormClientAddress(c.address || '')

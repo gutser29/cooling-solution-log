@@ -1336,8 +1336,8 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         try {
           const now = Date.now()
           await db.clients.add({
-            first_name: clientData.first_name || '',
-            last_name: clientData.last_name || '',
+            first_name: (clientData.first_name || '').trim(),
+            last_name: (clientData.last_name || '').trim(),
             phone: clientData.phone,
             email: clientData.email,
             address: clientData.address,

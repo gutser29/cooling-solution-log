@@ -55,7 +55,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       const totalMonthIncome = monthIncome + jobIncomeMonth
 
       const pendingJobs = allJobs.filter(j => j.payment_status === 'pending' || j.payment_status === 'partial')
-      const clientMap = new Map(allClients.map(c => [c.id, `${c.first_name} ${c.last_name}`]))
+      const clientMap = new Map(allClients.map(c => [c.id, `${c.first_name} ${c.last_name}`.trim()]))
 
       let totalAR = 0
       const pendingClients = pendingJobs.map(j => {

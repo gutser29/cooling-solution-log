@@ -35,7 +35,7 @@ export default function CalendarPage({ onNavigate }: CalendarPageProps) {
 
     const contracts = await db.contracts.where('status').equals('active').toArray()
     const clients = await db.clients.toArray()
-    const clientMap = new Map(clients.map(c => [c.id, `${c.first_name} ${c.last_name}`]))
+    const clientMap = new Map(clients.map(c => [c.id, `${c.first_name} ${c.last_name}`.trim()]))
     const alerts = contracts
       .filter(c => c.next_service_due - now <= threeDays && c.next_service_due >= now - 86400000)
       .map(c => ({

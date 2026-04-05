@@ -81,7 +81,7 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
 
   const pickClient = (c: Client) => {
     setSelectedClientId(c.id)
-    setSelectedClientName(`${c.first_name} ${c.last_name}`)
+    setSelectedClientName(`${c.first_name} ${c.last_name}`.trim())
     setShowClientPicker(false)
     setClientSearch('')
   }

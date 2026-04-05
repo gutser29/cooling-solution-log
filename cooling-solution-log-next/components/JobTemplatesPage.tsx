@@ -65,7 +65,7 @@ export default function JobTemplatesPage({ onNavigate, onUseTemplate }: JobTempl
 
   const pickClient = (c: Client) => {
     setFormClientId(c.id)
-    setFormClientName(`${c.first_name} ${c.last_name}`)
+    setFormClientName(`${c.first_name} ${c.last_name}`.trim())
     setShowClientPicker(false)
     setClientSearch('')
   }

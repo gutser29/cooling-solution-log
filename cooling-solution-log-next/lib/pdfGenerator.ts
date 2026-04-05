@@ -717,7 +717,7 @@ export function generateClientListPDF(clients: Client[]) {
       startY: 50,
       head: [['Nombre', 'Tipo', 'Teléfono', 'Email', 'Dirección']],
       body: clients.map(c => [
-        `${c.first_name} ${c.last_name}`,
+        `${c.first_name} ${c.last_name}`.trim(),
         c.type === 'commercial' ? 'Comercial' : 'Residencial',
         c.phone || '-', c.email || '-', c.address || '-'
       ]),
@@ -816,7 +816,7 @@ export function generatePayrollReport(
     const empId = e.employee_id!
     if (!byEmployee[empId]) {
       const emp = employees.find(em => em.id === empId)
-      byEmployee[empId] = { name: emp ? `${emp.first_name} ${emp.last_name}` : `Empleado #${empId}`, events: [], total: 0 }
+      byEmployee[empId] = { name: emp ? `${emp.first_name} ${emp.last_name}`.trim() : `Empleado #${empId}`, events: [], total: 0 }
     }
     byEmployee[empId].events.push(e)
     byEmployee[empId].total += e.amount
@@ -1315,7 +1315,7 @@ export function generateClientProfitabilityReport(
     const cid = e.client_id!
     if (!byClient[cid]) {
       const client = clients.find(c => c.id === cid)
-      byClient[cid] = { name: client ? `${client.first_name} ${client.last_name}` : (e.client || `Cliente #${cid}`), income: 0, expense: 0, events: 0 }
+      byClient[cid] = { name: client ? `${client.first_name} ${client.last_name}`.trim() : (e.client || `Cliente #${cid}`), income: 0, expense: 0, events: 0 }
     }
     byClient[cid].events++
     if (e.type === 'income') byClient[cid].income += e.amount
@@ -1416,7 +1416,7 @@ export function generateContractsReport(
       body: active.map(c => {
         const client = clients.find(cl => cl.id === c.client_id)
         return [
-          client ? `${client.first_name} ${client.last_name}` : `Cliente #${c.client_id}`,
+          client ? `${client.first_name} ${client.last_name}`.trim() : `Cliente #${c.client_id}`,
           c.service_type || '-', freqLabels[c.frequency] || c.frequency,
           formatCurrency(c.monthly_fee), formatDateShort(c.next_service_due), formatDateShort(c.start_date)
         ]
@@ -1436,7 +1436,7 @@ export function generateContractsReport(
       body: cancelled.map(c => {
         const client = clients.find(cl => cl.id === c.client_id)
         return [
-          client ? `${client.first_name} ${client.last_name}` : `Cliente #${c.client_id}`,
+          client ? `${client.first_name} ${client.last_name}`.trim() : `Cliente #${c.client_id}`,
           c.service_type || '-', freqLabels[c.frequency] || c.frequency, formatCurrency(c.monthly_fee)
         ]
       }),
@@ -1537,7 +1537,7 @@ export function generateProductivityReport(
       head: [['Fecha', 'Cliente', 'Tipo', 'Status', 'Cobrado', 'Balance']],
       body: periodJobs.sort((a, b) => b.date - a.date).map(j => {
         const client = clients.find(c => c.id === j.client_id)
-        const clientName = client ? `${client.first_name} ${client.last_name}` : `Cliente #${j.client_id}`
+        const clientName = client ? `${client.first_name} ${client.last_name}`.trim() : `Cliente #${j.client_id}`
         return [
           formatDateShort(j.date), clientName, typeLabels[j.type] || j.type,
           statusLabels[j.status] || j.status, formatCurrency(j.total_charged), formatCurrency(j.balance_due)
@@ -1599,7 +1599,7 @@ export function generateIncomeByClientReport(
 
   // Check retention per client
   clients.forEach(c => {
-    const name = `${c.first_name} ${c.last_name}`
+    const name = `${c.first_name} ${c.last_name}`.trim()
     if (byClient[name] && (c as any).retention_percent > 0) {
       const pct = (c as any).retention_percent
       const facturado = byClient[name].total / (1 - pct / 100)
