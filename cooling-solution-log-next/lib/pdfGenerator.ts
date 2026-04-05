@@ -2724,6 +2724,182 @@ export function generateBankReconciliationPDF(
   doc.save(`Conciliacion-Bancaria${suffix}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
+// ============ MAINTENANCE / EQUIPMENT REPORT ============
+export function generateMaintenancePDF(
+  equipment: any[],
+  logs: any[],
+  clientFilter?: string
+) {
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const mL = 14, mR = 14
+  const now = Date.now()
+  const THIRTY = 30 * 86400000
+
+  const statusColor = (eq: any): [number, number, number] => {
+    if (!eq.next_service_due) return [120, 120, 120]
+    if (eq.next_service_due < now) return [200, 50, 50]
+    if (eq.next_service_due - now <= THIRTY) return [180, 140, 0]
+    return [34, 140, 34]
+  }
+  const statusLabel = (eq: any): string => {
+    if (!eq.next_service_due) return 'Sin programa'
+    if (eq.next_service_due < now) return 'VENCIDO'
+    if (eq.next_service_due - now <= THIRTY) return 'Próximo'
+    return 'Al día'
+  }
+  const intervalLabel = (m: number): string =>
+    m === 1 ? 'Mensual' : m === 3 ? 'Trimestral' : m === 6 ? 'Semestral' : 'Anual'
+
+  const addFooter = () => {
+    const total = doc.getNumberOfPages()
+    for (let i = 1; i <= total; i++) {
+      doc.setPage(i)
+      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+      doc.line(mL, pageH - 14, pageW - mR, pageH - 14)
+      doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+      doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 7, { align: 'center' })
+      doc.text(`Pág ${i} de ${total}`, pageW - mR, pageH - 7, { align: 'right' })
+    }
+  }
+
+  const filtered = clientFilter
+    ? equipment.filter(e => e.client_name === clientFilter)
+    : equipment
+
+  // Header
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - mR - 40, 8, 40, 17) } catch {}
+  doc.setFontSize(16); doc.setTextColor(0, 130, 130); doc.setFont('helvetica', 'bold')
+  doc.text(COMPANY_NAME, mL, 17); doc.setFont('helvetica', 'normal')
+  doc.setFontSize(12); doc.setTextColor(40, 40, 40)
+  doc.text(`Reporte de Mantenimiento Preventivo${clientFilter ? ` — ${clientFilter}` : ''}`, mL, 26)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`Generado: ${formatDate(Date.now())}`, mL, 33)
+
+  let y = 42
+
+  // Summary table
+  const overdue = filtered.filter(e => e.next_service_due && e.next_service_due < now).length
+  const dueSoon = filtered.filter(e => e.next_service_due && e.next_service_due >= now && e.next_service_due - now <= THIRTY).length
+  const upToDate = filtered.filter(e => e.next_service_due && e.next_service_due - now > THIRTY).length
+  const noSchedule = filtered.filter(e => !e.next_service_due).length
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Total Equipos', 'Al Día ✓', 'Próximos ⚠', 'Vencidos ✗', 'Sin Programa']],
+    body: [[String(filtered.length), String(upToDate), String(dueSoon), String(overdue), String(noSchedule)]],
+    headStyles: { fillColor: [0, 130, 130], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 10, fontStyle: 'bold' },
+    columnStyles: {
+      1: { textColor: [34, 140, 34] as [number,number,number] },
+      2: { textColor: [180, 140, 0] as [number,number,number] },
+      3: { textColor: [200, 50, 50] as [number,number,number] },
+    },
+  })
+  y = (doc as any).lastAutoTable.finalY + 10
+
+  // Group by client
+  const byClient: Record<string, any[]> = {}
+  filtered.forEach(eq => {
+    const key = eq.client_name || 'Sin cliente'
+    if (!byClient[key]) byClient[key] = []
+    byClient[key].push(eq)
+  })
+
+  for (const [clientName, eqList] of Object.entries(byClient).sort()) {
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+
+    doc.setDrawColor(0, 130, 130); doc.setLineWidth(0.4); doc.line(mL, y, pageW - mR, y); y += 6
+    doc.setFontSize(11); doc.setTextColor(0, 100, 130); doc.setFont('helvetica', 'bold')
+    doc.text(`👤 ${clientName}`, mL, y); doc.setFont('helvetica', 'normal'); y += 4
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Equipo', 'Marca/Modelo', 'Serial', 'Frecuencia', 'Último Servicio', 'Próximo Servicio', 'Estado']],
+      body: eqList.sort((a, b) => (a.next_service_due || 9e15) - (b.next_service_due || 9e15)).map(eq => {
+        const eqLogs = logs.filter((l: any) => l.equipment_id === eq.id).sort((a: any, b: any) => b.date - a.date)
+        const lastLog = eqLogs[0]
+        return [
+          `${eq.equipment_type}${eq.location ? `\n${eq.location}` : ''}`,
+          `${eq.brand || '-'} ${eq.model || ''}`.trim() || '-',
+          eq.serial_number || '-',
+          eq.maintenance_interval_months ? intervalLabel(eq.maintenance_interval_months) : '-',
+          lastLog ? formatDateShort(lastLog.date) : 'Nunca',
+          eq.next_service_due ? formatDateShort(eq.next_service_due) : '-',
+          statusLabel(eq),
+        ]
+      }),
+      headStyles: { fillColor: [50, 80, 110], textColor: [255, 255, 255], fontSize: 7 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 32 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 26 },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 22 },
+        5: { cellWidth: 22 },
+        6: { cellWidth: 20 },
+      },
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && data.column.index === 6) {
+          const eq = eqList[data.row.index]
+          const [r, g, b] = statusColor(eq)
+          data.cell.styles.textColor = [r, g, b]
+          data.cell.styles.fontStyle = 'bold'
+        }
+      },
+    })
+    y = (doc as any).lastAutoTable.finalY + 8
+
+    // Maintenance history for this client's equipment
+    const clientLogs = logs
+      .filter((l: any) => eqList.some(eq => eq.id === l.equipment_id))
+      .sort((a: any, b: any) => b.date - a.date)
+      .slice(0, 20)
+
+    if (clientLogs.length > 0) {
+      if (y > pageH - 40) { doc.addPage(); y = 20 }
+      doc.setFontSize(8); doc.setTextColor(80, 80, 80); doc.setFont('helvetica', 'bold')
+      doc.text('Historial reciente:', mL + 3, y); doc.setFont('helvetica', 'normal'); y += 3
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Fecha', 'Equipo', 'Trabajo', 'Técnico', 'Notas']],
+        body: clientLogs.map((l: any) => {
+          const eq = eqList.find(e => e.id === l.equipment_id)
+          const typeLabel: Record<string, string> = {
+            cleaning: 'Limpieza', deep_cleaning: 'Limpieza Profunda',
+            repair: 'Reparación', inspection: 'Inspección', other: 'Otro'
+          }
+          return [
+            formatDateShort(l.date),
+            eq ? `${eq.equipment_type}${eq.notes ? ` (${eq.notes.slice(0, 12)})` : ''}` : `ID:${l.equipment_id}`,
+            typeLabel[l.maintenance_type] || l.maintenance_type,
+            l.technician || '-',
+            (l.notes || '-').slice(0, 35),
+          ]
+        }),
+        headStyles: { fillColor: [80, 80, 80], textColor: [255, 255, 255], fontSize: 7 },
+        bodyStyles: { fontSize: 7 },
+        margin: { left: mL + 3 },
+        columnStyles: {
+          0: { cellWidth: 18 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 28 },
+          3: { cellWidth: 20 },
+          4: { cellWidth: 76 },
+        },
+      })
+      y = (doc as any).lastAutoTable.finalY + 10
+    }
+  }
+
+  addFooter()
+  const suffix = clientFilter ? `-${clientFilter.replace(/\s+/g, '_')}` : ''
+  doc.save(`Mantenimiento${suffix}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
 export function exportEventsCSV(
   events: EventRecord[],
   startDate: number,

@@ -18,6 +18,7 @@ import ReportsPage from '@/components/ReportsPage'
 import WarrantyPage from '@/components/WarrantyPage'
 import BankStatementsPage from '@/components/BankStatementsPage'
 import ProductCatalogPage from '@/components/ProductCatalogPage'
+import MaintenancePage from '@/components/MaintenancePage'
 export default function Home() {
   const [currentPage, setCurrentPage] = useState('chat')
 
@@ -40,6 +41,7 @@ export default function Home() {
       case 'warranties':return <WarrantyPage onNavigate={setCurrentPage} />
       case 'bank': return <BankStatementsPage onNavigate={setCurrentPage} />
       case 'catalog': return <ProductCatalogPage onNavigate={navigate} />
+      case 'maintenance': return <MaintenancePage onNavigate={navigate} />
       default: return <ChatCapture onNavigate={navigate} />
     }
   }

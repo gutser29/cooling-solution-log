@@ -755,33 +755,44 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
         // Equipos y mantenimiento preventivo
         try {
-          const equip = await db.table('equipment').toArray()
+          const equip = await db.equipment.toArray()
           if (equip.length > 0) {
+            const logs = await db.maintenance_logs.toArray()
+            const nowTs = Date.now()
+            const THIRTY = 30 * 86400000
+
             ctx += '\n\nEQUIPOS REGISTRADOS:\n' + equip.map((eq: any) => {
-              return `[ID:${eq.id}] ${eq.equipment_type} ${eq.brand || ''} ${eq.model || ''} | ${eq.client_name} @ ${eq.location || 'N/A'} | Serial: ${eq.serial_number || 'N/A'} | Status: ${eq.status}`
+              const eqLogs = logs.filter((l: any) => l.equipment_id === eq.id).sort((a: any, b: any) => b.date - a.date)
+              const lastLog = eqLogs[0]
+              const lastStr = lastLog ? new Date(lastLog.date).toLocaleDateString('es-PR') : 'Nunca'
+              let statusStr = '⚪ Sin programa'
+              if (eq.next_service_due) {
+                if (eq.next_service_due < nowTs) statusStr = `🔴 VENCIDO (${Math.floor((nowTs - eq.next_service_due) / 86400000)}d atrasado)`
+                else if (eq.next_service_due - nowTs <= THIRTY) statusStr = `🟡 Próximo (${Math.floor((eq.next_service_due - nowTs) / 86400000)}d)`
+                else statusStr = `🟢 Al día (próximo: ${new Date(eq.next_service_due).toLocaleDateString('es-PR')})`
+              }
+              return `[ID:${eq.id}] ${eq.equipment_type} ${eq.brand || ''} ${eq.model || ''} | ${eq.client_name} @ ${eq.location || 'N/A'} | S/N: ${eq.serial_number || 'N/A'} | ${statusStr} | Último servicio: ${lastStr}`
             }).join('\n')
 
-            const logs = await db.table('maintenance_logs').toArray()
-            const currentYear = new Date().getFullYear()
-            const yearStart = new Date(currentYear, 0, 1).getTime()
-
-            // Resumen de mantenimiento por cliente
-            const byClient: Record<string, { total: number; done: number; lastDate: number }> = {}
+            // Summary by client: which specific equipment is missing
+            const byClient: Record<string, { overdue: string[]; soon: string[]; ok: number; total: number }> = {}
             equip.forEach((eq: any) => {
               const key = eq.client_name || 'Sin cliente'
-              if (!byClient[key]) byClient[key] = { total: 0, done: 0, lastDate: 0 }
+              if (!byClient[key]) byClient[key] = { overdue: [], soon: [], ok: 0, total: 0 }
               byClient[key].total++
-              const eqLogs = logs.filter((l: any) => l.equipment_id === eq.id && l.date >= yearStart)
-              if (eqLogs.length > 0) {
-                byClient[key].done++
-                const lastLog = eqLogs.sort((a: any, b: any) => b.date - a.date)[0]
-                if (lastLog.date > byClient[key].lastDate) byClient[key].lastDate = lastLog.date
-              }
+              if (!eq.next_service_due) return
+              const label = `${eq.equipment_type}${eq.location ? ` (${eq.location})` : ''} [ID:${eq.id}]`
+              if (eq.next_service_due < nowTs) byClient[key].overdue.push(label)
+              else if (eq.next_service_due - nowTs <= THIRTY) byClient[key].soon.push(label)
+              else byClient[key].ok++
             })
 
-            ctx += '\n\nMANTENIMIENTO PREVENTIVO (este año):\n' + Object.entries(byClient).map(([name, data]) => {
-              const lastStr = data.lastDate ? new Date(data.lastDate).toLocaleDateString('es-PR') : 'Nunca'
-              return `${name}: ${data.done}/${data.total} equipos limpiados | Último: ${lastStr} | Faltan: ${data.total - data.done}`
+            ctx += '\n\nRESUMEN MANTENIMIENTO:\n' + Object.entries(byClient).map(([name, data]) => {
+              const parts = [`${name}: ${data.total} equipos`]
+              if (data.overdue.length) parts.push(`🔴 VENCIDOS: ${data.overdue.join(', ')}`)
+              if (data.soon.length) parts.push(`🟡 Próximos 30d: ${data.soon.join(', ')}`)
+              parts.push(`🟢 Al día: ${data.ok}`)
+              return parts.join(' | ')
             }).join('\n')
           }
         } catch {}
@@ -1857,18 +1868,26 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const allEquip = extractAllJSON(assistantText, 'SAVE_EQUIPMENT:')
         for (const eq of allEquip) {
           try {
-            const now = Date.now()
-            await db.table('equipment').add({
+            const nowTs = Date.now()
+            const interval = eq.maintenance_interval_months || 12
+            const lastSvc = eq.last_service_date ? Number(eq.last_service_date) : undefined
+            const nextDue = lastSvc ? (() => { const d = new Date(lastSvc); d.setMonth(d.getMonth() + interval); return d.getTime() })() : undefined
+            await db.equipment.add({
               client_name: eq.client_name || '',
               client_id: eq.client_id,
+              location_id: eq.location_id,
               location: eq.location || '',
               equipment_type: eq.equipment_type || '',
               brand: eq.brand || '',
               model: eq.model || '',
               serial_number: eq.serial_number || '',
               status: eq.status || 'active',
+              maintenance_interval_months: interval,
+              last_service_date: lastSvc,
+              next_service_due: nextDue,
               notes: eq.notes || '',
-              created_at: now
+              created_at: nowTs,
+              updated_at: nowTs,
             })
             savedItems.push(`Equipo: ${eq.equipment_type} ${eq.brand || ''} → ${eq.client_name}`)
             needsSync = true
@@ -1884,18 +1903,32 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const allMaint = extractAllJSON(assistantText, 'SAVE_MAINTENANCE:')
         for (const m of allMaint) {
           try {
-            const now = Date.now()
-            await db.table('maintenance_logs').add({
+            const nowTs = Date.now()
+            const svcDate = m.date ? Number(m.date) : nowTs
+            await db.maintenance_logs.add({
               equipment_id: m.equipment_id,
               client_name: m.client_name || '',
               client_id: m.client_id,
               maintenance_type: m.maintenance_type || 'cleaning',
-              date: m.date || now,
+              date: svcDate,
               notes: m.notes || '',
               technician: m.technician || 'Sergio',
               photos: [],
-              created_at: now
+              created_at: nowTs,
             })
+            // Update equipment's last_service_date and next_service_due
+            if (m.equipment_id) {
+              const eq = await db.equipment.get(m.equipment_id)
+              if (eq && (!eq.last_service_date || svcDate > eq.last_service_date)) {
+                const interval = eq.maintenance_interval_months || 12
+                const d = new Date(svcDate); d.setMonth(d.getMonth() + interval)
+                await db.equipment.update(m.equipment_id, {
+                  last_service_date: svcDate,
+                  next_service_due: d.getTime(),
+                  updated_at: nowTs,
+                })
+              }
+            }
             savedItems.push(`Mantenimiento: ${m.maintenance_type} → ${m.client_name}`)
             needsSync = true
             contextLoadedRef.current = false
@@ -2032,6 +2065,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('catalog') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               🔧 Catálogo HVAC
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('maintenance') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              🛠️ Mantenimiento Preventivo
             </button>
             <button onClick={async () => {
               setShowMenu(false)

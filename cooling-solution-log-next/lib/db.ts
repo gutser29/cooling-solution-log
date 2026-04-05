@@ -107,6 +107,38 @@ export interface BankTransaction {
   created_at: number
 }
 
+export interface Equipment {
+  id?: number
+  client_name: string
+  client_id?: number
+  location_id?: number            // link to client_locations.id
+  location: string
+  equipment_type: string          // "Package Unit", "Mini Split", "Walking Cooler Evaporator", etc.
+  brand: string
+  model: string
+  serial_number: string
+  status: 'active' | 'inactive' | 'replaced'
+  maintenance_interval_months: number  // 1, 3, 6, 12
+  last_service_date?: number      // epoch ms
+  next_service_due?: number       // epoch ms — auto-calculated
+  notes?: string
+  created_at: number
+  updated_at?: number
+}
+
+export interface MaintenanceLog {
+  id?: number
+  equipment_id: number
+  client_name: string
+  client_id?: number
+  maintenance_type: 'cleaning' | 'deep_cleaning' | 'repair' | 'inspection' | 'other'
+  date: number
+  notes?: string
+  technician: string
+  photos?: string[]
+  created_at: number
+}
+
 export class CoolingDB extends Dexie {
   events!: Dexie.Table<EventRecord, number>
   clients!: Dexie.Table<Client, number>
@@ -128,8 +160,8 @@ export class CoolingDB extends Dexie {
   scanned_docs!: Dexie.Table<ScannedDoc, number>
   scan_files!: Dexie.Table<ScanFile, number>
   product_prices!: Dexie.Table<ProductPrice, number>
-  equipment!: Dexie.Table<any, number>
-  maintenance_logs!: Dexie.Table<any, number>
+  equipment!: Dexie.Table<Equipment, number>
+  maintenance_logs!: Dexie.Table<MaintenanceLog, number>
   bank_accounts!: Dexie.Table<BankAccount, number>
   bank_statements!: Dexie.Table<BankStatement, number>
   bank_transactions!: Dexie.Table<BankTransaction, number>
@@ -505,6 +537,36 @@ bank_transactions: '++id,account,transaction_type,date,amount,description,match_
       scan_files: '++id,docId,created_at',
       product_prices: '++id,product_name,vendor,unit_price,client_for,category,timestamp,created_at',
       equipment: '++id,client_name,client_id,location,equipment_type,brand,model,serial_number,status,created_at',
+      maintenance_logs: '++id,equipment_id,client_name,client_id,maintenance_type,date,created_at',
+      bank_accounts: '++id,name,type,institution,last_four,payment_method_key,active,created_at',
+      bank_statements: '++id,account_id,account_name,period_start,period_end,status,created_at',
+      bank_transactions: '++id,statement_id,account_id,account_name,date,description,amount,direction,category,match_status,match_event_id,match_type,created_at',
+      vendor_aliases: '++id,canonical_name,*aliases,category,created_at'
+    })
+
+    // Version 21 — Equipment: add location_id, maintenance_interval_months, next_service_due
+    this.version(21).stores({
+      events: '++id,timestamp,type,status,subtype,category,amount,client,employee_id,job_id,vehicle_id,payment_method,expense_type',
+      clients: '++id,first_name,last_name,phone,type,active,created_at,updated_at',
+      employees: '++id,first_name,last_name,active,created_at',
+      jobs: '++id,client_id,date,status,payment_status,created_at,location_id',
+      vehicles: '++id,name,active,created_at',
+      contracts: '++id,client_id,status,next_service_due,created_at',
+      sync_queue: '++id,timestamp,status',
+      notes: '++id,timestamp,updated_at',
+      appointments: '++id,timestamp,date,client_id,status,created_at,location_id',
+      reminders: '++id,timestamp,due_date,completed,created_at',
+      invoices: '++id,invoice_number,type,client_name,status,issue_date,created_at',
+      job_templates: '++id,name,active,created_at',
+      client_photos: '++id,client_id,client_name,job_id,category,timestamp,created_at',
+      client_documents: '++id,client_id,client_name,job_id,invoice_id,doc_type,file_name,timestamp,created_at',
+      client_locations: '++id,client_id,name,city,is_primary,active,created_at',
+      bitacora: '++id,date,*tags,*clients_mentioned,*locations,created_at',
+      warranties: '++id,equipment_type,brand,vendor,client_name,client_id,status,purchase_date,expiration_date,created_at',
+      scanned_docs: '++id,name,driveFileId,status,scannedAt,processedAt,created_at',
+      scan_files: '++id,docId,created_at',
+      product_prices: '++id,product_name,vendor,unit_price,client_for,category,timestamp,created_at',
+      equipment: '++id,client_name,client_id,location_id,location,equipment_type,brand,model,serial_number,status,next_service_due,created_at',
       maintenance_logs: '++id,equipment_id,client_name,client_id,maintenance_type,date,created_at',
       bank_accounts: '++id,name,type,institution,last_four,payment_method_key,active,created_at',
       bank_statements: '++id,account_id,account_name,period_start,period_end,status,created_at',

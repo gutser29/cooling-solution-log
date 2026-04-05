@@ -21,6 +21,7 @@ interface Stats {
   activeReminders: { text: string; dueDate: number; priority: string; overdue: boolean }[]
   contractAlerts: { clientName: string; service: string; daysUntil: number }[]
   warrantyAlerts: { type: string; brand: string; client: string; days: number }[]
+  equipmentAlerts: { clientName: string; items: { type: string; location: string; daysOverdue: number }[] }[]
   pendingInvoices: { number: string; client: string; total: number; days: number }[]
   pendingInvoicesTotal: number
 }
@@ -111,6 +112,27 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           .sort((a, b) => a.days - b.days)
       } catch {}
 
+      // Equipment maintenance alerts
+      let equipmentAlerts: Stats['equipmentAlerts'] = []
+      try {
+        const allEquip = await db.equipment.toArray()
+        const THIRTY = 30 * 86400000
+        const alertEquip = allEquip.filter(eq => eq.next_service_due && eq.next_service_due - now <= THIRTY)
+        const byClient: Record<string, { type: string; location: string; daysOverdue: number }[]> = {}
+        alertEquip.forEach(eq => {
+          const key = eq.client_name || 'Sin cliente'
+          if (!byClient[key]) byClient[key] = []
+          byClient[key].push({
+            type: eq.equipment_type,
+            location: eq.location || '',
+            daysOverdue: eq.next_service_due! < now ? Math.floor((now - eq.next_service_due!) / 86400000) : -Math.floor((eq.next_service_due! - now) / 86400000),
+          })
+        })
+        equipmentAlerts = Object.entries(byClient)
+          .map(([clientName, items]) => ({ clientName, items }))
+          .sort((a, b) => Math.max(...b.items.map(i => i.daysOverdue)) - Math.max(...a.items.map(i => i.daysOverdue)))
+      } catch {}
+
       // Pending invoices
       let pendingInvoices: Stats['pendingInvoices'] = []
       let pendingInvoicesTotal = 0
@@ -125,7 +147,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       setStats({
         monthIncome: totalMonthIncome, monthExpenses, monthProfit: totalMonthIncome - monthExpenses,
         todayExpenses, todayIncome, pendingAR: totalAR, pendingClients, recentEvents, topCategories,
-        upcomingAppts, activeReminders, contractAlerts, warrantyAlerts, pendingInvoices, pendingInvoicesTotal
+        upcomingAppts, activeReminders, contractAlerts, warrantyAlerts, equipmentAlerts, pendingInvoices, pendingInvoicesTotal
       })
     } catch (e) { console.error('Dashboard error:', e) }
     finally { setLoading(false) }
@@ -199,6 +221,26 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               <div key={i} className="flex justify-between items-center text-sm py-1">
                 <span className="text-gray-300">{a.type} ({a.brand}) — {a.client}</span>
                 <span className={`text-xs px-2 py-0.5 rounded ${a.days <= 7 ? 'bg-red-900/50 text-red-400' : 'bg-orange-900/50 text-orange-400'}`}>{a.days}d</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Equipment Maintenance Alerts */}
+        {stats.equipmentAlerts.length > 0 && (
+          <div className="bg-red-900/15 rounded-xl p-4 border border-red-800/30 cursor-pointer" onClick={() => onNavigate('maintenance')}>
+            <p className="text-sm font-semibold text-red-400 mb-2">🔧 Mantenimiento Pendiente</p>
+            {stats.equipmentAlerts.slice(0, 4).map((a, i) => (
+              <div key={i} className="mb-2 last:mb-0">
+                <p className="text-xs font-medium text-gray-300">{a.clientName}</p>
+                {a.items.slice(0, 3).map((item, j) => (
+                  <div key={j} className="flex justify-between items-center text-xs py-0.5 pl-2">
+                    <span className="text-gray-400">{item.type}{item.location ? ` · ${item.location}` : ''}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-xs ${item.daysOverdue > 0 ? 'bg-red-900/50 text-red-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                      {item.daysOverdue > 0 ? `${item.daysOverdue}d venció` : `${Math.abs(item.daysOverdue)}d`}
+                    </span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>

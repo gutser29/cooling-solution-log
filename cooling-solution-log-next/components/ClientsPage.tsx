@@ -87,6 +87,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   // Locations state
   const [locationCounts, setLocationCounts] = useState<Map<number, number>>(new Map())
   const [clientLocations, setClientLocations] = useState<ClientLocation[]>([])
+  const [equipmentByLocId, setEquipmentByLocId] = useState<Map<number, { total: number; overdue: number; soon: number }>>(new Map())
   const [showLocationForm, setShowLocationForm] = useState(false)
   const [editingLocation, setEditingLocation] = useState<ClientLocation | null>(null)
   const [locationForm, setLocationForm] = useState<Partial<ClientLocation>>({})
@@ -212,6 +213,24 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
     try {
       const locs = await db.client_locations.where('client_id').equals(client.id!).toArray()
       setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)))
+      // Equipment count per location
+      try {
+        const equip = await db.equipment.where('client_id').equals(client.id!).toArray()
+        const nowTs = Date.now()
+        const THIRTY = 30 * 86400000
+        const eqMap = new Map<number, { total: number; overdue: number; soon: number }>()
+        equip.forEach((eq: any) => {
+          if (!eq.location_id) return
+          const cur = eqMap.get(eq.location_id) || { total: 0, overdue: 0, soon: 0 }
+          cur.total++
+          if (eq.next_service_due) {
+            if (eq.next_service_due < nowTs) cur.overdue++
+            else if (eq.next_service_due - nowTs <= THIRTY) cur.soon++
+          }
+          eqMap.set(eq.location_id, cur)
+        })
+        setEquipmentByLocId(eqMap)
+      } catch {}
     } catch { setClientLocations([]) }
   }
 
@@ -774,6 +793,12 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                       {loc.contact_person && <p className="text-xs text-gray-500 mt-0.5">👤 {loc.contact_person}{loc.contact_phone ? ` · ${loc.contact_phone}` : ''}</p>}
                       {loc.equipment_info && <p className="text-xs text-gray-500 mt-0.5">⚙️ {loc.equipment_info}</p>}
                       {loc.access_instructions && <p className="text-xs text-yellow-600 mt-0.5">🔑 {loc.access_instructions}</p>}
+                      {loc.id && equipmentByLocId.has(loc.id) && (() => {
+                        const eq = equipmentByLocId.get(loc.id!)!
+                        const color = eq.overdue > 0 ? 'text-red-400' : eq.soon > 0 ? 'text-yellow-400' : 'text-green-400'
+                        const badge = eq.overdue > 0 ? `${eq.overdue} vencido${eq.overdue > 1 ? 's' : ''}` : eq.soon > 0 ? `${eq.soon} próximo${eq.soon > 1 ? 's' : ''}` : 'al día'
+                        return <p className={`text-xs mt-0.5 ${color}`}>🔧 {eq.total} equipo{eq.total !== 1 ? 's' : ''} · {badge}</p>
+                      })()}
                     </div>
                     <div className="flex gap-2 ml-2 flex-shrink-0">
                       <button onClick={() => openEditLocation(loc)} className="text-blue-400 text-xs px-2 py-1 bg-blue-900/20 rounded-lg">✏️</button>
