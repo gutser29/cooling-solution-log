@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { db } from '@/lib/db'
 import { downloadInvoicePDF, generateInvoiceNumber } from '@/lib/pdfGenerator'
 import ConfirmDialog from './ConfirmDialog'
-import type { Invoice, InvoiceItem, Client, JobTemplate } from '@/lib/types'
+import type { Invoice, InvoiceItem, Client, JobTemplate, ClientLocation } from '@/lib/types'
 
 interface InvoicesPageProps {
   onNavigate: (page: string) => void
@@ -42,6 +42,10 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [showClientPicker, setShowClientPicker] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
+  const [formClientId, setFormClientId] = useState<number | undefined>(undefined)
+  const [formLocationId, setFormLocationId] = useState<number | undefined>(undefined)
+  const [formLocationName, setFormLocationName] = useState('')
+  const [clientLocations, setClientLocations] = useState<ClientLocation[]>([])
 
   const loadAll = useCallback(async () => {
     const all = await db.invoices.orderBy('created_at').reverse().toArray()
@@ -100,13 +104,20 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormItems(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const pickClient = (c: Client) => {
+  const pickClient = async (c: Client) => {
     setFormClientName(`${c.first_name} ${c.last_name}`.trim())
     setFormClientPhone(c.phone || '')
     setFormClientEmail(c.email || '')
     setFormClientAddress(c.address || '')
+    setFormClientId(c.id)
+    setFormLocationId(undefined)
+    setFormLocationName('')
     setShowClientPicker(false)
     setClientSearch('')
+    try {
+      const locs = await db.client_locations.where('client_id').equals(c.id!).filter(l => l.active).toArray()
+      setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)))
+    } catch { setClientLocations([]) }
   }
 
   const pickTemplate = (t: JobTemplate) => {
@@ -146,6 +157,10 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormDepositEnabled(false)
     setFormDepositType('percentage')
     setFormDepositValue(50)
+    setFormClientId(undefined)
+    setFormLocationId(undefined)
+    setFormLocationName('')
+    setClientLocations([])
     setSelected(null)
   }
 
@@ -169,6 +184,16 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormDepositEnabled(inv.deposit_enabled || false)
     setFormDepositType(inv.deposit_type || 'percentage')
     setFormDepositValue(inv.deposit_value || 50)
+    setFormClientId(inv.client_id)
+    setFormLocationId(inv.location_id)
+    setFormLocationName(inv.location_name || '')
+    if (inv.client_id) {
+      db.client_locations.where('client_id').equals(inv.client_id).filter(l => l.active).toArray()
+        .then(locs => setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))))
+        .catch(() => setClientLocations([]))
+    } else {
+      setClientLocations([])
+    }
     setViewMode('edit')
   }
 
@@ -187,12 +212,18 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const depositAmount = formDepositEnabled ? (formDepositType === 'percentage' ? total * (formDepositValue / 100) : formDepositValue) : 0
     const balanceDue = total - depositAmount
 
+    const locationData = formLocationId
+      ? { location_id: formLocationId, location_name: formLocationName || undefined }
+      : { location_id: undefined, location_name: undefined }
+
     if (selected?.id && viewMode === 'edit') {
       await db.invoices.update(selected.id, {
+        client_id: formClientId,
         client_name: formClientName.trim(),
         client_phone: formClientPhone.trim() || undefined,
         client_email: formClientEmail.trim() || undefined,
         client_address: formClientAddress.trim() || undefined,
+        ...locationData,
         items: validItems,
         subtotal,
         tax_rate: formTaxRate,
@@ -213,10 +244,12 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       await db.invoices.add({
         invoice_number: generateInvoiceNumber(formType),
         type: formType,
+        client_id: formClientId,
         client_name: formClientName.trim(),
         client_phone: formClientPhone.trim() || undefined,
         client_email: formClientEmail.trim() || undefined,
         client_address: formClientAddress.trim() || undefined,
+        ...locationData,
         items: validItems,
         subtotal,
         tax_rate: formTaxRate,
@@ -444,6 +477,24 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 <input value={formClientEmail} onChange={e => setFormClientEmail(e.target.value)} placeholder="Email" className="bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
               </div>
               <input value={formClientAddress} onChange={e => setFormClientAddress(e.target.value)} placeholder="Dirección" className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
+              {clientLocations.length > 0 && (
+                <select
+                  value={formLocationId ?? ''}
+                  onChange={e => {
+                    const id = e.target.value ? Number(e.target.value) : undefined
+                    setFormLocationId(id)
+                    const loc = clientLocations.find(l => l.id === id)
+                    setFormLocationName(loc?.name || '')
+                    if (loc?.address) setFormClientAddress(loc.address)
+                  }}
+                  className="w-full bg-[#0b1220] border border-teal-700/50 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="">📍 Sin localidad específica</option>
+                  {clientLocations.map(l => (
+                    <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ''}</option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
 

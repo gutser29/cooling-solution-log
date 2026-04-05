@@ -248,6 +248,7 @@ export interface Invoice {
   created_at: number
   updated_at: number
   location_id?: number
+  location_name?: string
 }
 
 // ========== JOB TEMPLATES ==========

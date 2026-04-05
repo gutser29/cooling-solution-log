@@ -169,6 +169,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   doc.setTextColor(60, 60, 60)
   let billY = y + 5
   doc.text(invoice.client_name, colRight, billY)
+  if (invoice.location_name) { billY += 5; doc.setTextColor(0, 130, 130); doc.text(invoice.location_name, colRight, billY); doc.setTextColor(60, 60, 60) }
   if (invoice.client_address) { billY += 5; doc.text(invoice.client_address, colRight, billY) }
   if (invoice.client_phone) { billY += 5; doc.text(invoice.client_phone, colRight, billY) }
   if (invoice.client_email) { billY += 5; doc.text(invoice.client_email, colRight, billY) }

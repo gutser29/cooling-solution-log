@@ -4,14 +4,14 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { generatePhotoReport, generateDocumentListPDF } from '@/lib/pdfGenerator'
 import ConfirmDialog from './ConfirmDialog'
-import type { Client, Job, EventRecord, ClientPhoto, ClientDocument } from '@/lib/types'
+import type { Client, Job, EventRecord, ClientPhoto, ClientDocument, ClientLocation } from '@/lib/types'
 
 interface ClientsPageProps {
   onNavigate: (page: string) => void
 }
 
 type ViewMode = 'list' | 'detail' | 'edit' | 'new' | 'newQuote'
-type DetailTab = 'resumen' | 'facturas' | 'garantias' | 'gastos' | 'cotizaciones' | 'fotos' | 'docs'
+type DetailTab = 'resumen' | 'facturas' | 'garantias' | 'gastos' | 'cotizaciones' | 'fotos' | 'docs' | 'localidades'
 
 interface QuickQuote {
   id?: number
@@ -84,11 +84,26 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const photoInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
 
+  // Locations state
+  const [locationCounts, setLocationCounts] = useState<Map<number, number>>(new Map())
+  const [clientLocations, setClientLocations] = useState<ClientLocation[]>([])
+  const [showLocationForm, setShowLocationForm] = useState(false)
+  const [editingLocation, setEditingLocation] = useState<ClientLocation | null>(null)
+  const [locationForm, setLocationForm] = useState<Partial<ClientLocation>>({})
+  const [showMergeModal, setShowMergeModal] = useState(false)
+  const [mergeSourceId, setMergeSourceId] = useState<number | undefined>()
+  const [mergeLocName, setMergeLocName] = useState('')
+  const [mergeBusy, setMergeBusy] = useState(false)
+
   const loadClients = useCallback(async () => {
     try {
       const all = await db.clients.toArray()
       const active = all.filter(c => c.active === true)
       setClients(active.sort((a, b) => (a.first_name + a.last_name).localeCompare(b.first_name + b.last_name)))
+      const allLocs = await db.client_locations.where('active').equals(1).toArray()
+      const counts = new Map<number, number>()
+      allLocs.forEach(l => counts.set(l.client_id, (counts.get(l.client_id) || 0) + 1))
+      setLocationCounts(counts)
     } catch { setClients([]) }
     finally { setLoading(false) }
   }, [])
@@ -192,6 +207,100 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
         q.client_id === client.id || nameMatches(q.client_name)
       ).sort((a: any, b: any) => b.created_at - a.created_at))
     } catch { setClientQuotes([]) }
+
+    // Locations
+    try {
+      const locs = await db.client_locations.where('client_id').equals(client.id!).toArray()
+      setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)))
+    } catch { setClientLocations([]) }
+  }
+
+  const reloadLocations = async (clientId: number) => {
+    const locs = await db.client_locations.where('client_id').equals(clientId).toArray()
+    setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)))
+    const allLocs = await db.client_locations.where('active').equals(1).toArray()
+    const counts = new Map<number, number>()
+    allLocs.forEach(l => counts.set(l.client_id, (counts.get(l.client_id) || 0) + 1))
+    setLocationCounts(counts)
+  }
+
+  const openNewLocation = () => {
+    setEditingLocation(null)
+    setLocationForm({ is_primary: clientLocations.length === 0, active: true })
+    setShowLocationForm(true)
+  }
+
+  const openEditLocation = (loc: ClientLocation) => {
+    setEditingLocation(loc)
+    setLocationForm({ ...loc })
+    setShowLocationForm(true)
+  }
+
+  const saveLocation = async () => {
+    if (!locationForm.name?.trim() || !locationForm.address?.trim() || !selectedClient?.id) return
+    const now = Date.now()
+    if (editingLocation?.id) {
+      await db.client_locations.update(editingLocation.id, { ...locationForm, updated_at: now })
+    } else {
+      await db.client_locations.add({ ...locationForm, name: locationForm.name.trim(), address: locationForm.address.trim(), client_id: selectedClient.id, is_primary: locationForm.is_primary ?? false, active: true, created_at: now })
+    }
+    setShowLocationForm(false)
+    await reloadLocations(selectedClient.id)
+  }
+
+  const toggleLocationActive = async (loc: ClientLocation) => {
+    if (!loc.id || !selectedClient?.id) return
+    await db.client_locations.update(loc.id, { active: !loc.active })
+    await reloadLocations(selectedClient.id)
+  }
+
+  const executeMerge = async () => {
+    if (!selectedClient?.id || !mergeSourceId || !mergeLocName.trim()) return
+    setMergeBusy(true)
+    try {
+      const targetId = selectedClient.id
+      // Create location for the absorbed client
+      const sourceClient = clients.find(c => c.id === mergeSourceId)
+      const now = Date.now()
+      const newLocId = await db.client_locations.add({
+        client_id: targetId,
+        name: mergeLocName.trim(),
+        address: sourceClient?.address || '',
+        contact_phone: sourceClient?.phone,
+        is_primary: false,
+        active: true,
+        created_at: now
+      })
+      // Reassign all records from source to target
+      const [invoices, events, jobs, photos, docs, warranties] = await Promise.all([
+        db.invoices.where('client_id').equals(mergeSourceId).toArray(),
+        db.events.where('client_id').equals(mergeSourceId).toArray(),
+        db.jobs.where('client_id').equals(mergeSourceId).toArray(),
+        db.client_photos.where('client_id').equals(mergeSourceId).toArray(),
+        db.client_documents.where('client_id').equals(mergeSourceId).toArray(),
+        db.table('warranties').toArray().then((all: any[]) => all.filter((w: any) => w.client_id === mergeSourceId))
+      ])
+      const clientFullName = `${selectedClient.first_name} ${selectedClient.last_name}`.trim()
+      await Promise.all([
+        ...invoices.map(i => db.invoices.update(i.id!, { client_id: targetId, client_name: clientFullName, location_id: newLocId, location_name: mergeLocName.trim() })),
+        ...events.map(e => db.events.update(e.id!, { client_id: targetId, client: clientFullName, location_id: newLocId })),
+        ...jobs.map(j => db.jobs.update(j.id!, { client_id: targetId, location_id: newLocId })),
+        ...photos.map(p => db.client_photos.update(p.id!, { client_id: targetId, client_name: clientFullName, location_id: newLocId })),
+        ...docs.map(d => db.client_documents.update(d.id!, { client_id: targetId, client_name: clientFullName })),
+        ...warranties.map((w: any) => db.table('warranties').update(w.id, { client_id: targetId, client_name: clientFullName }))
+      ])
+      // Deactivate source client
+      await db.clients.update(mergeSourceId, { active: false })
+      setShowMergeModal(false)
+      setMergeSourceId(undefined)
+      setMergeLocName('')
+      await loadClients()
+      await selectClient(selectedClient)
+    } catch (e) {
+      alert('Error en la fusión: ' + String(e))
+    } finally {
+      setMergeBusy(false)
+    }
   }
 
   const startEdit = () => {
@@ -389,6 +498,9 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                           {c.type === 'commercial' ? '🏢' : '🏠'} {c.type === 'commercial' ? 'Comercial' : 'Residencial'}
                         </span>
                         {c.phone && <span className="text-xs text-gray-500">📞 {c.phone}</span>}
+                        {(locationCounts.get(c.id!) || 0) > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-teal-900/50 text-teal-400">📍 {locationCounts.get(c.id!)} loc.</span>
+                        )}
                       </div>
                     </div>
                     <span className="text-gray-500 text-lg">›</span>
@@ -533,6 +645,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
 
     const tabs: { key: DetailTab; label: string; count?: number }[] = [
       { key: 'resumen', label: '📊' },
+      { key: 'localidades', label: '📍', count: clientLocations.length },
       { key: 'facturas', label: '🧾', count: clientInvoices.length },
       { key: 'garantias', label: '🛡️', count: clientWarranties.length },
       { key: 'gastos', label: '📦', count: clientExpenses.length },
@@ -631,6 +744,44 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                 <button onClick={() => setShowDocUpload(true)}
                   className="flex-1 bg-[#111a2e] border border-white/10 rounded-xl py-3 text-sm text-gray-300">📄 Doc</button>
               </div>
+            </>
+          )}
+
+          {/* ====== LOCALIDADES TAB ====== */}
+          {detailTab === 'localidades' && (
+            <>
+              <div className="flex gap-2">
+                <button onClick={openNewLocation} className="flex-1 bg-teal-600 text-white py-2.5 rounded-xl text-sm font-medium">+ Nueva Localidad</button>
+                <button onClick={() => setShowMergeModal(true)} className="bg-[#111a2e] border border-white/10 text-gray-300 py-2.5 px-4 rounded-xl text-sm">⬇ Absorber cliente</button>
+              </div>
+
+              {clientLocations.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p className="text-3xl mb-2">📍</p>
+                  <p className="text-sm">Sin localidades registradas</p>
+                  <p className="text-xs mt-1 text-gray-600">Útil para clientes con múltiples tiendas o propiedades</p>
+                </div>
+              ) : clientLocations.map(loc => (
+                <div key={loc.id} className={`bg-[#111a2e] rounded-xl p-4 border ${loc.active ? 'border-white/5' : 'border-red-900/30 opacity-60'}`}>
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium text-gray-200">{loc.name}</p>
+                        {loc.is_primary && <span className="text-xs px-2 py-0.5 rounded bg-teal-900/50 text-teal-400">Principal</span>}
+                        {!loc.active && <span className="text-xs px-2 py-0.5 rounded bg-red-900/50 text-red-400">Inactiva</span>}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">📍 {loc.address}{loc.city ? `, ${loc.city}` : ''}</p>
+                      {loc.contact_person && <p className="text-xs text-gray-500 mt-0.5">👤 {loc.contact_person}{loc.contact_phone ? ` · ${loc.contact_phone}` : ''}</p>}
+                      {loc.equipment_info && <p className="text-xs text-gray-500 mt-0.5">⚙️ {loc.equipment_info}</p>}
+                      {loc.access_instructions && <p className="text-xs text-yellow-600 mt-0.5">🔑 {loc.access_instructions}</p>}
+                    </div>
+                    <div className="flex gap-2 ml-2 flex-shrink-0">
+                      <button onClick={() => openEditLocation(loc)} className="text-blue-400 text-xs px-2 py-1 bg-blue-900/20 rounded-lg">✏️</button>
+                      <button onClick={() => toggleLocationActive(loc)} className={`text-xs px-2 py-1 rounded-lg ${loc.active ? 'text-red-400 bg-red-900/20' : 'text-green-400 bg-green-900/20'}`}>{loc.active ? '🚫' : '✅'}</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </>
           )}
 
@@ -887,6 +1038,86 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
               <div className="flex gap-2">
                 <button onClick={() => setShowDocUpload(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200">Cancelar</button>
                 <button onClick={() => docInputRef.current?.click()} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-medium">📄 Seleccionar</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Location Form Modal */}
+        {showLocationForm && (
+          <>
+            <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowLocationForm(false)} />
+            <div className="fixed bottom-0 left-0 right-0 bg-[#111a2e] rounded-t-2xl z-50 p-4 space-y-3 max-h-[85vh] overflow-y-auto">
+              <h3 className="text-lg font-bold text-gray-200">{editingLocation ? '✏️ Editar Localidad' : '📍 Nueva Localidad'}</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="col-span-2">
+                  <label className="text-xs text-gray-400 mb-1 block">Nombre *</label>
+                  <input value={locationForm.name || ''} onChange={e => setLocationForm(f => ({ ...f, name: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder='Tienda #37, Casa Bayamón, Oficina Principal...' />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-gray-400 mb-1 block">Dirección *</label>
+                  <input value={locationForm.address || ''} onChange={e => setLocationForm(f => ({ ...f, address: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Calle, número, urbanización" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Ciudad</label>
+                  <input value={locationForm.city || ''} onChange={e => setLocationForm(f => ({ ...f, city: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="San Juan" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">ZIP</label>
+                  <input value={locationForm.zip || ''} onChange={e => setLocationForm(f => ({ ...f, zip: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="00901" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Contacto</label>
+                  <input value={locationForm.contact_person || ''} onChange={e => setLocationForm(f => ({ ...f, contact_person: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Nombre" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Tel. Contacto</label>
+                  <input value={locationForm.contact_phone || ''} onChange={e => setLocationForm(f => ({ ...f, contact_phone: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="787-555-0000" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">⚙️ Equipos instalados</label>
+                <input value={locationForm.equipment_info || ''} onChange={e => setLocationForm(f => ({ ...f, equipment_info: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="2x Mini split 12k BTU Carrier, Central 3 ton Trane" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">🔑 Instrucciones de acceso</label>
+                <input value={locationForm.access_instructions || ''} onChange={e => setLocationForm(f => ({ ...f, access_instructions: e.target.value }))} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Decirle al guardia, código portón: 1234..." />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                <input type="checkbox" checked={locationForm.is_primary || false} onChange={e => setLocationForm(f => ({ ...f, is_primary: e.target.checked }))} className="w-4 h-4" />
+                Localidad principal
+              </label>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowLocationForm(false)} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200 text-sm">Cancelar</button>
+                <button onClick={saveLocation} className="flex-1 py-3 rounded-xl bg-teal-600 text-white text-sm font-medium">💾 Guardar</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Merge/Absorb Modal */}
+        {showMergeModal && (
+          <>
+            <div className="fixed inset-0 bg-black/70 z-40" onClick={() => !mergeBusy && setShowMergeModal(false)} />
+            <div className="fixed inset-4 bg-[#111a2e] rounded-2xl z-50 p-4 space-y-4 overflow-y-auto flex flex-col border border-white/10">
+              <h3 className="text-lg font-bold text-gray-200">⬇ Absorber cliente duplicado</h3>
+              <p className="text-xs text-gray-400">El cliente elegido quedará desactivado y todos sus registros (facturas, gastos, trabajos) pasarán a <span className="text-white font-medium">{selectedClient?.first_name} {selectedClient?.last_name}</span> con la localidad que especifiques.</p>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Cliente a absorber *</label>
+                <select value={mergeSourceId ?? ''} onChange={e => setMergeSourceId(e.target.value ? Number(e.target.value) : undefined)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm">
+                  <option value="">Seleccionar...</option>
+                  {clients.filter(c => c.id !== selectedClient?.id).map(c => (
+                    <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Nombre de localidad para sus registros *</label>
+                <input value={mergeLocName} onChange={e => setMergeLocName(e.target.value)} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Tienda #37, Casa Bayamón..." />
+              </div>
+              <div className="flex gap-2 mt-auto">
+                <button onClick={() => setShowMergeModal(false)} disabled={mergeBusy} className="flex-1 py-3 rounded-xl bg-gray-700 text-gray-200 text-sm">Cancelar</button>
+                <button onClick={executeMerge} disabled={!mergeSourceId || !mergeLocName.trim() || mergeBusy} className="flex-1 py-3 rounded-xl bg-orange-600 text-white text-sm font-medium disabled:opacity-50">{mergeBusy ? 'Fusionando...' : '⬇ Fusionar'}</button>
               </div>
             </div>
           </>

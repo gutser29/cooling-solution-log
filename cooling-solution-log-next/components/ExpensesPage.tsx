@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { db } from '@/lib/db'
-import type { Client } from '@/lib/types'
+import type { Client, ClientLocation } from '@/lib/types'
 
 interface ExpensesPageProps {
   onNavigate: (page: string) => void
@@ -38,6 +38,8 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
   const [selectedClientName, setSelectedClientName] = useState('')
   const [showClientPicker, setShowClientPicker] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
+  const [clientLocations, setClientLocations] = useState<ClientLocation[]>([])
+  const [selectedLocationId, setSelectedLocationId] = useState<number | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const categories = ['Gasolina', 'Comida', 'Materiales', 'Herramientas', 'Peajes', 'Mantenimiento', 'Seguros', 'Nómina', 'Otros']
@@ -79,16 +81,23 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
     setReceiptPhotos(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const pickClient = (c: Client) => {
+  const pickClient = async (c: Client) => {
     setSelectedClientId(c.id)
     setSelectedClientName(`${c.first_name} ${c.last_name}`.trim())
     setShowClientPicker(false)
     setClientSearch('')
+    setSelectedLocationId(undefined)
+    try {
+      const locs = await db.client_locations.where('client_id').equals(c.id!).filter(l => l.active).toArray()
+      setClientLocations(locs.sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)))
+    } catch { setClientLocations([]) }
   }
 
   const clearClient = () => {
     setSelectedClientId(undefined)
     setSelectedClientName('')
+    setClientLocations([])
+    setSelectedLocationId(undefined)
   }
 
   const handleSave = async () => {
@@ -117,7 +126,8 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
         expense_type: expenseType,
         receipt_photos: receiptPhotos.length > 0 ? receiptPhotos : undefined,
         client_id: selectedClientId,
-        client: selectedClientName || undefined
+        client: selectedClientName || undefined,
+        location_id: selectedLocationId
       })
 
       alert('✅ Gasto guardado' + (receiptPhotos.length > 0 ? ` con ${receiptPhotos.length} foto(s)` : ''))
@@ -203,6 +213,18 @@ export default function ExpensesPage({ onNavigate }: ExpensesPageProps) {
                 <div className="bg-[#0b1220] rounded-lg px-3 py-2 text-sm text-gray-300 border border-blue-800/30">
                   👤 {selectedClientName}
                 </div>
+              )}
+              {selectedClientName && clientLocations.length > 0 && (
+                <select
+                  value={selectedLocationId ?? ''}
+                  onChange={e => setSelectedLocationId(e.target.value ? Number(e.target.value) : undefined)}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm mt-2"
+                >
+                  <option value="">📍 Todas las localidades</option>
+                  {clientLocations.map(l => (
+                    <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ''}</option>
+                  ))}
+                </select>
               )}
               {showClientPicker && !selectedClientName && (
                 <div className="bg-[#0b1220] rounded-lg p-3 border border-white/10">
