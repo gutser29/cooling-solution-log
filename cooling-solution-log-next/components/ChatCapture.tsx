@@ -312,17 +312,23 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         setPendingSyncCount(0)
         console.log('☁️ Data synced at', time)
 
-        // === PHOTO SYNC (directo browser → Google Drive, una por una) ===
+        // === PHOTO SYNC (client_photos + events.receipt_photos → Google Drive) ===
         try {
           const photoRes = await fetch('/api/sync/photos')
           if (photoRes.ok) {
             const { accessToken, photosFolderId } = await photoRes.json()
+
+            // List all existing Drive photo files once (dedup for both sync types)
+            const driveListUrl = `https://www.googleapis.com/drive/v3/files?q='${photosFolderId}'+in+parents+and+trashed=false&fields=files(id,name)&pageSize=1000`
+            const driveListRes = await fetch(driveListUrl, { headers: { Authorization: `Bearer ${accessToken}` } })
+            const driveListData = await driveListRes.json()
+            const driveFileNames = new Set<string>((driveListData.files || []).map((f: any) => f.name as string))
+
+            // --- Sync client_photos ---
             const allPhotos = await db.client_photos.toArray()
             const unsyncedPhotos = allPhotos.filter((p: any) => !p.drive_synced)
-
             if (unsyncedPhotos.length > 0) {
-              console.log(`📷 Photos to sync: ${unsyncedPhotos.length} of ${allPhotos.length}`)
-
+              console.log(`📷 client_photos to sync: ${unsyncedPhotos.length} of ${allPhotos.length}`)
               for (const photo of unsyncedPhotos) {
                 try {
                   const photoRecord = { ...photo }
@@ -330,47 +336,31 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
                   delete (photoRecord as any).photo_data
 
                   const boundary = '===CSPhoto==='
-                  const metadata = JSON.stringify({
-                    name: `photo_${photo.id}_meta.json`,
-                    parents: [photosFolderId],
-                    mimeType: 'application/json',
-                  })
-                  const metaContent = JSON.stringify(photoRecord)
-
                   const metaBody = [
                     `--${boundary}`,
                     'Content-Type: application/json; charset=UTF-8',
                     '',
-                    metadata,
+                    JSON.stringify({ name: `photo_${photo.id}_meta.json`, parents: [photosFolderId], mimeType: 'application/json' }),
                     `--${boundary}`,
                     'Content-Type: application/json',
                     '',
-                    metaContent,
+                    JSON.stringify(photoRecord),
                     `--${boundary}--`,
                   ].join('\r\n')
 
                   await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
                     method: 'POST',
-                    headers: {
-                      Authorization: `Bearer ${accessToken}`,
-                      'Content-Type': `multipart/related; boundary=${boundary}`,
-                    },
+                    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
                     body: metaBody,
                   })
 
                   if (photoData) {
                     const imgBoundary = '===CSPhotoImg==='
-                    const imgMetadata = JSON.stringify({
-                      name: `photo_${photo.id}_data.txt`,
-                      parents: [photosFolderId],
-                      mimeType: 'text/plain',
-                    })
-
                     const imgBody = [
                       `--${imgBoundary}`,
                       'Content-Type: application/json; charset=UTF-8',
                       '',
-                      imgMetadata,
+                      JSON.stringify({ name: `photo_${photo.id}_data.txt`, parents: [photosFolderId], mimeType: 'text/plain' }),
                       `--${imgBoundary}`,
                       'Content-Type: text/plain',
                       '',
@@ -380,22 +370,52 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
                     await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
                       method: 'POST',
-                      headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'Content-Type': `multipart/related; boundary=${imgBoundary}`,
-                      },
+                      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${imgBoundary}` },
                       body: imgBody,
                     })
                   }
 
                   await db.client_photos.update(photo.id!, { drive_synced: true } as any)
-                  console.log(`📷 Synced photo ${photo.id}`)
+                  console.log(`📷 Synced client_photo ${photo.id}`)
                 } catch (photoErr) {
-                  console.warn(`📷 Failed photo ${photo.id}:`, photoErr)
+                  console.warn(`📷 Failed client_photo ${photo.id}:`, photoErr)
                 }
               }
-              console.log('📷 Photo sync complete')
             }
+
+            // --- Sync events.receipt_photos ---
+            const allEventsWithPhotos = await db.events.filter(e => !!(e.receipt_photos && e.receipt_photos.length > 0)).toArray()
+            let eventPhotosUploaded = 0
+            for (const event of allEventsWithPhotos) {
+              for (let idx = 0; idx < event.receipt_photos!.length; idx++) {
+                const fileName = `event_${event.id}_${idx}_data.txt`
+                if (driveFileNames.has(fileName)) continue
+                const photoData = event.receipt_photos![idx]
+                if (!photoData) continue
+
+                const boundary = '===CSEventPhoto==='
+                const body = [
+                  `--${boundary}`,
+                  'Content-Type: application/json; charset=UTF-8',
+                  '',
+                  JSON.stringify({ name: fileName, parents: [photosFolderId], mimeType: 'text/plain' }),
+                  `--${boundary}`,
+                  'Content-Type: text/plain',
+                  '',
+                  photoData,
+                  `--${boundary}--`,
+                ].join('\r\n')
+
+                await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+                  body,
+                })
+                driveFileNames.add(fileName)
+                eventPhotosUploaded++
+              }
+            }
+            if (eventPhotosUploaded > 0) console.log(`📷 Event receipt photos uploaded: ${eventPhotosUploaded}`)
           }
         } catch (photoSyncErr) {
           console.warn('📷 Photo sync error (data sync OK):', photoSyncErr)
@@ -523,6 +543,48 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
             }
           }
           if (restored > 0) console.log(`📷 Photo restore complete: ${restored} new photos`)
+
+          // --- Restore events.receipt_photos ---
+          const eventPhotoFiles = driveFiles.filter((f: any) => /^event_\d+_\d+_data\.txt$/.test(f.name))
+          if (eventPhotoFiles.length > 0) {
+            console.log(`📷 Found ${eventPhotoFiles.length} event receipt photos in Drive`)
+
+            // Group by event ID: { eventId -> [{idx, driveId}] }
+            const byEvent = new Map<number, Array<{ idx: number; driveId: string }>>()
+            for (const f of eventPhotoFiles) {
+              const m = f.name.match(/^event_(\d+)_(\d+)_data\.txt$/)
+              if (!m) continue
+              const eventId = parseInt(m[1])
+              const idx = parseInt(m[2])
+              if (!byEvent.has(eventId)) byEvent.set(eventId, [])
+              byEvent.get(eventId)!.push({ idx, driveId: f.id })
+            }
+
+            let injected = 0
+            for (const [eventId, entries] of byEvent) {
+              try {
+                const event = await db.events.get(eventId)
+                if (!event) continue
+                if (event.receipt_photos && event.receipt_photos.length > 0) continue // already has photos locally
+
+                const sorted = entries.sort((a, b) => a.idx - b.idx)
+                const photos: string[] = []
+                for (const entry of sorted) {
+                  const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${entry.driveId}?alt=media`, {
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                  })
+                  photos.push(await dl.text())
+                }
+                if (photos.length > 0) {
+                  await db.events.update(eventId, { receipt_photos: photos })
+                  injected++
+                }
+              } catch (evPhotoErr) {
+                console.warn(`📷 Failed to restore event photos for event ${eventId}:`, evPhotoErr)
+              }
+            }
+            if (injected > 0) console.log(`📷 Event receipt photos restored: ${injected} events`)
+          }
         }
       } catch (photoRestoreErr) {
         console.warn('📷 Photo restore error (data restore OK):', photoRestoreErr)
