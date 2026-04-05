@@ -686,13 +686,23 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
         }
 
         // Jobs
-        const jobs = await db.jobs.orderBy('date').reverse().limit(20).toArray()
+        const jobs = await db.jobs.orderBy('date').reverse().limit(50).toArray()
         if (jobs.length > 0) {
-          ctx += '\n\nTRABAJOS:\n' + jobs.map(j => {
-            const d = new Date(j.date).toLocaleDateString('es-PR')
-            const paid = j.payments?.reduce((s: number, p: any) => s + p.amount, 0) || 0
-            return `[${d}] ${j.type} Cliente#${j.client_id} Total:$${j.total_charged} Pagado:$${paid} Status:${j.payment_status}`
-          }).join('\n')
+          const pendingJobs = jobs.filter(j => j.status === 'in_progress' || j.status === 'quote')
+          const completedJobs = jobs.filter(j => j.status === 'completed')
+          if (pendingJobs.length > 0) {
+            ctx += '\n\nTRABAJOS PENDIENTES/EN PROGRESO:\n' + pendingJobs.map(j => {
+              const d = new Date(j.date_started || j.date).toLocaleDateString('es-PR')
+              return `[ID:${j.id}][${d}] ${j.status === 'quote' ? 'Cotización' : 'En Progreso'} | ${j.client_name || `Cliente#${j.client_id}`} | ${j.description || j.type} | Total:$${j.total_charged}`
+            }).join('\n')
+          }
+          if (completedJobs.length > 0) {
+            ctx += '\n\nTRABAJOS COMPLETADOS (últimos):\n' + completedJobs.slice(0, 20).map(j => {
+              const d = new Date(j.date_completed || j.date).toLocaleDateString('es-PR')
+              const invoiced = j.invoice_id ? ' [facturado]' : ''
+              return `[ID:${j.id}][${d}] ${j.client_name || `Cliente#${j.client_id}`} | ${j.description || j.type} | $${j.total_charged}${invoiced}`
+            }).join('\n')
+          }
         }
 
         // Citas programadas
@@ -1698,25 +1708,44 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (jobData) {
         try {
           const now = Date.now()
+          const clients = await db.clients.toArray()
+          const clientName = jobData.client_name || ''
+          const matchedClient = clients.find(c =>
+            `${c.first_name} ${c.last_name}`.toLowerCase() === clientName.toLowerCase()
+          )
+          const clientId = jobData.client_id || matchedClient?.id || 0
+          const services = jobData.services || []
+          const materials = jobData.materials || []
+          const subtotalServices = services.reduce((s: number, sv: any) => s + (sv.total || sv.quantity * sv.unit_price || 0), 0)
+          const subtotalMaterials = materials.reduce((s: number, m: any) => s + (m.quantity * (m.unit_price || m.unit_cost || 0)), 0)
+          const total = jobData.total_charged || (subtotalServices + subtotalMaterials)
+          const dateTs = jobData.date ? new Date(jobData.date).getTime() : now
           await db.jobs.add({
-            client_id: jobData.client_id || 0,
-            date: now,
-            type: jobData.type || 'service',
-            status: 'completed',
-            services: jobData.services || [],
-            materials: jobData.materials || [],
+            client_id: clientId,
+            client_name: clientName || (matchedClient ? `${matchedClient.first_name} ${matchedClient.last_name}` : ''),
+            description: jobData.description || '',
+            date: dateTs,
+            date_started: dateTs,
+            date_completed: jobData.date_completed ? new Date(jobData.date_completed).getTime() : undefined,
+            type: jobData.type || 'repair',
+            status: jobData.status || 'in_progress',
+            services,
+            materials,
             employees: [],
-            subtotal_services: 0,
-            subtotal_materials: 0,
-            total_charged: jobData.total_charged || 0,
+            subtotal_services: subtotalServices,
+            subtotal_materials: subtotalMaterials,
+            total_charged: total,
             payment_status: jobData.payment_status || 'pending',
-            payments: jobData.payments || [],
-            balance_due: jobData.balance_due || jobData.total_charged || 0,
+            payments: [],
+            balance_due: total,
+            vehicle_used: jobData.vehicle_used,
             notes: jobData.notes,
+            location_id: jobData.location_id,
             created_at: now
-          })
-          savedItems.push(`Trabajo: $${jobData.total_charged}`)
+          } as any)
+          savedItems.push(`Trabajo: ${clientName || `cliente #${clientId}`} — ${jobData.description || jobData.type || 'trabajo'} $${total.toFixed(2)}`)
           needsSync = true
+          contextLoadedRef.current = false
         } catch (e) {
           console.error('SAVE_JOB error:', e)
         }
@@ -2131,6 +2160,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('employees') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               👷 Empleados (480.6B)
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('jobs') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              🔧 Trabajos
             </button>
             <button onClick={async () => {
               setShowMenu(false)

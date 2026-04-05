@@ -85,7 +85,12 @@ export interface Employee {
 export interface Job {
   id?: number
   client_id: number
+  client_name?: string          // denormalized for display
+  description?: string          // work description
   date: number
+  date_started?: number
+  date_completed?: number
+  invoice_id?: number           // link to generated invoice
   type: 'installation' | 'repair' | 'maintenance' | 'emergency' | 'warranty' | 'quote'
   status: 'quote' | 'in_progress' | 'completed' | 'cancelled'
   services: JobService[]
@@ -93,6 +98,7 @@ export interface Job {
   employees: JobEmployee[]
   subtotal_services: number
   subtotal_materials: number
+  subtotal_labor?: number       // sum of employee gross costs
   tax?: number
   total_charged: number
   payment_status: 'pending' | 'partial' | 'paid'

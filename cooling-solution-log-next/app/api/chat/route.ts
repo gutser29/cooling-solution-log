@@ -587,6 +587,14 @@ SAVE_BANK_TRANSACTION:{"account":"chase_visa","date":"2026-03-11T12:00:00","desc
 [FORMATO - NO EJECUTAR]:
 SAVE_BITACORA:{"date":"FECHA_ISO_HOY","raw_text":"texto original","summary":"resumen","tags":[],"clients_mentioned":[],"locations":[],"equipment":[],"jobs_count":0,"hours_estimated":0,"had_emergency":false,"highlights":[]}
 
+## SAVE_JOB (registrar trabajo)
+Cuando el usuario diga "registra un trabajo", "terminé un trabajo en", "hice una instalación":
+[FORMATO - NO EJECUTAR]:
+SAVE_JOB:{"client_name":"Farmacia Caridad #40","description":"Instalación mini split 2 ton","type":"installation","status":"completed","date":"FECHA_ISO_TRABAJO","services":[{"description":"Instalación split","quantity":1,"unit_price":400,"total":400}],"materials":[{"item":"Mini split 2 ton","quantity":1,"unit_cost":600,"unit_price":600}],"total_charged":1000}
+Tipos de status: quote, in_progress, completed, cancelled
+Tipos de type: installation, repair, maintenance, emergency, warranty, quote
+Al preguntar "trabajos pendientes" → responde con TRABAJOS PENDIENTES/EN PROGRESO del CONTEXTO_DB.
+
 ## SAVE_EMPLOYEE_PAYMENT (pago a contratista 480.6B)
 Cuando el usuario diga "le pagué a [nombre]", "pagué [días] días a [nombre]", "registra pago de [nombre]":
 - Busca al empleado en EMPLEADOS del CONTEXTO_DB por nombre

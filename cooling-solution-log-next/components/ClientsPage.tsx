@@ -11,7 +11,7 @@ interface ClientsPageProps {
 }
 
 type ViewMode = 'list' | 'detail' | 'edit' | 'new' | 'newQuote'
-type DetailTab = 'resumen' | 'facturas' | 'garantias' | 'gastos' | 'cotizaciones' | 'fotos' | 'docs' | 'localidades'
+type DetailTab = 'resumen' | 'facturas' | 'garantias' | 'gastos' | 'cotizaciones' | 'fotos' | 'docs' | 'localidades' | 'trabajos'
 
 interface QuickQuote {
   id?: number
@@ -664,6 +664,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
 
     const tabs: { key: DetailTab; label: string; count?: number }[] = [
       { key: 'resumen', label: '📊' },
+      { key: 'trabajos', label: '🔧', count: clientJobs.length },
       { key: 'localidades', label: '📍', count: clientLocations.length },
       { key: 'facturas', label: '🧾', count: clientInvoices.length },
       { key: 'garantias', label: '🛡️', count: clientWarranties.length },
@@ -944,6 +945,20 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                         className="bg-gray-700 text-gray-400 py-1.5 px-3 rounded-lg text-xs">🗑️</button>
                     </div>
                   )}
+                  {(q.status === 'approved' || q.status === 'pending') && (
+                    <button onClick={() => {
+                      sessionStorage.setItem('jobs_prefill', JSON.stringify({
+                        client_id: selectedClient.id,
+                        client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+                        description: q.description,
+                        quoted_price: q.quoted_price,
+                        my_cost: q.my_cost,
+                      }))
+                      onNavigate('jobs')
+                    }} className="w-full mt-2 bg-teal-700/30 text-teal-300 py-1.5 rounded-lg text-xs border border-teal-600/30 hover:bg-teal-700/50">
+                      🔧 Convertir en Trabajo
+                    </button>
+                  )}
                 </div>
               ))}
             </>
@@ -1011,6 +1026,56 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
                     ))}
                   </div>
                 </>
+              )}
+            </>
+          )}
+
+          {/* ====== TRABAJOS TAB ====== */}
+          {detailTab === 'trabajos' && (
+            <>
+              <button onClick={() => {
+                sessionStorage.setItem('jobs_prefill', JSON.stringify({
+                  client_id: selectedClient.id,
+                  client_name: `${selectedClient.first_name} ${selectedClient.last_name}`,
+                }))
+                onNavigate('jobs')
+              }} className="w-full bg-teal-700 text-white py-2.5 rounded-xl text-sm font-medium">
+                + Nuevo Trabajo para este cliente
+              </button>
+              {clientJobs.length === 0 ? (
+                <div className="text-center py-8 text-gray-500 text-sm">No hay trabajos registrados</div>
+              ) : (
+                <div className="space-y-2">
+                  {clientJobs.map((job: any) => {
+                    const statusColors: Record<string, string> = {
+                      quote: 'text-blue-400', in_progress: 'text-yellow-400',
+                      completed: 'text-green-400', cancelled: 'text-gray-500'
+                    }
+                    const statusLabels: Record<string, string> = {
+                      quote: 'Cotización', in_progress: 'En Progreso',
+                      completed: 'Completado', cancelled: 'Cancelado'
+                    }
+                    return (
+                      <div key={job.id} onClick={() => onNavigate('jobs')}
+                        className="bg-[#111a2e] border border-white/10 rounded-xl p-3 cursor-pointer hover:border-teal-500/40 transition-colors">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-white font-medium">{job.description || job.type || 'Trabajo'}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {new Date(job.date_started || job.date).toLocaleDateString('es-PR')}
+                              {job.date_completed ? ` → ${new Date(job.date_completed).toLocaleDateString('es-PR')}` : ''}
+                            </p>
+                          </div>
+                          <div className="text-right ml-3 shrink-0">
+                            <p className="text-sm font-bold text-white">${job.total_charged?.toFixed(2) || '0.00'}</p>
+                            <p className={`text-xs ${statusColors[job.status] || 'text-gray-400'}`}>{statusLabels[job.status] || job.status}</p>
+                          </div>
+                        </div>
+                        {job.invoice_id && <p className="text-xs text-blue-400 mt-1">🧾 Factura generada</p>}
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </>
           )}
