@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { db, BankAccount, BankTransaction } from '@/lib/db'
 import { generateBankReconciliationPDF } from '@/lib/pdfGenerator'
+import { parseCSV, CsvTransaction, CsvParseResult } from '@/lib/csvBankParser'
 
 interface BankStatementsPageProps {
   onNavigate: (page: string) => void
@@ -58,6 +59,14 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
   const [showPdfModal, setShowPdfModal] = useState(false)
   const [pdfAccount, setPdfAccount] = useState('all')
   const [pdfMonth, setPdfMonth] = useState('all')
+
+  // CSV import
+  const csvInputRef = useRef<HTMLInputElement>(null)
+  const [csvParsed, setCsvParsed] = useState<CsvParseResult | null>(null)
+  const [csvAccountKey, setCsvAccountKey] = useState('')
+  const [csvImporting, setCsvImporting] = useState(false)
+  const [csvDupeCount, setCsvDupeCount] = useState(0)
+  const [csvImportResult, setCsvImportResult] = useState<{ imported: number; dupes: number } | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -197,6 +206,98 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
     setShowPdfModal(false)
   }
 
+  // ── CSV import ────────────────────────────────────────────
+
+  const handleCSVFile = async (file: File) => {
+    const text = await file.text()
+    const result = parseCSV(text)
+    setCsvParsed(result)
+    setCsvAccountKey(result.suggestedAccountKey)
+    setCsvImportResult(null)
+    // Count likely dupes against existing transactions
+    if (result.transactions.length > 0) {
+      const existing = await db.bank_transactions.toArray()
+      let dupes = 0
+      for (const tx of result.transactions) {
+        const isDupe = existing.some(e =>
+          e.account_name === result.suggestedAccountKey &&
+          Math.abs(e.date - tx.date) < 86400000 &&
+          Math.abs(e.amount - tx.amount) < 0.02 &&
+          e.description.toLowerCase().trim() === tx.description.toLowerCase().trim()
+        )
+        if (isDupe) dupes++
+      }
+      setCsvDupeCount(dupes)
+    }
+  }
+
+  const confirmCSVImport = async () => {
+    if (!csvParsed || !csvAccountKey) return
+    setCsvImporting(true)
+    try {
+      const existing = await db.bank_transactions.toArray()
+      const now = Date.now()
+      let imported = 0
+      let dupes = 0
+
+      // Find account_id if matched
+      const acct = accounts.find(a => a.payment_method_key === csvAccountKey)
+
+      for (const tx of csvParsed.transactions) {
+        const isDupe = existing.some(e =>
+          e.account_name === csvAccountKey &&
+          Math.abs(e.date - tx.date) < 86400000 &&
+          Math.abs(e.amount - tx.amount) < 0.02 &&
+          e.description.toLowerCase().trim() === tx.description.toLowerCase().trim()
+        )
+        if (isDupe) { dupes++; continue }
+
+        await db.bank_transactions.add({
+          account_name: csvAccountKey,
+          account_id: acct?.id,
+          date: tx.date,
+          description: tx.description,
+          amount: tx.amount,
+          direction: tx.direction,
+          category: tx.category || '',
+          match_status: 'pending',
+          created_at: now,
+        })
+        imported++
+      }
+
+      // Create a statement record summarizing this import
+      if (imported > 0 && csvParsed.transactions.length > 0) {
+        const sorted = [...csvParsed.transactions].sort((a, b) => a.date - b.date)
+        const periodStart = sorted[0].date
+        const periodEnd = sorted[sorted.length - 1].date
+        const d = new Date(periodStart)
+        const periodLabel = d.toLocaleDateString('es-PR', { month: 'long', year: 'numeric' })
+        await db.bank_statements.add({
+          account_name: csvAccountKey,
+          account_id: acct?.id,
+          period_start: periodStart,
+          period_end: periodEnd,
+          period_label: `${periodLabel} (CSV)`,
+          tx_count: imported,
+          status: 'imported',
+          created_at: now,
+        })
+      }
+
+      setCsvImportResult({ imported, dupes })
+      await loadData()
+    } finally {
+      setCsvImporting(false)
+    }
+  }
+
+  const closeCsvModal = () => {
+    setCsvParsed(null)
+    setCsvImportResult(null)
+    if (csvInputRef.current) csvInputRef.current.value = ''
+  }
+
   // ── Helpers ──────────────────────────────────────────────
 
   const getAccountLabel = (key: string): string =>
@@ -276,12 +377,27 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
           <button onClick={() => onNavigate('chat')} className="text-lg">←</button>
           <h1 className="text-xl font-bold">🏦 Estados de Cuenta</h1>
         </div>
-        <button
-          onClick={() => setShowPdfModal(true)}
-          className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
-        >
-          📄 PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => csvInputRef.current?.click()}
+            className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+          >
+            📂 CSV
+          </button>
+          <button
+            onClick={() => setShowPdfModal(true)}
+            className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+          >
+            📄 PDF
+          </button>
+        </div>
+        <input
+          ref={csvInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) handleCSVFile(f) }}
+        />
       </div>
 
       {/* Tabs */}
@@ -710,6 +826,147 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
                 {accountSaving ? 'Guardando...' : '✓ Guardar'}
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {/* ===== CSV IMPORT MODAL ===== */}
+      {csvParsed && (
+        <>
+          <div className="fixed inset-0 bg-black/85 z-40" onClick={() => !csvImporting && closeCsvModal()} />
+          <div className="fixed inset-x-2 top-4 bottom-4 bg-[#111a2e] rounded-2xl z-50 flex flex-col border border-teal-500/30 overflow-hidden">
+            {/* Header */}
+            <div className="p-4 border-b border-white/10 flex-shrink-0 bg-teal-900/20">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-base font-bold text-teal-300">📂 Importar CSV</h2>
+                  <p className="text-sm text-gray-300 mt-0.5">{csvParsed.bank}</p>
+                </div>
+                {!csvImporting && <button onClick={closeCsvModal} className="text-gray-400 text-2xl">✕</button>}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              {/* Import result */}
+              {csvImportResult ? (
+                <div className="bg-green-900/30 border border-green-700/40 rounded-xl p-4 text-center">
+                  <p className="text-2xl mb-1">✅</p>
+                  <p className="text-green-400 font-bold text-lg">{csvImportResult.imported} transacciones importadas</p>
+                  {csvImportResult.dupes > 0 && (
+                    <p className="text-gray-400 text-sm mt-1">{csvImportResult.dupes} duplicadas omitidas</p>
+                  )}
+                  <button onClick={closeCsvModal} className="mt-4 bg-teal-600 hover:bg-teal-700 rounded-xl px-6 py-2.5 text-sm font-bold">
+                    Listo
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Parse errors */}
+                  {csvParsed.parseErrors.length > 0 && (
+                    <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-3">
+                      <p className="text-xs font-semibold text-yellow-400 mb-1">⚠️ Advertencias al parsear ({csvParsed.parseErrors.length})</p>
+                      {csvParsed.parseErrors.slice(0, 3).map((e, i) => (
+                        <p key={i} className="text-xs text-yellow-300/70">{e}</p>
+                      ))}
+                      {csvParsed.parseErrors.length > 3 && <p className="text-xs text-gray-500">...y {csvParsed.parseErrors.length - 3} más</p>}
+                    </div>
+                  )}
+
+                  {csvParsed.transactions.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <p className="text-3xl mb-2">😕</p>
+                      <p>No se encontraron transacciones</p>
+                      <p className="text-xs mt-1">Verifica que el archivo sea un CSV de estado de cuenta</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Stats row */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="bg-[#0b1220] rounded-xl p-3 text-center">
+                          <p className="text-xl font-bold text-cyan-400">{csvParsed.transactions.length}</p>
+                          <p className="text-[10px] text-gray-500">Total</p>
+                        </div>
+                        <div className="bg-[#0b1220] rounded-xl p-3 text-center">
+                          <p className="text-xl font-bold text-green-400">{csvParsed.transactions.length - csvDupeCount}</p>
+                          <p className="text-[10px] text-gray-500">A importar</p>
+                        </div>
+                        <div className="bg-[#0b1220] rounded-xl p-3 text-center">
+                          <p className="text-xl font-bold text-gray-500">{csvDupeCount}</p>
+                          <p className="text-[10px] text-gray-500">Duplicadas</p>
+                        </div>
+                      </div>
+
+                      {/* Account selector */}
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Cuenta destino</label>
+                        <select
+                          value={csvAccountKey}
+                          onChange={e => setCsvAccountKey(e.target.value)}
+                          className="w-full bg-[#0b1220] border border-white/10 rounded-xl px-3 py-2 text-sm"
+                        >
+                          {accounts.map(a => (
+                            <option key={a.id} value={a.payment_method_key || ''}>{a.name} ({a.payment_method_key})</option>
+                          ))}
+                          {/* Also offer the suggested key if not in accounts list */}
+                          {csvParsed.suggestedAccountKey && !accounts.some(a => a.payment_method_key === csvParsed.suggestedAccountKey) && (
+                            <option value={csvParsed.suggestedAccountKey}>{csvParsed.bank} — {csvParsed.suggestedAccountKey} (auto)</option>
+                          )}
+                        </select>
+                        <p className="text-[10px] text-gray-600 mt-1">Detectado automáticamente. Cambia si es necesario.</p>
+                      </div>
+
+                      {/* Preview table */}
+                      <div>
+                        <p className="text-xs text-gray-400 mb-2 font-medium">
+                          Preview — primeras {Math.min(csvParsed.transactions.length, 15)} de {csvParsed.transactions.length}
+                        </p>
+                        <div className="space-y-1.5">
+                          {csvParsed.transactions.slice(0, 15).map((tx, i) => (
+                            <div key={i} className="bg-[#0b1220] rounded-lg px-3 py-2 flex justify-between items-center text-xs">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-gray-200 truncate">{tx.description}</p>
+                                <p className="text-gray-600">
+                                  {new Date(tx.date).toLocaleDateString('es-PR', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  {tx.category ? ` · ${tx.category}` : ''}
+                                </p>
+                              </div>
+                              <p className={`ml-2 font-bold flex-shrink-0 ${tx.direction === 'credit' ? 'text-green-400' : 'text-red-400'}`}>
+                                {tx.direction === 'credit' ? '+' : '-'}${tx.amount.toFixed(2)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                        {csvParsed.transactions.length > 15 && (
+                          <p className="text-xs text-gray-600 text-center mt-2">
+                            ...y {csvParsed.transactions.length - 15} transacciones más
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!csvImportResult && csvParsed.transactions.length > 0 && (
+              <div className="p-4 border-t border-white/10 flex gap-3 flex-shrink-0">
+                <button
+                  onClick={closeCsvModal}
+                  disabled={csvImporting}
+                  className="flex-1 bg-[#0b1220] border border-white/10 rounded-xl py-3 text-sm disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmCSVImport}
+                  disabled={csvImporting || !csvAccountKey || csvParsed.transactions.length - csvDupeCount === 0}
+                  className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-900/40 disabled:text-teal-700 rounded-xl py-3 text-sm font-bold transition-colors"
+                >
+                  {csvImporting ? 'Importando...' : `✓ Importar ${csvParsed.transactions.length - csvDupeCount} transacciones`}
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
