@@ -817,12 +817,35 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }
         } catch {}
 
-        // Historial de precios de productos
+        // Historial de precios de productos + catálogo de aliases
         try {
           const prices = await db.table('product_prices').toArray()
           if (prices.length > 0) {
-            ctx += '\n\nHISTORIAL DE PRECIOS:\n' + prices
-              .sort((a: any, b: any) => b.timestamp - a.timestamp)
+            // Build canonical → aliases map (unique per product_name)
+            const canonicalMap = new Map<string, Set<string>>()
+            for (const p of prices as any[]) {
+              const key = p.product_name.toLowerCase().trim()
+              if (!canonicalMap.has(key)) canonicalMap.set(key, new Set())
+              ;(p.aliases || []).forEach((a: string) => {
+                const trimmed = a.trim().toLowerCase()
+                if (trimmed) canonicalMap.get(key)!.add(trimmed)
+              })
+            }
+            if (canonicalMap.size > 0) {
+              ctx += '\n\nCATÁLOGO HVAC (nombre canónico → aliases para identificación):\n'
+              ctx += [...canonicalMap.entries()]
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, aliases]) => {
+                  const canonical = (prices as any[]).find((p: any) => p.product_name.toLowerCase().trim() === key)?.product_name || key
+                  return aliases.size > 0
+                    ? `${canonical} → ${[...aliases].join(', ')}`
+                    : canonical
+                })
+                .join('\n')
+            }
+
+            ctx += '\n\nHISTORIAL DE PRECIOS:\n' + (prices as any[])
+              .sort((a, b) => b.timestamp - a.timestamp)
               .slice(0, 100)
               .map((p: any) => {
                 const d = new Date(p.timestamp).toLocaleDateString('es-PR')
@@ -1948,6 +1971,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('bank') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               🏦 Estados de Cuenta
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('catalog') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              🔧 Catálogo HVAC
             </button>
             <button onClick={async () => {
               setShowMenu(false)
