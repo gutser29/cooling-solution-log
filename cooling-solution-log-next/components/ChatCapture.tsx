@@ -1242,20 +1242,6 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
               expense_type: evData.expense_type || 'business',
               receipt_photos: eventPhotos.length > 0 ? eventPhotos : undefined
             })
-            // Guardar cada foto del recibo en client_photos para sync y búsqueda
-            if (eventPhotos.length > 0) {
-              const now = Date.now()
-              for (const photo of eventPhotos) {
-                await db.client_photos.add({
-                  client_name: evData.client || 'General',
-                  category: 'receipt',
-                  description: `Recibo ${evData.vendor || ''} $${evData.amount} - ${evData.category || ''}`,
-                  photo_data: photo,
-                  timestamp: evData.timestamp || now,
-                  created_at: now
-                })
-              }
-            }
             savedItems.push(`${evData.type === 'income' ? 'Ingreso' : 'Gasto'}: $${evData.amount} ${evData.category || ''}${evData.client ? ` (${evData.client})` : ''}${eventPhotos.length > 0 ? ' 📷' : ''}`)
             needsSync = true
           } catch (e) {
