@@ -61,6 +61,14 @@ export function generateInvoiceNumber(type: 'invoice' | 'quote'): string {
 
 // ============ INVOICE PDF - ESTILO ANTHROPIC (MULTI-PAGE) ============
 export function generateInvoicePDF(invoice: Invoice): Blob {
+  // Recalculate deposit fields defensively in case stored values are stale
+  if (invoice.deposit_enabled && invoice.deposit_type && invoice.deposit_value != null) {
+    const depositAmount = invoice.deposit_type === 'percentage'
+      ? invoice.total * (invoice.deposit_value / 100)
+      : invoice.deposit_value
+    invoice = { ...invoice, deposit_amount: depositAmount, balance_due: invoice.total - depositAmount }
+  }
+
   const doc = new jsPDF()
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()

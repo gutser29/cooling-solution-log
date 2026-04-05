@@ -203,8 +203,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         deposit_enabled: formDepositEnabled || undefined,
         deposit_type: formDepositEnabled ? formDepositType : undefined,
         deposit_value: formDepositEnabled ? formDepositValue : undefined,
-        deposit_amount: formDepositEnabled ? depositAmount : undefined,
-        balance_due: formDepositEnabled ? balanceDue : undefined,
+        deposit_amount: depositAmount,
+        balance_due: balanceDue,
         due_date: formType === 'invoice' ? dueDate : undefined,
         expiration_date: formType === 'quote' ? dueDate : undefined,
         updated_at: now
@@ -227,8 +227,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         deposit_enabled: formDepositEnabled || undefined,
         deposit_type: formDepositEnabled ? formDepositType : undefined,
         deposit_value: formDepositEnabled ? formDepositValue : undefined,
-        deposit_amount: formDepositEnabled ? depositAmount : undefined,
-        balance_due: formDepositEnabled ? balanceDue : undefined,
+        deposit_amount: depositAmount,
+        balance_due: balanceDue,
         status: 'draft',
         issue_date: now,
         due_date: formType === 'invoice' ? dueDate : undefined,
@@ -337,6 +337,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const subtotal = calcSubtotal(formItems)
     const taxAmount = subtotal * (formTaxRate / 100)
     const total = subtotal + taxAmount
+    const depositAmount = formDepositEnabled ? (formDepositType === 'percentage' ? total * (formDepositValue / 100) : formDepositValue) : 0
+    const balanceDue = total - depositAmount
 
     const filteredClients = clients.filter(c => {
       const name = `${c.first_name} ${c.last_name}`.toLowerCase()
@@ -560,22 +562,16 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                     />
                     <span className="text-sm text-gray-500">{formDepositType === 'percentage' ? '%' : 'USD'}</span>
                   </div>
-                  {(() => {
-                    const depAmt = formDepositType === 'percentage' ? total * (formDepositValue / 100) : formDepositValue
-                    const bal = total - depAmt
-                    return (
-                      <div className="bg-[#0b1220] rounded-lg p-3 space-y-1">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-400">Depósito ({formDepositType === 'percentage' ? `${formDepositValue}%` : 'fijo'})</span>
-                          <span className="text-yellow-400 font-medium">-{fmt(depAmt)}</span>
-                        </div>
-                        <div className="flex justify-between text-lg font-bold pt-1 border-t border-white/10">
-                          <span className="text-gray-200">BALANCE PENDIENTE</span>
-                          <span className="text-orange-400">{fmt(bal > 0 ? bal : 0)}</span>
-                        </div>
-                      </div>
-                    )
-                  })()}
+                  <div className="bg-[#0b1220] rounded-lg p-3 space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Depósito ({formDepositType === 'percentage' ? `${formDepositValue}%` : 'fijo'})</span>
+                      <span className="text-yellow-400 font-medium">-{fmt(depositAmount)}</span>
+                    </div>
+                    <div className="flex justify-between text-lg font-bold pt-1 border-t border-white/10">
+                      <span className="text-gray-200">BALANCE PENDIENTE</span>
+                      <span className="text-orange-400">{fmt(balanceDue > 0 ? balanceDue : 0)}</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
