@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import { registerServiceWorker, subscribeToPush, syncAlertsToServer } from '@/lib/pushUtils'
 
 interface AuthGuardProps {
   children: React.ReactNode
@@ -94,6 +95,26 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       </div>
     )
   }
+
+  // Initialize push notifications after authentication
+  useEffect(() => {
+    if (!authenticated) return
+    ;(async () => {
+      try {
+        const reg = await registerServiceWorker()
+        if (!reg) return
+        // Only prompt if not yet decided
+        if (Notification.permission === 'default') {
+          const perm = await Notification.requestPermission()
+          if (perm !== 'granted') return
+        }
+        if (Notification.permission === 'granted') {
+          await subscribeToPush()
+          await syncAlertsToServer()
+        }
+      } catch {}
+    })()
+  }, [authenticated])
 
   if (authenticated) {
     return <>{children}</>
