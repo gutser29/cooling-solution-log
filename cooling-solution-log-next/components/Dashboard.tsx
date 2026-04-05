@@ -41,6 +41,7 @@ interface Stats {
   pendingInvoices: { number: string; client: string; total: number; days: number }[]
   pendingInvoicesTotal: number
   overdueInvoicesCount: number
+  lowStockCount: number
   // Legacy
   recentEvents: { date: string; type: string; category: string; amount: number; vendor: string }[]
   topCategories: { category: string; total: number }[]
@@ -240,6 +241,13 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         type: e.type, category: e.category || e.subtype || '', amount: e.amount, vendor: e.vendor || e.client || e.note || ''
       }))
 
+      // ── Inventory low stock ──────────────────────────────────────────────────
+      let lowStockCount = 0
+      try {
+        const invItems = await db.inventory_items.filter(i => i.active).toArray()
+        lowStockCount = invItems.filter(i => i.quantity <= i.min_quantity).length
+      } catch {}
+
       setStats({
         monthIncome: totalMonthIncome, monthExpenses, monthProfit,
         prevMonthIncome: prevTotalIncome, prevMonthExpenses, prevMonthProfit,
@@ -250,6 +258,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         monthlyContractRevenue, contractsDueThisMonth, contractAlerts,
         warrantyAlerts, equipmentAlerts, overdueEquipmentCount,
         pendingInvoices, pendingInvoicesTotal, overdueInvoicesCount,
+        lowStockCount,
         recentEvents, topCategories, upcomingAppts, activeReminders,
       })
     } catch (e) { console.error('Dashboard error:', e) }
@@ -428,7 +437,12 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                 🧾 {stats.overdueInvoicesCount} factura{stats.overdueInvoicesCount > 1 ? 's' : ''} vencida{stats.overdueInvoicesCount > 1 ? 's' : ''}
               </button>
             )}
-            {stats.todayAppts.length === 0 && stats.overdueEquipmentCount === 0 && stats.overdueInvoicesCount === 0 && (
+            {stats.lowStockCount > 0 && (
+              <button onClick={() => onNavigate('inventory')} className="flex items-center gap-1 bg-yellow-900/30 border border-yellow-700/30 rounded-lg px-2.5 py-1.5 text-xs text-yellow-300">
+                📦 {stats.lowStockCount} ítem{stats.lowStockCount > 1 ? 's' : ''} bajo mínimo
+              </button>
+            )}
+            {stats.todayAppts.length === 0 && stats.overdueEquipmentCount === 0 && stats.overdueInvoicesCount === 0 && stats.lowStockCount === 0 && (
               <p className="text-xs text-gray-500">Sin alertas para hoy 🎉</p>
             )}
           </div>

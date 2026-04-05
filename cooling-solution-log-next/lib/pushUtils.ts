@@ -83,11 +83,12 @@ export async function syncAlertsToServer(): Promise<void> {
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
     const tomorrowEnd = new Date(todayStart); tomorrowEnd.setDate(tomorrowEnd.getDate() + 1); tomorrowEnd.setHours(23, 59, 59, 999)
 
-    const [equipment, contracts, invoices, appointments] = await Promise.all([
+    const [equipment, contracts, invoices, appointments, inventoryItems] = await Promise.all([
       db.equipment.toArray(),
       db.contracts.toArray(),
       db.invoices.toArray(),
       db.appointments.toArray(),
+      db.inventory_items.filter(i => i.active).toArray(),
     ])
 
     const payload = {
@@ -103,6 +104,9 @@ export async function syncAlertsToServer(): Promise<void> {
       appointments: appointments
         .filter(a => a.status === 'scheduled' && a.date >= todayStart.getTime() && a.date <= tomorrowEnd.getTime())
         .map(a => ({ id: a.id, title: a.title, clientName: a.client_name || '', date: a.date })),
+      lowStockItems: inventoryItems
+        .filter(i => i.quantity <= i.min_quantity)
+        .map(i => ({ id: i.id, name: i.name, quantity: i.quantity, minQuantity: i.min_quantity, unit: i.unit })),
       syncedAt: now,
     }
 

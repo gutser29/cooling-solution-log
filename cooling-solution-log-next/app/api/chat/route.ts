@@ -612,6 +612,21 @@ Cuando el usuario diga "agrega contrato", "nuevo contrato de mantenimiento", "re
 SAVE_CONTRACT:{"client_name":"Farmacia Caridad","service_type":"Mantenimiento Preventivo","description":"Limpieza y revisión de unidades","frequency":"monthly","monthly_fee":150,"start_date":"FECHA_ISO_HOY","notes":""}
 Campos: client_name (requerido), service_type (requerido), frequency (requerido), monthly_fee (requerido), description, start_date (ISO), end_date (ISO, opcional), notes.
 
+## SAVE_INVENTORY_ITEM (agregar pieza al inventario)
+Cuando el usuario diga "agrega al inventario", "nueva pieza", "nuevo material en inventario":
+[FORMATO - NO EJECUTAR]:
+SAVE_INVENTORY_ITEM:{"name":"Capacitor 45/5 MFD","sku":"CAP-45-5","category":"Capacitores","quantity":10,"min_quantity":3,"unit":"und","location":"truck","location_detail":"Transit","unit_cost":12.50,"unit_price":25.00,"supplier":"Refricentro","notes":""}
+Campos: name (requerido), category (requerido), quantity (requerido), min_quantity (requerido), unit (requerido), location (truck|warehouse|both|other), unit_cost (requerido), sku, unit_price, supplier, notes.
+Categorías comunes: Capacitores, Filtros, Refrigerantes, Correas, Válvulas, Contactores, Termostatos, Herramientas, Consumibles, General.
+
+## SAVE_INVENTORY_MOVEMENT (registrar entrada/salida de inventario)
+Cuando el usuario diga "usé X unidades de [pieza]", "entró material", "ajustar inventario":
+- Busca el ítem en INVENTARIO del CONTEXTO_DB por nombre/ID
+- type: "in" (entrada/compra), "out" (uso en trabajo), "adjustment" (ajuste de conteo)
+[FORMATO - NO EJECUTAR]:
+SAVE_INVENTORY_MOVEMENT:{"item_id":5,"item_name":"Capacitor 45/5 MFD","type":"out","quantity":2,"reason":"Uso en trabajo","job_id":null,"client_name":"Farmacia Caridad","notes":""}
+Para entrada: incluir unit_cost y supplier. Para salida: incluir job_id si aplica y client_name.
+
 # ===========================================
 # REGLA #10 — CONCILIACIÓN DE ESTADOS DE CUENTA
 # ===========================================

@@ -156,7 +156,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:', 'SAVE_INVENTORY_ITEM:', 'SAVE_INVENTORY_MOVEMENT:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -905,6 +905,18 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
               const statusStr = days < 0 ? `VENCIDO ${Math.abs(days)}d` : days === 0 ? 'HOY' : `${days}d`
               const monthly = c.monthly_fee / (FREQ_MONTHS_CTX[c.frequency] || 1)
               return `[ID:${c.id}] ${c.client_name || `Cliente #${c.client_id}`} | ${c.service_type} | ${c.frequency} | $${c.monthly_fee}/visita | ~$${monthly.toFixed(0)}/mes | Próximo: ${statusStr}`
+            }).join('\n')
+          }
+        } catch {}
+
+        // Inventario
+        try {
+          const invItems = await db.inventory_items.filter((i: any) => i.active).toArray()
+          if (invItems.length > 0) {
+            const lowStock = invItems.filter((i: any) => i.quantity <= i.min_quantity)
+            ctx += `\n\nINVENTARIO (${invItems.length} ítems activos, ${lowStock.length} bajo mínimo):\n` + invItems.map((i: any) => {
+              const status = i.quantity <= i.min_quantity ? 'CRÍTICO' : i.quantity <= i.min_quantity * 2 ? 'BAJO' : 'OK'
+              return `[ID:${i.id}] ${i.name}${i.sku ? ` (${i.sku})` : ''} | Cat: ${i.category} | Stock: ${i.quantity} ${i.unit} | Mín: ${i.min_quantity} | ${status} | Costo: $${i.unit_cost} | Ubic: ${i.location_detail || i.location}`
             }).join('\n')
           }
         } catch {}
@@ -2092,6 +2104,87 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         }
       }
 
+      // ====== PROCESS SAVE_INVENTORY_ITEM ======
+      const invItemData = extractJSON(assistantText, 'SAVE_INVENTORY_ITEM:')
+      if (invItemData) {
+        try {
+          const now = Date.now()
+          const item: any = {
+            name: invItemData.name || '',
+            sku: invItemData.sku || '',
+            category: invItemData.category || 'General',
+            quantity: Number(invItemData.quantity) || 0,
+            min_quantity: Number(invItemData.min_quantity) || 1,
+            unit: invItemData.unit || 'und',
+            location: invItemData.location || 'warehouse',
+            location_detail: invItemData.location_detail || '',
+            unit_cost: Number(invItemData.unit_cost) || 0,
+            unit_price: invItemData.unit_price ? Number(invItemData.unit_price) : undefined,
+            supplier: invItemData.supplier || '',
+            notes: invItemData.notes || '',
+            active: true,
+            created_at: now,
+            updated_at: now,
+          }
+          await db.inventory_items.add(item)
+          savedItems.push(`Inventario: ${item.name} | ${item.quantity} ${item.unit} | $${item.unit_cost}/und`)
+          needsSync = true
+          contextLoadedRef.current = false
+        } catch (e) {
+          console.error('SAVE_INVENTORY_ITEM error:', e)
+        }
+      }
+
+      // ====== PROCESS SAVE_INVENTORY_MOVEMENT ======
+      const invMovData = extractJSON(assistantText, 'SAVE_INVENTORY_MOVEMENT:')
+      if (invMovData) {
+        try {
+          const now = Date.now()
+          // Resolve item
+          let itemId = invMovData.item_id
+          let itemName = invMovData.item_name || ''
+          if (!itemId && itemName) {
+            const allItems = await db.inventory_items.toArray()
+            const match = allItems.find((i: any) => i.name.toLowerCase().includes(itemName.toLowerCase()))
+            if (match) { itemId = match.id; itemName = match.name }
+          }
+          if (itemId) {
+            const qty = Number(invMovData.quantity) || 1
+            const movType: 'in' | 'out' | 'adjustment' = invMovData.type || 'out'
+            const movement: any = {
+              item_id: itemId,
+              item_name: itemName,
+              type: movType,
+              quantity: qty,
+              unit_cost: invMovData.unit_cost ? Number(invMovData.unit_cost) : undefined,
+              total_cost: invMovData.unit_cost ? Number(invMovData.unit_cost) * qty : undefined,
+              date: invMovData.date ? new Date(invMovData.date).getTime() : now,
+              reason: invMovData.reason || (movType === 'in' ? 'Compra' : 'Uso en trabajo'),
+              job_id: invMovData.job_id || undefined,
+              client_name: invMovData.client_name || '',
+              supplier: invMovData.supplier || '',
+              notes: invMovData.notes || '',
+              created_at: now,
+            }
+            await db.inventory_movements.add(movement)
+            // Update item quantity
+            const currentItem = await db.inventory_items.get(itemId)
+            if (currentItem) {
+              let newQty = currentItem.quantity
+              if (movType === 'in') newQty += qty
+              else if (movType === 'out') newQty = Math.max(0, newQty - qty)
+              else newQty = qty // adjustment sets exact quantity
+              await db.inventory_items.update(itemId, { quantity: newQty, updated_at: now })
+            }
+            savedItems.push(`Movimiento: ${movType === 'in' ? 'Entrada' : movType === 'out' ? 'Salida' : 'Ajuste'} ${qty} × ${itemName}`)
+            needsSync = true
+            contextLoadedRef.current = false
+          }
+        } catch (e) {
+          console.error('SAVE_INVENTORY_MOVEMENT error:', e)
+        }
+      }
+
       // ====================================================================
       // BUILD FINAL MESSAGE — show everything we saved in one message
       // ====================================================================
@@ -2232,6 +2325,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('contracts') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               📋 Contratos
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('inventory') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              📦 Inventario
             </button>
             <button onClick={async () => {
               setShowMenu(false)

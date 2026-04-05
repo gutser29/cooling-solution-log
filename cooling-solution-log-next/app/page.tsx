@@ -22,6 +22,7 @@ import MaintenancePage from '@/components/MaintenancePage'
 import EmployeesPage from '@/components/EmployeesPage'
 import JobsPage from '@/components/JobsPage'
 import ContractsPage from '@/components/ContractsPage'
+import InventoryPage from '@/components/InventoryPage'
 export default function Home() {
   const [currentPage, setCurrentPage] = useState('chat')
 
@@ -48,6 +49,7 @@ export default function Home() {
       case 'employees': return <EmployeesPage onNavigate={navigate} />
       case 'jobs': return <JobsPage onNavigate={navigate} />
       case 'contracts': return <ContractsPage onNavigate={navigate} />
+      case 'inventory': return <InventoryPage onNavigate={navigate} />
       default: return <ChatCapture onNavigate={navigate} />
     }
   }

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract, ContractServiceRecord } from './types'
+import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract, ContractServiceRecord, InventoryItem, InventoryMovement } from './types'
 import type { EmployeePayment } from './db'
 
 // ============ COMPANY INFO ============
@@ -3159,4 +3159,104 @@ export function exportEventsCSV(
   a.download = `Transacciones-${new Date(startDate).toISOString().split('T')[0]}-a-${new Date(endDate).toISOString().split('T')[0]}.csv`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// ============ INVENTORY REPORTS ============
+
+export function generateInventoryReport(items: InventoryItem[]) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+  const pageW = doc.internal.pageSize.getWidth()
+  let y = 14
+
+  doc.setFontSize(16).setFont('helvetica', 'bold')
+  doc.text('Inventario de Piezas y Materiales', pageW / 2, y, { align: 'center' }); y += 7
+  doc.setFontSize(9).setFont('helvetica', 'normal')
+  doc.text(`${COMPANY_NAME} · ${new Date().toLocaleDateString('es-PR')}`, pageW / 2, y, { align: 'center' }); y += 8
+
+  const active = items.filter(i => i.active)
+  const lowStock = active.filter(i => i.quantity <= i.min_quantity)
+  const totalValue = active.reduce((s, i) => s + i.quantity * i.unit_cost, 0)
+
+  // Summary row
+  doc.setFontSize(9)
+  doc.text(`Total ítems activos: ${active.length}   |   Bajo mínimo: ${lowStock.length}   |   Valor total: $${totalValue.toFixed(2)}`, 14, y); y += 6
+
+  const statusLabel = (q: number, min: number) => q <= min ? '🔴 Crítico' : q <= min * 2 ? '🟡 Bajo' : '🟢 OK'
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Artículo', 'SKU', 'Categoría', 'Stock', 'Mín', 'Estado', 'Ubicación', 'Costo Unit.', 'Valor']],
+    body: active.sort((a, b) => {
+      const rank = (i: InventoryItem) => i.quantity <= i.min_quantity ? 0 : i.quantity <= i.min_quantity * 2 ? 1 : 2
+      return rank(a) - rank(b) || a.name.localeCompare(b.name)
+    }).map(i => [
+      i.name,
+      i.sku || '',
+      i.category,
+      `${i.quantity} ${i.unit}`,
+      `${i.min_quantity} ${i.unit}`,
+      statusLabel(i.quantity, i.min_quantity),
+      i.location_detail || i.location,
+      `$${i.unit_cost.toFixed(2)}`,
+      `$${(i.quantity * i.unit_cost).toFixed(2)}`,
+    ]),
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [0, 128, 128], textColor: 255 },
+    alternateRowStyles: { fillColor: [240, 248, 248] },
+    columnStyles: { 3: { halign: 'center' }, 4: { halign: 'center' }, 5: { halign: 'center' }, 7: { halign: 'right' }, 8: { halign: 'right' } },
+  })
+
+  const finalY = (doc as any).lastAutoTable.finalY + 6
+  doc.setFontSize(8).text(`Valor total del inventario activo: $${totalValue.toFixed(2)}`, pageW - 14, finalY, { align: 'right' })
+
+  doc.save(`Inventario-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+export function generateInventoryMovementsReport(
+  movements: InventoryMovement[],
+  items: InventoryItem[],
+  start: number,
+  end: number,
+  label: string,
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+  const pageW = doc.internal.pageSize.getWidth()
+  let y = 14
+
+  doc.setFontSize(16).setFont('helvetica', 'bold')
+  doc.text('Movimientos de Inventario', pageW / 2, y, { align: 'center' }); y += 7
+  doc.setFontSize(9).setFont('helvetica', 'normal')
+  doc.text(`${COMPANY_NAME} · Período: ${label}`, pageW / 2, y, { align: 'center' }); y += 8
+
+  const totalIn = movements.filter(m => m.type === 'in').reduce((s, m) => s + m.quantity, 0)
+  const totalOut = movements.filter(m => m.type === 'out').reduce((s, m) => s + m.quantity, 0)
+  const totalCost = movements.filter(m => m.type === 'in').reduce((s, m) => s + (m.total_cost || 0), 0)
+
+  doc.text(`Entradas: ${totalIn} uds   |   Salidas: ${totalOut} uds   |   Costo compras: $${totalCost.toFixed(2)}`, 14, y); y += 6
+
+  const itemMap: Record<number, InventoryItem> = {}
+  items.forEach(i => { if (i.id) itemMap[i.id] = i })
+
+  const typeLabel = (t: string) => t === 'in' ? 'Entrada' : t === 'out' ? 'Salida' : 'Ajuste'
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Fecha', 'Artículo', 'Tipo', 'Cant.', 'Costo Unit.', 'Total', 'Razón', 'Notas']],
+    body: movements.map(m => [
+      new Date(m.date).toLocaleDateString('es-PR'),
+      m.item_name,
+      typeLabel(m.type),
+      `${m.quantity}`,
+      m.unit_cost ? `$${m.unit_cost.toFixed(2)}` : '',
+      m.total_cost ? `$${m.total_cost.toFixed(2)}` : '',
+      m.reason,
+      m.notes || '',
+    ]),
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [0, 128, 128], textColor: 255 },
+    alternateRowStyles: { fillColor: [240, 248, 248] },
+    columnStyles: { 3: { halign: 'center' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
+  })
+
+  doc.save(`Movimientos-Inventario-${new Date().toISOString().split('T')[0]}.pdf`)
 }

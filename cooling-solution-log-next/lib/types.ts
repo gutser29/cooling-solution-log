@@ -389,3 +389,43 @@ export interface Warranty {
   created_at: number;
   updated_at?: number;
 }
+
+// ========== INVENTARIO ==========
+
+export interface InventoryItem {
+  id?: number
+  name: string
+  sku?: string                      // número de parte / referencia
+  category: string                  // "Filtros", "Capacitores", "Refrigerantes", etc.
+  quantity: number                  // stock actual
+  min_quantity: number              // cantidad mínima (alerta)
+  unit: string                      // "und", "caja", "lb", "oz", "pie", "rollo"
+  location: 'truck' | 'warehouse' | 'both' | 'other'
+  location_detail?: string          // "Transit", "Almacén SJ"
+  unit_cost: number                 // costo promedio / último costo
+  unit_price?: number               // precio de venta al cliente
+  supplier?: string
+  product_price_id?: number         // link a product_prices si existe
+  notes?: string
+  active: boolean
+  created_at: number
+  updated_at: number
+}
+
+export interface InventoryMovement {
+  id?: number
+  item_id: number
+  item_name: string                 // denormalizado
+  type: 'in' | 'out' | 'adjustment'
+  quantity: number                  // siempre positivo
+  unit_cost?: number
+  total_cost?: number
+  date: number
+  reason: string                    // "Compra", "Uso en trabajo", "Ajuste", "Devolución"
+  job_id?: number
+  client_name?: string
+  supplier?: string
+  invoice_ref?: string
+  notes?: string
+  created_at: number
+}

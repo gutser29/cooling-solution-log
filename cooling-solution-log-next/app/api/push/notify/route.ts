@@ -68,6 +68,7 @@ async function handleNotify() {
       contracts: { id: number; clientName: string; serviceType: string; nextServiceDue: number }[]
       invoices: { id: number; clientName: string; invoiceNumber: string; total: number; dueDate?: number }[]
       appointments: { id: number; title: string; clientName: string; date: number }[]
+      lowStockItems?: { id: number; name: string; quantity: number; minQuantity: number; unit: string }[]
     } = typeof alertsRaw === 'string' ? JSON.parse(alertsRaw) : alertsRaw
 
     // Already-notified categories today
@@ -140,6 +141,21 @@ async function handleNotify() {
           url: '/',
         })
         await redis.sadd(notifiedKey, 'appointments')
+      }
+    }
+
+    // ── Low stock inventory ───────────────────────────────────────────────────
+    if (!notifiedSet.has('lowstock')) {
+      const lowStock = alerts.lowStockItems || []
+      if (lowStock.length > 0) {
+        notifications.push({
+          title: '📦 Inventario Bajo',
+          body: lowStock.length === 1
+            ? `${lowStock[0].name}: ${lowStock[0].quantity} ${lowStock[0].unit} (mín ${lowStock[0].minQuantity})`
+            : `${lowStock.length} ítems por debajo del mínimo`,
+          url: '/',
+        })
+        await redis.sadd(notifiedKey, 'lowstock')
       }
     }
 
