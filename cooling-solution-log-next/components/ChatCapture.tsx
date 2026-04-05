@@ -156,7 +156,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -866,8 +866,25 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }
         } catch {}
 
+        // Empleados y pagos
+        try {
+          const emps = await db.employees.toArray()
+          if (emps.length > 0) {
+            const empPayments = await db.employee_payments.toArray()
+            const nowTs = Date.now()
+            const yearStart = new Date(new Date().getFullYear(), 0, 1).getTime()
+            ctx += '\n\nEMPLEADOS (Contratistas 480.6B):\n' + emps.filter((e: any) => e.active === true || (e.active as any) === 1).map((e: any) => {
+              const pmts = empPayments.filter((p: any) => p.employee_id === e.id && p.date >= yearStart)
+              const totalGross = pmts.reduce((s: number, p: any) => s + p.amount_gross, 0)
+              const totalNet = pmts.reduce((s: number, p: any) => s + p.amount_net, 0)
+              const totalRet = pmts.reduce((s: number, p: any) => s + p.retention_amount, 0)
+              return `[ID:${e.id}] ${e.first_name} ${e.last_name} | $${e.default_daily_rate}/día | Ret: ${e.retention_percent ?? 10}% | ${e.specialties || 'N/A'} | ${pmts.length} pagos este año | Bruto: $${totalGross.toFixed(2)} | Retenido: $${totalRet.toFixed(2)} | Neto: $${totalNet.toFixed(2)}`
+            }).join('\n')
+          }
+        } catch {}
+
         dbContextRef.current = ctx
-        
+
         // Summary message
         const counts = {
           events: events.length,
@@ -1937,6 +1954,49 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           }
         }
       }
+      // ====== PROCESS SAVE_EMPLOYEE_PAYMENT ======
+      const empPayData = extractJSON(assistantText, 'SAVE_EMPLOYEE_PAYMENT:')
+      if (empPayData) {
+        try {
+          const allEmps = await db.employees.toArray()
+          const name = (empPayData.employee_name || '').toLowerCase().trim()
+          const emp = allEmps.find(e =>
+            `${e.first_name} ${e.last_name}`.toLowerCase() === name ||
+            e.first_name.toLowerCase() === name ||
+            e.last_name.toLowerCase() === name
+          )
+          if (!emp?.id) throw new Error(`Empleado no encontrado: ${empPayData.employee_name}`)
+          const dateTs = empPayData.date ? new Date(empPayData.date).getTime() : Date.now()
+          const days = Number(empPayData.days_worked) || 1
+          const rate = Number(empPayData.daily_rate) || emp.default_daily_rate
+          const gross = days * rate
+          const retPct = emp.retention_percent ?? 10
+          const retention = parseFloat((gross * retPct / 100).toFixed(2))
+          const net = parseFloat((gross - retention).toFixed(2))
+          await db.employee_payments.add({
+            employee_id: emp.id,
+            employee_name: `${emp.first_name} ${emp.last_name}`,
+            date: dateTs,
+            description: empPayData.description || 'Pago registrado por IA',
+            days_worked: days,
+            daily_rate: rate,
+            amount_gross: gross,
+            retention_percent: retPct,
+            retention_amount: retention,
+            amount_net: net,
+            payment_method: empPayData.payment_method || 'cash',
+            job_id: empPayData.job_id ? Number(empPayData.job_id) : undefined,
+            notes: empPayData.notes || undefined,
+            created_at: Date.now(),
+          })
+          savedItems.push(`Pago empleado: ${emp.first_name} ${emp.last_name} | ${days}d × $${rate} = $${gross.toFixed(2)} bruto | Ret. $${retention.toFixed(2)} | Neto: $${net.toFixed(2)}`)
+          needsSync = true
+          contextLoadedRef.current = false
+        } catch (e) {
+          console.error('SAVE_EMPLOYEE_PAYMENT error:', e)
+        }
+      }
+
       // ====================================================================
       // BUILD FINAL MESSAGE — show everything we saved in one message
       // ====================================================================
@@ -2068,6 +2128,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('maintenance') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               🛠️ Mantenimiento Preventivo
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('employees') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              👷 Empleados (480.6B)
             </button>
             <button onClick={async () => {
               setShowMenu(false)

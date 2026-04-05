@@ -587,6 +587,14 @@ SAVE_BANK_TRANSACTION:{"account":"chase_visa","date":"2026-03-11T12:00:00","desc
 [FORMATO - NO EJECUTAR]:
 SAVE_BITACORA:{"date":"FECHA_ISO_HOY","raw_text":"texto original","summary":"resumen","tags":[],"clients_mentioned":[],"locations":[],"equipment":[],"jobs_count":0,"hours_estimated":0,"had_emergency":false,"highlights":[]}
 
+## SAVE_EMPLOYEE_PAYMENT (pago a contratista 480.6B)
+Cuando el usuario diga "le pagué a [nombre]", "pagué [días] días a [nombre]", "registra pago de [nombre]":
+- Busca al empleado en EMPLEADOS del CONTEXTO_DB por nombre
+- El sistema calcula automáticamente: bruto = days_worked × daily_rate, retención 10%, neto = bruto - retención
+[FORMATO - NO EJECUTAR]:
+SAVE_EMPLOYEE_PAYMENT:{"employee_name":"Luis Rivera","date":"FECHA_ISO_PAGO","description":"Farmacia Caridad #40 – instalación split","days_worked":2,"daily_rate":150,"payment_method":"cash","job_id":null}
+Campos: employee_name (requerido), date (ISO), description (trabajo realizado), days_worked, daily_rate (si no se indica usa la tarifa del empleado en CONTEXTO_DB), payment_method.
+
 # ===========================================
 # REGLA #10 — CONCILIACIÓN DE ESTADOS DE CUENTA
 # ===========================================

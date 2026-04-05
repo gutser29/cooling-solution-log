@@ -73,9 +73,11 @@ export interface Employee {
   first_name: string
   last_name: string
   phone?: string
+  email?: string
   default_daily_rate: number
-  retention_percent?: number
+  retention_percent?: number  // default 10 for 480.6B contractors
   specialties?: string
+  contractor_type?: string    // "480.6B" for Puerto Rico independent contractors
   active: boolean
   created_at: number
 }

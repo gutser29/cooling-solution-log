@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract } from './types'
+import type { EmployeePayment } from './db'
 
 // ============ COMPANY INFO ============
 const COMPANY_NAME = 'Cooling Solution'
@@ -2898,6 +2899,158 @@ export function generateMaintenancePDF(
   addFooter()
   const suffix = clientFilter ? `-${clientFilter.replace(/\s+/g, '_')}` : ''
   doc.save(`Mantenimiento${suffix}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ EMPLOYEE 480.6B REPORT — per employee ============
+export function generateEmployeeReport(employee: Employee, payments: EmployeePayment[], yearLabel: string) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+  const fmt = (n: number) => `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+
+  const fullName = `${employee.first_name} ${employee.last_name}`
+  const retPct = employee.retention_percent ?? 10
+
+  // Header
+  doc.setFillColor(0, 100, 120)
+  doc.rect(0, 0, 216, 32, 'F')
+  doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
+  doc.text(COMPANY_NAME, 14, 12)
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal')
+  doc.text(`Reporte de Pagos — Contratista Independiente (480.6B)`, 14, 20)
+  doc.text(`Período: ${yearLabel}`, 14, 27)
+
+  // Employee info box
+  doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 30, 30)
+  doc.text(fullName, 14, 44)
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(80, 80, 80)
+  if (employee.phone) doc.text(`Tel: ${employee.phone}`, 14, 51)
+  if (employee.email) doc.text(`Email: ${employee.email}`, 14, 57)
+  if (employee.specialties) doc.text(`Especialidad: ${employee.specialties}`, 14, 63)
+  doc.text(`Tipo: Contratista Independiente — Formulario 480.6B Puerto Rico`, 14, 69)
+  doc.text(`Retención: ${retPct}%`, 14, 75)
+
+  // Totals summary
+  const totalGross = payments.reduce((s, p) => s + p.amount_gross, 0)
+  const totalRetention = payments.reduce((s, p) => s + p.retention_amount, 0)
+  const totalNet = payments.reduce((s, p) => s + p.amount_net, 0)
+  const totalDays = payments.reduce((s, p) => s + p.days_worked, 0)
+
+  doc.setFillColor(240, 248, 255)
+  doc.rect(14, 80, 183, 22, 'F')
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(0, 80, 100)
+  doc.text(`Total Días: ${totalDays}`, 20, 88)
+  doc.text(`Total Bruto: ${fmt(totalGross)}`, 70, 88)
+  doc.text(`Retención ${retPct}%: ${fmt(totalRetention)}`, 120, 88)
+  doc.text(`Total Neto: ${fmt(totalNet)}`, 168, 88)
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100)
+  doc.text(`${payments.length} pagos registrados`, 20, 96)
+
+  // Payments table
+  const sorted = [...payments].sort((a, b) => a.date - b.date)
+  const rows = sorted.map(p => [
+    fmtDate(p.date),
+    p.description,
+    String(p.days_worked),
+    fmt(p.daily_rate),
+    fmt(p.amount_gross),
+    fmt(p.retention_amount),
+    fmt(p.amount_net),
+    p.payment_method || 'Cash',
+  ])
+
+  autoTable(doc, {
+    startY: 108,
+    head: [['Fecha', 'Descripción / Trabajo', 'Días', 'Tarifa/Día', 'Bruto', `Ret. ${retPct}%`, 'Neto', 'Método']],
+    body: rows,
+    foot: [['', 'TOTALES', String(totalDays), '', fmt(totalGross), fmt(totalRetention), fmt(totalNet), '']],
+    headStyles: { fillColor: [0, 100, 120], textColor: [255, 255, 255], fontSize: 8 },
+    bodyStyles: { fontSize: 8, textColor: [40, 40, 40] },
+    footStyles: { fillColor: [220, 240, 245], fontStyle: 'bold', fontSize: 8 },
+    columnStyles: {
+      0: { cellWidth: 20 },
+      1: { cellWidth: 55 },
+      2: { cellWidth: 12, halign: 'center' },
+      3: { cellWidth: 20, halign: 'right' },
+      4: { cellWidth: 22, halign: 'right' },
+      5: { cellWidth: 22, halign: 'right' },
+      6: { cellWidth: 22, halign: 'right' },
+      7: { cellWidth: 18 },
+    },
+    alternateRowStyles: { fillColor: [248, 252, 255] },
+  })
+
+  // Footer note
+  const finalY = (doc as any).lastAutoTable?.finalY || 200
+  doc.setFontSize(7); doc.setTextColor(120, 120, 120); doc.setFont('helvetica', 'italic')
+  doc.text('Este documento es para fines informativos. La retención se reporta en el Formulario 480.6B del Departamento de Hacienda de Puerto Rico.', 14, finalY + 8)
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-PR')}`, 14, finalY + 14)
+
+  doc.save(`Empleado_${fullName.replace(/\s+/g, '_')}_${yearLabel}.pdf`)
+}
+
+// ============ ALL EMPLOYEES SUMMARY REPORT ============
+export function generateEmployeesAllReport(employees: Employee[], paymentsMap: Record<number, EmployeePayment[]>, yearLabel: string) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+  const fmt = (n: number) => `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+
+  // Header
+  doc.setFillColor(0, 100, 120)
+  doc.rect(0, 0, 216, 32, 'F')
+  doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
+  doc.text(COMPANY_NAME, 14, 12)
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal')
+  doc.text('Resumen de Nómina — Contratistas Independientes (480.6B)', 14, 20)
+  doc.text(`Período: ${yearLabel}`, 14, 27)
+
+  let grandGross = 0, grandRetention = 0, grandNet = 0, grandDays = 0
+
+  const rows = employees.filter(e => e.active).map(emp => {
+    const pmts = paymentsMap[emp.id!] || []
+    const gross = pmts.reduce((s, p) => s + p.amount_gross, 0)
+    const retention = pmts.reduce((s, p) => s + p.retention_amount, 0)
+    const net = pmts.reduce((s, p) => s + p.amount_net, 0)
+    const days = pmts.reduce((s, p) => s + p.days_worked, 0)
+    const retPct = emp.retention_percent ?? 10
+    grandGross += gross; grandRetention += retention; grandNet += net; grandDays += days
+    return [
+      `${emp.first_name} ${emp.last_name}`,
+      emp.specialties || '—',
+      `${retPct}%`,
+      String(days),
+      String(pmts.length),
+      fmt(gross),
+      fmt(retention),
+      fmt(net),
+    ]
+  })
+
+  autoTable(doc, {
+    startY: 42,
+    head: [['Empleado', 'Especialidad', 'Ret.', 'Días', '# Pagos', 'Total Bruto', 'Total Retenido', 'Total Neto']],
+    body: rows,
+    foot: [['TOTALES', '', '', String(grandDays), '', fmt(grandGross), fmt(grandRetention), fmt(grandNet)]],
+    headStyles: { fillColor: [0, 100, 120], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    footStyles: { fillColor: [220, 240, 245], fontStyle: 'bold', fontSize: 9 },
+    columnStyles: {
+      0: { cellWidth: 42 },
+      1: { cellWidth: 35 },
+      2: { cellWidth: 12, halign: 'center' },
+      3: { cellWidth: 12, halign: 'center' },
+      4: { cellWidth: 16, halign: 'center' },
+      5: { cellWidth: 25, halign: 'right' },
+      6: { cellWidth: 27, halign: 'right' },
+      7: { cellWidth: 25, halign: 'right' },
+    },
+    alternateRowStyles: { fillColor: [248, 252, 255] },
+  })
+
+  const finalY = (doc as any).lastAutoTable?.finalY || 120
+  doc.setFontSize(7); doc.setTextColor(120, 120, 120); doc.setFont('helvetica', 'italic')
+  doc.text('Todos los contratistas deben recibir el Formulario 480.6B antes del 28 de febrero del año siguiente.', 14, finalY + 8)
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-PR')}`, 14, finalY + 14)
+
+  doc.save(`Nomina_Todos_${yearLabel}.pdf`)
 }
 
 export function exportEventsCSV(
