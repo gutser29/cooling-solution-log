@@ -603,6 +603,15 @@ Cuando el usuario diga "le pagué a [nombre]", "pagué [días] días a [nombre]"
 SAVE_EMPLOYEE_PAYMENT:{"employee_name":"Luis Rivera","date":"FECHA_ISO_PAGO","description":"Farmacia Caridad #40 – instalación split","days_worked":2,"daily_rate":150,"payment_method":"cash","job_id":null}
 Campos: employee_name (requerido), date (ISO), description (trabajo realizado), days_worked, daily_rate (si no se indica usa la tarifa del empleado en CONTEXTO_DB), payment_method.
 
+## SAVE_CONTRACT (contrato de mantenimiento recurrente)
+Cuando el usuario diga "agrega contrato", "nuevo contrato de mantenimiento", "registra contrato con [cliente]":
+- Busca el cliente en CONTEXTO_DB
+- frequency: monthly | bimonthly | quarterly | semiannual | annual
+- monthly_fee = monto por visita/servicio
+[FORMATO - NO EJECUTAR]:
+SAVE_CONTRACT:{"client_name":"Farmacia Caridad","service_type":"Mantenimiento Preventivo","description":"Limpieza y revisión de unidades","frequency":"monthly","monthly_fee":150,"start_date":"FECHA_ISO_HOY","notes":""}
+Campos: client_name (requerido), service_type (requerido), frequency (requerido), monthly_fee (requerido), description, start_date (ISO), end_date (ISO, opcional), notes.
+
 # ===========================================
 # REGLA #10 — CONCILIACIÓN DE ESTADOS DE CUENTA
 # ===========================================

@@ -19,7 +19,8 @@ interface Stats {
   topCategories: { category: string; total: number }[]
   upcomingAppts: { title: string; date: number; clientName?: string; location?: string }[]
   activeReminders: { text: string; dueDate: number; priority: string; overdue: boolean }[]
-  contractAlerts: { clientName: string; service: string; daysUntil: number }[]
+  contractAlerts: { clientName: string; service: string; daysUntil: number; overdue: boolean }[]
+  monthlyContractRevenue: number
   warrantyAlerts: { type: string; brand: string; client: string; days: number }[]
   equipmentAlerts: { clientName: string; items: { type: string; location: string; daysOverdue: number }[] }[]
   pendingInvoices: { number: string; client: string; total: number; days: number }[]
@@ -94,10 +95,17 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       } catch {}
 
       let contractAlerts: Stats['contractAlerts'] = []
+      let monthlyContractRevenue = 0
+      const FREQ_MONTHS_DASH: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, semiannual: 6, annual: 12 }
       try {
         const contracts = await db.contracts.where('status').equals('active').toArray()
-        contractAlerts = contracts.filter(c => c.next_service_due - now <= 3 * 86400000 && c.next_service_due >= now - 86400000)
-          .map(c => ({ clientName: clientMap.get(c.client_id) || `Cliente #${c.client_id}`, service: c.service_type, daysUntil: Math.ceil((c.next_service_due - now) / 86400000) }))
+        monthlyContractRevenue = contracts.reduce((s, c) => s + c.monthly_fee / (FREQ_MONTHS_DASH[c.frequency] || 1), 0)
+        contractAlerts = contracts
+          .filter(c => c.next_service_due <= now + 7 * 86400000)
+          .map(c => {
+            const days = Math.ceil((c.next_service_due - now) / 86400000)
+            return { clientName: clientMap.get(c.client_id) || `Cliente #${c.client_id}`, service: c.service_type, daysUntil: days, overdue: days < 0 }
+          })
           .sort((a, b) => a.daysUntil - b.daysUntil)
       } catch {}
 
@@ -147,7 +155,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       setStats({
         monthIncome: totalMonthIncome, monthExpenses, monthProfit: totalMonthIncome - monthExpenses,
         todayExpenses, todayIncome, pendingAR: totalAR, pendingClients, recentEvents, topCategories,
-        upcomingAppts, activeReminders, contractAlerts, warrantyAlerts, equipmentAlerts, pendingInvoices, pendingInvoicesTotal
+        upcomingAppts, activeReminders, contractAlerts, monthlyContractRevenue, warrantyAlerts, equipmentAlerts, pendingInvoices, pendingInvoicesTotal
       })
     } catch (e) { console.error('Dashboard error:', e) }
     finally { setLoading(false) }
@@ -246,15 +254,45 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         )}
 
-        {/* Contract Alerts */}
-        {stats.contractAlerts.length > 0 && (
-          <div className="bg-yellow-900/20 rounded-xl p-4 border border-yellow-700/30" onClick={() => onNavigate('calendar')}>
-            <p className="text-sm font-semibold text-yellow-400 mb-2">⚠️ Contratos por Vencer</p>
-            {stats.contractAlerts.map((a, i) => (
+        {/* Contract Revenue Widget */}
+        {stats.monthlyContractRevenue > 0 && (
+          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 cursor-pointer" onClick={() => onNavigate('contracts')}>
+            <p className="text-xs text-gray-500 mb-1">📋 Revenue Mensual Garantizado</p>
+            <p className="text-2xl font-bold text-cyan-400">${stats.monthlyContractRevenue.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</p>
+            <p className="text-xs text-gray-500 mt-0.5">contratos activos</p>
+          </div>
+        )}
+
+        {/* Contract Alerts — overdue (red) */}
+        {stats.contractAlerts.filter(a => a.overdue).length > 0 && (
+          <div className="bg-red-900/20 rounded-xl p-4 border border-red-700/30 cursor-pointer" onClick={() => onNavigate('contracts')}>
+            <p className="text-sm font-semibold text-red-400 mb-2">🔴 Servicios Vencidos</p>
+            {stats.contractAlerts.filter(a => a.overdue).map((a, i) => (
               <div key={i} className="flex justify-between items-center text-sm py-1">
-                <span className="text-gray-300">{a.clientName}</span>
-                <span className={`text-xs px-2 py-0.5 rounded ${a.daysUntil <= 0 ? 'bg-red-900/50 text-red-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
-                  {a.daysUntil <= 0 ? '¡Vencido!' : `${a.daysUntil}d`}
+                <div>
+                  <span className="text-gray-300">{a.clientName}</span>
+                  <p className="text-xs text-gray-500">{a.service}</p>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded bg-red-900/50 text-red-400">
+                  {Math.abs(a.daysUntil)}d vencido
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Contract Alerts — upcoming (yellow) */}
+        {stats.contractAlerts.filter(a => !a.overdue).length > 0 && (
+          <div className="bg-yellow-900/20 rounded-xl p-4 border border-yellow-700/30 cursor-pointer" onClick={() => onNavigate('contracts')}>
+            <p className="text-sm font-semibold text-yellow-400 mb-2">⚠️ Servicios por Vencer</p>
+            {stats.contractAlerts.filter(a => !a.overdue).map((a, i) => (
+              <div key={i} className="flex justify-between items-center text-sm py-1">
+                <div>
+                  <span className="text-gray-300">{a.clientName}</span>
+                  <p className="text-xs text-gray-500">{a.service}</p>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded bg-yellow-900/50 text-yellow-400">
+                  {a.daysUntil === 0 ? 'Hoy' : `${a.daysUntil}d`}
                 </span>
               </div>
             ))}

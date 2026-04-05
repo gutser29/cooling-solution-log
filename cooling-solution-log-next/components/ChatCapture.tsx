@@ -156,7 +156,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -889,6 +889,22 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
               const totalNet = pmts.reduce((s: number, p: any) => s + p.amount_net, 0)
               const totalRet = pmts.reduce((s: number, p: any) => s + p.retention_amount, 0)
               return `[ID:${e.id}] ${e.first_name} ${e.last_name} | $${e.default_daily_rate}/día | Ret: ${e.retention_percent ?? 10}% | ${e.specialties || 'N/A'} | ${pmts.length} pagos este año | Bruto: $${totalGross.toFixed(2)} | Retenido: $${totalRet.toFixed(2)} | Neto: $${totalNet.toFixed(2)}`
+            }).join('\n')
+          }
+        } catch {}
+
+        // Contratos recurrentes
+        try {
+          const contractsAll = await db.contracts.toArray()
+          const activeContracts = contractsAll.filter((c: any) => c.status === 'active')
+          if (activeContracts.length > 0) {
+            const nowTs = Date.now()
+            const FREQ_MONTHS_CTX: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, semiannual: 6, annual: 12 }
+            ctx += '\n\nCONTRATOS ACTIVOS:\n' + activeContracts.map((c: any) => {
+              const days = Math.ceil((c.next_service_due - nowTs) / 86400000)
+              const statusStr = days < 0 ? `VENCIDO ${Math.abs(days)}d` : days === 0 ? 'HOY' : `${days}d`
+              const monthly = c.monthly_fee / (FREQ_MONTHS_CTX[c.frequency] || 1)
+              return `[ID:${c.id}] ${c.client_name || `Cliente #${c.client_id}`} | ${c.service_type} | ${c.frequency} | $${c.monthly_fee}/visita | ~$${monthly.toFixed(0)}/mes | Próximo: ${statusStr}`
             }).join('\n')
           }
         } catch {}
@@ -2026,6 +2042,56 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         }
       }
 
+      // ====== PROCESS SAVE_CONTRACT ======
+      const contractData = extractJSON(assistantText, 'SAVE_CONTRACT:')
+      if (contractData) {
+        try {
+          const now = Date.now()
+          const FREQ_MONTHS_SAVE: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, semiannual: 6, annual: 12 }
+
+          // Resolve client
+          let clientId = contractData.client_id
+          let clientName = contractData.client_name || ''
+          if (!clientId && clientName) {
+            const allClients = await db.clients.toArray()
+            const match = allClients.find((c: any) =>
+              `${c.first_name} ${c.last_name}`.toLowerCase().includes(clientName.toLowerCase())
+            )
+            if (match) { clientId = match.id; clientName = `${match.first_name} ${match.last_name}` }
+          }
+
+          const startTs = contractData.start_date ? new Date(contractData.start_date).getTime() : now
+          const frequency = contractData.frequency || 'monthly'
+          let nextDue = contractData.next_service_due
+            ? new Date(contractData.next_service_due).getTime()
+            : (() => { const d = new Date(startTs); d.setMonth(d.getMonth() + (FREQ_MONTHS_SAVE[frequency] || 1)); return d.getTime() })()
+
+          const contract: any = {
+            client_id: clientId || 0,
+            client_name: clientName,
+            service_type: contractData.service_type || 'Mantenimiento',
+            description: contractData.description || '',
+            frequency,
+            monthly_fee: contractData.monthly_fee || contractData.fee || 0,
+            start_date: startTs,
+            end_date: contractData.end_date ? new Date(contractData.end_date).getTime() : undefined,
+            next_service_due: nextDue,
+            auto_reminder_days: contractData.auto_reminder_days || 3,
+            status: 'active',
+            notes: contractData.notes || '',
+            created_at: now,
+            updated_at: now,
+          }
+
+          await db.contracts.add(contract)
+          savedItems.push(`Contrato: ${clientName} | ${contract.service_type} | ${frequency} | $${contract.monthly_fee}/visita`)
+          needsSync = true
+          contextLoadedRef.current = false
+        } catch (e) {
+          console.error('SAVE_CONTRACT error:', e)
+        }
+      }
+
       // ====================================================================
       // BUILD FINAL MESSAGE — show everything we saved in one message
       // ====================================================================
@@ -2163,6 +2229,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
             </button>
             <button onClick={() => { setShowMenu(false); onNavigate('jobs') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               🔧 Trabajos
+            </button>
+            <button onClick={() => { setShowMenu(false); onNavigate('contracts') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
+              📋 Contratos
             </button>
             <button onClick={async () => {
               setShowMenu(false)
