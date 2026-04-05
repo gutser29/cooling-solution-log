@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
-import { generatePhotoReport, generateDocumentListPDF } from '@/lib/pdfGenerator'
+import { generatePhotoReport, generateDocumentListPDF, generateClientListPDF } from '@/lib/pdfGenerator'
 import ConfirmDialog from './ConfirmDialog'
 import type { Client, Job, EventRecord, ClientPhoto, ClientDocument, ClientLocation } from '@/lib/types'
 
@@ -484,6 +484,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
             <h1 className="text-xl font-bold">👥 Clientes</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => generateClientListPDF(filtered)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium">📄</button>
             <button onClick={startNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">+ Nuevo</button>
             <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
           </div>
