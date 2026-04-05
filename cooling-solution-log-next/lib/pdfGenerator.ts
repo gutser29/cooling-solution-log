@@ -1988,6 +1988,208 @@ export function generateReconciliationReport(
   const suffix = cardFilter ? `-${getPaymentLabel(cardFilter).replace(/\s+/g, '-')}` : ''
   doc.save(`Conciliacion${suffix}-${periodLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`)
 }
+// ============ BANK RECONCILIATION PDF (bank_transactions vs events) ============
+export function generateBankReconciliationPDF(
+  bankTxs: any[],
+  events: EventRecord[],
+  accounts: any[],
+  filterAccountName?: string,
+  filterStart?: number,
+  filterEnd?: number,
+  statements?: any[]
+) {
+  const doc = new jsPDF()
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const mL = 14, mR = 14
+
+  const addFooter = () => {
+    const total = doc.getNumberOfPages()
+    for (let i = 1; i <= total; i++) {
+      doc.setPage(i)
+      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+      doc.line(mL, pageH - 14, pageW - mR, pageH - 14)
+      doc.setFontSize(8); doc.setTextColor(150, 150, 150)
+      doc.text(COMPANY_SLOGAN, pageW / 2, pageH - 7, { align: 'center' })
+      doc.text(`Pág ${i} de ${total}`, pageW - mR, pageH - 7, { align: 'right' })
+    }
+  }
+
+  const periodTxs = bankTxs.filter(t => {
+    if (filterAccountName && t.account_name !== filterAccountName) return false
+    if (filterStart && t.date < filterStart) return false
+    if (filterEnd && t.date > filterEnd) return false
+    return true
+  })
+  const periodEvents = events.filter(e => {
+    if (filterStart && e.timestamp < filterStart) return false
+    if (filterEnd && e.timestamp > filterEnd) return false
+    return true
+  })
+
+  const startLabel = filterStart ? formatDate(filterStart) : 'todo'
+  const endLabel = filterEnd ? formatDate(filterEnd) : 'todo'
+  const accountLabel = filterAccountName
+    ? (accounts.find(a => a.payment_method_key === filterAccountName)?.name || filterAccountName)
+    : 'Todas las cuentas'
+
+  // Header
+  try { doc.addImage(LOGO_BASE64, 'PNG', pageW - mR - 38, 8, 38, 16) } catch {}
+  doc.setFontSize(15); doc.setTextColor(0, 130, 130); doc.text(COMPANY_NAME, mL, 17)
+  doc.setFontSize(11); doc.setTextColor(40, 40, 40); doc.text('Conciliación Bancaria', mL, 25)
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100)
+  doc.text(`Cuenta: ${accountLabel}  |  Período: ${startLabel} — ${endLabel}`, mL, 31)
+  doc.text(`Generado: ${formatDate(Date.now())}`, mL, 36)
+
+  let y = 44
+
+  // Group transactions by account
+  const byAccount: Record<string, any[]> = {}
+  for (const tx of periodTxs) {
+    if (!byAccount[tx.account_name]) byAccount[tx.account_name] = []
+    byAccount[tx.account_name].push(tx)
+  }
+
+  for (const [acctName, txList] of Object.entries(byAccount)) {
+    const acct = accounts.find((a: any) => a.payment_method_key === acctName)
+    const acctLabel = acct?.name || acctName
+
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+
+    doc.setDrawColor(0, 130, 130); doc.setLineWidth(0.5)
+    doc.line(mL, y, pageW - mR, y); y += 7
+
+    doc.setFontSize(12); doc.setTextColor(0, 100, 130); doc.setFont('helvetica', 'bold')
+    doc.text(`🏦 ${acctLabel}`, mL, y)
+    doc.setFont('helvetica', 'normal'); y += 5
+
+    const matched = txList.filter(t => t.match_status === 'matched').length
+    const unmatched = txList.filter(t => t.match_status === 'unmatched').length
+    const probable = txList.filter(t => t.match_status === 'probable').length
+    const totalDebits = txList.filter(t => t.direction === 'debit').reduce((s: number, t: any) => s + t.amount, 0)
+    const totalCredits = txList.filter(t => t.direction === 'credit').reduce((s: number, t: any) => s + t.amount, 0)
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Transacciones', 'Conciliadas', 'Sin match', 'Probables', 'Total Débitos', 'Total Créditos']],
+      body: [[
+        String(txList.length),
+        String(matched),
+        String(unmatched),
+        String(probable),
+        formatCurrency(totalDebits),
+        formatCurrency(totalCredits),
+      ]],
+      headStyles: { fillColor: [0, 130, 130], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 4: { halign: 'right' as const }, 5: { halign: 'right' as const } },
+    })
+    y = (doc as any).lastAutoTable.finalY + 6
+
+    // Transactions table
+    const rows = txList
+      .sort((a: any, b: any) => a.date - b.date)
+      .map((tx: any) => {
+        const ev = tx.match_event_id ? events.find(e => e.id === tx.match_event_id) : null
+        const statusIcon = tx.match_status === 'matched' ? '✓' : tx.match_status === 'probable' ? '?' : '⚠'
+        return [
+          formatDateShort(tx.date),
+          tx.description.length > 28 ? tx.description.slice(0, 28) + '…' : tx.description,
+          tx.direction === 'debit' ? `-${formatCurrency(tx.amount)}` : `+${formatCurrency(tx.amount)}`,
+          ev ? (ev.vendor || ev.client || ev.category || '').slice(0, 22) : '—',
+          ev ? (ev.type === 'expense' ? `-${formatCurrency(ev.amount)}` : `+${formatCurrency(ev.amount)}`) : '—',
+          ev ? formatCurrency(Math.abs(tx.amount - ev.amount)) : '—',
+          statusIcon + ' ' + (tx.match_status === 'matched' ? 'OK' : tx.match_status === 'probable' ? 'Probable' : 'Sin match'),
+        ]
+      })
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Fecha', 'Descripción banco', 'Monto banco', 'Evento app', 'Monto app', 'Dif.', 'Estado']],
+      body: rows,
+      headStyles: { fillColor: [50, 80, 120], textColor: [255, 255, 255], fontSize: 7 },
+      bodyStyles: { fontSize: 7 },
+      columnStyles: {
+        0: { cellWidth: 18 },
+        1: { cellWidth: 52 },
+        2: { halign: 'right' as const, cellWidth: 22 },
+        3: { cellWidth: 40 },
+        4: { halign: 'right' as const, cellWidth: 22 },
+        5: { halign: 'right' as const, cellWidth: 14 },
+        6: { cellWidth: 20 },
+      },
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && data.column.index === 6) {
+          const status = data.cell.raw as string
+          if (status.startsWith('✓')) data.cell.styles.textColor = [34, 150, 34]
+          else if (status.startsWith('⚠')) data.cell.styles.textColor = [200, 50, 50]
+          else data.cell.styles.textColor = [180, 140, 0]
+        }
+      }
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // Unmatched app events
+  const matchedEventIds = new Set(periodTxs.filter(t => t.match_event_id).map(t => t.match_event_id))
+  const unmatchedEvents = periodEvents.filter(e => e.type === 'expense' && !matchedEventIds.has(e.id))
+
+  if (unmatchedEvents.length > 0) {
+    if (y > pageH - 60) { doc.addPage(); y = 20 }
+    doc.setDrawColor(200, 80, 80); doc.setLineWidth(0.4); doc.line(mL, y, pageW - mR, y); y += 7
+    doc.setFontSize(11); doc.setTextColor(180, 50, 50); doc.setFont('helvetica', 'bold')
+    doc.text(`⚠ Gastos sin transacción bancaria (${unmatchedEvents.length})`, mL, y)
+    doc.setFont('helvetica', 'normal'); y += 4
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Fecha', 'Vendor / Cliente', 'Categoría', 'Método Pago', 'Monto']],
+      body: unmatchedEvents.sort((a, b) => a.timestamp - b.timestamp).map(e => [
+        formatDateShort(e.timestamp),
+        (e.vendor || e.client || '—').slice(0, 30),
+        e.category || '—',
+        getPaymentLabel(e.payment_method),
+        formatCurrency(e.amount),
+      ]),
+      headStyles: { fillColor: [180, 50, 50], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 4: { halign: 'right' as const } },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // Statements index
+  if (statements && statements.length > 0) {
+    if (y > pageH - 50) { doc.addPage(); y = 20 }
+    doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.3); doc.line(mL, y, pageW - mR, y); y += 7
+    doc.setFontSize(10); doc.setTextColor(80, 80, 80); doc.setFont('helvetica', 'bold')
+    doc.text('ESTADOS DISPONIBLES', mL, y); doc.setFont('helvetica', 'normal'); y += 4
+
+    const filteredStmts = filterAccountName
+      ? statements.filter((s: any) => s.account_name === filterAccountName)
+      : statements
+    autoTable(doc, {
+      startY: y,
+      head: [['Cuenta', 'Período', 'Transacciones', 'Subido']],
+      body: filteredStmts.map((s: any) => {
+        const acct = accounts.find((a: any) => a.payment_method_key === s.account_name)
+        return [
+          acct?.name || s.account_name,
+          s.period_label || `${formatDateShort(s.period_start)} — ${formatDateShort(s.period_end)}`,
+          String(s.tx_count || '—'),
+          formatDateShort(s.created_at),
+        ]
+      }),
+      headStyles: { fillColor: [100, 100, 100], textColor: [255, 255, 255], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+    })
+  }
+
+  addFooter()
+  const suffix = filterAccountName ? `-${filterAccountName}` : ''
+  doc.save(`Conciliacion-Bancaria${suffix}-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
 export function exportEventsCSV(
   events: EventRecord[],
   startDate: number,

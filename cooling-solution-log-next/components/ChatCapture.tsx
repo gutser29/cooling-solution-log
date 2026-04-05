@@ -10,7 +10,8 @@ import {
   generatePhotoReport,
 generateInvoiceNumber,
   generateIncomeByClientReport,
-  generateReconciliationReport
+  generateReconciliationReport,
+  generateBankReconciliationPDF
 } from '@/lib/pdfGenerator'
 
 interface ChatMessage {
@@ -1751,29 +1752,86 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const bankMatches = assistantText.match(/SAVE_BANK_TRANSACTION:\s*\{/gi)
       if (bankMatches && bankMatches.length > 0) {
         const allBankTx = extractAllJSON(assistantText, 'SAVE_BANK_TRANSACTION:')
+        let savedBankCount = 0
+        let skippedDupeCount = 0
+        const savedDates: number[] = []
+
+        // Pre-load existing transactions for this account to dedup
+        const accountName = allBankTx[0]?.account || ''
+        const existingTxs = await db.bank_transactions
+          .where('account_name').equals(accountName).toArray()
+
         for (const tx of allBankTx) {
           try {
             const now = Date.now()
             const txDate = tx.date ? new Date(tx.date).getTime() : now
+
+            // Dedup: skip if same account + date (±1d) + amount + description already exists
+            const isDupe = existingTxs.some(e =>
+              Math.abs(e.date - txDate) < 86400000 &&
+              Math.abs(e.amount - (tx.amount || 0)) < 0.01 &&
+              e.description === (tx.description || '')
+            )
+            if (isDupe) { skippedDupeCount++; continue }
+
             await db.bank_transactions.add({
-              account_id: null,
+              account_id: undefined,
               account_name: tx.account || '',
-              statement_id: null,
+              statement_id: undefined,
               date: txDate,
               description: tx.description || '',
               amount: tx.amount || 0,
               direction: tx.direction || 'debit',
               category: tx.category || 'purchase',
               match_status: 'pending',
-              match_event_id: null,
-              match_type: null,
+              match_event_id: undefined,
+              match_type: undefined,
               created_at: now
             })
+            savedDates.push(txDate)
+            savedBankCount++
           } catch (e) {
             console.error('SAVE_BANK_TRANSACTION error:', e)
           }
         }
-        savedItems.push(`${allBankTx.length} transacciones bancarias guardadas (${allBankTx[0]?.account || ''})`)
+
+        // Auto-create bank_statement record for this batch
+        if (savedBankCount > 0 && savedDates.length > 0) {
+          try {
+            const periodStart = Math.min(...savedDates)
+            const periodEnd = Math.max(...savedDates)
+            const d = new Date(periodStart)
+            const periodLabel = d.toLocaleDateString('es-PR', { month: 'long', year: 'numeric' })
+
+            // Check if a statement for this account+period already exists
+            const stmts = await db.bank_statements.where('account_name').equals(accountName).toArray()
+            const overlap = stmts.find((s: any) =>
+              s.period_start <= periodEnd && s.period_end >= periodStart
+            )
+            if (!overlap) {
+              await db.bank_statements.add({
+                account_name: accountName,
+                period_start: periodStart,
+                period_end: periodEnd,
+                period_label: periodLabel,
+                tx_count: savedBankCount,
+                status: 'imported',
+                created_at: Date.now()
+              })
+            } else {
+              // Update tx_count on existing statement
+              await db.bank_statements.update(overlap.id!, {
+                tx_count: (overlap.tx_count || 0) + savedBankCount
+              })
+            }
+          } catch {}
+        }
+
+        // Clear receipt photos so bank statement pages aren't attached to future events
+        receiptPhotosRef.current = []
+
+        const dupeMsg = skippedDupeCount > 0 ? ` (${skippedDupeCount} duplicadas omitidas)` : ''
+        savedItems.push(`${savedBankCount} transacciones bancarias guardadas${dupeMsg} (${accountName})`)
         needsSync = true
       }
 
