@@ -175,10 +175,10 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
           onChange={e => setFilterClient(e.target.value)}
           className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
         >
-          <option value="all">👤 Todos los clientes ({receipts.length})</option>
+          <option value="all">👤 Todos los clientes ({receipts.filter(r => filterCategory === 'all' || r.category === filterCategory).length})</option>
           {clients.map(c => (
             <option key={c} value={c}>
-              {c} ({receipts.filter(r => (r.client || 'General') === c).length})
+              {c} ({receipts.filter(r => (r.client || 'General') === c && (filterCategory === 'all' || r.category === filterCategory)).length})
             </option>
           ))}
         </select>
