@@ -1,10 +1,20 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import dynamic from 'next/dynamic'
 import { db } from '@/lib/db'
 import { generatePhotoReport, generateDocumentListPDF, generateClientListPDF } from '@/lib/pdfGenerator'
 import ConfirmDialog from './ConfirmDialog'
 import type { Client, Job, EventRecord, ClientPhoto, ClientDocument, ClientLocation } from '@/lib/types'
+
+const ClientMapView = dynamic(() => import('./ClientMapView'), {
+  ssr: false,
+  loading: () => (
+    <div className="fixed inset-0 z-50 bg-[#0b1220] flex items-center justify-center">
+      <div className="text-gray-400 text-sm">Cargando mapa...</div>
+    </div>
+  ),
+})
 
 interface ClientsPageProps {
   onNavigate: (page: string) => void
@@ -59,6 +69,7 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   const [detailTab, setDetailTab] = useState<DetailTab>('resumen')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [showMap, setShowMap] = useState(false)
   const [editForm, setEditForm] = useState<Partial<Client>>({})
   const [filter, setFilter] = useState<'all' | 'residential' | 'commercial'>('all')
   const [confirmAction, setConfirmAction] = useState<{ show: boolean; title: string; message: string; action: () => void }>({ show: false, title: '', message: '', action: () => {} })
@@ -478,12 +489,26 @@ export default function ClientsPage({ onNavigate }: ClientsPageProps) {
   if (viewMode === 'list') {
     return (
       <div className="min-h-screen bg-[#0b1220] text-gray-100">
+        {showMap && (
+          <ClientMapView
+            clients={clients}
+            onSelectClient={async (clientId) => {
+              const client = clients.find(c => c.id === clientId)
+              if (client) {
+                setShowMap(false)
+                await selectClient(client)
+              }
+            }}
+            onClose={() => setShowMap(false)}
+          />
+        )}
         <div className="sticky top-0 z-30 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 shadow-lg flex justify-between items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => onNavigate('dashboard')} className="text-lg">←</button>
             <h1 className="text-xl font-bold">👥 Clientes</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowMap(true)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium" title="Mapa de clientes">🗺️</button>
             <button onClick={() => generateClientListPDF(filtered)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm font-medium">📄</button>
             <button onClick={startNew} className="bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 text-sm font-medium">+ Nuevo</button>
             <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">💬</button>
