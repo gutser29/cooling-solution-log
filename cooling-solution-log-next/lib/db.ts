@@ -1,11 +1,12 @@
 import Dexie from 'dexie'
-import type { 
-  EventRecord, 
-  Client, 
-  Employee, 
-  Job, 
-  Vehicle, 
+import type {
+  EventRecord,
+  Client,
+  Employee,
+  Job,
+  Vehicle,
   RecurringContract,
+  ContractServiceRecord,
   Note,
   Appointment,
   Reminder,
@@ -186,6 +187,7 @@ export class CoolingDB extends Dexie {
   bank_transactions!: Dexie.Table<BankTransaction, number>
   vendor_aliases!: Dexie.Table<any, number>
   employee_payments!: Dexie.Table<EmployeePayment, number>
+  contract_service_records!: Dexie.Table<ContractServiceRecord, number>
   constructor() {
     super('CoolingSolutionDB')
     
@@ -562,6 +564,38 @@ bank_transactions: '++id,account,transaction_type,date,amount,description,match_
       bank_statements: '++id,account_id,account_name,period_start,period_end,status,created_at',
       bank_transactions: '++id,statement_id,account_id,account_name,date,description,amount,direction,category,match_status,match_event_id,match_type,created_at',
       vendor_aliases: '++id,canonical_name,*aliases,category,created_at'
+    })
+
+    // Version 23 — Contracts: expand indexes + service records table
+    this.version(23).stores({
+      events: '++id,timestamp,type,status,subtype,category,amount,client,employee_id,job_id,vehicle_id,payment_method,expense_type',
+      clients: '++id,first_name,last_name,phone,type,active,created_at,updated_at',
+      employees: '++id,first_name,last_name,active,created_at',
+      jobs: '++id,client_id,date,status,payment_status,created_at,location_id',
+      vehicles: '++id,name,active,created_at',
+      contracts: '++id,client_id,client_name,status,next_service_due,frequency,created_at',
+      sync_queue: '++id,timestamp,status',
+      notes: '++id,timestamp,updated_at',
+      appointments: '++id,timestamp,date,client_id,status,created_at,location_id',
+      reminders: '++id,timestamp,due_date,completed,created_at',
+      invoices: '++id,invoice_number,type,client_name,status,issue_date,created_at',
+      job_templates: '++id,name,active,created_at',
+      client_photos: '++id,client_id,client_name,job_id,category,timestamp,created_at',
+      client_documents: '++id,client_id,client_name,job_id,invoice_id,doc_type,file_name,timestamp,created_at',
+      client_locations: '++id,client_id,name,city,is_primary,active,created_at',
+      bitacora: '++id,date,*tags,*clients_mentioned,*locations,created_at',
+      warranties: '++id,equipment_type,brand,vendor,client_name,client_id,status,purchase_date,expiration_date,created_at',
+      scanned_docs: '++id,name,driveFileId,status,scannedAt,processedAt,created_at',
+      scan_files: '++id,docId,created_at',
+      product_prices: '++id,product_name,vendor,unit_price,client_for,category,timestamp,created_at',
+      equipment: '++id,client_name,client_id,location_id,location,equipment_type,brand,model,serial_number,status,next_service_due,created_at',
+      maintenance_logs: '++id,equipment_id,client_name,client_id,maintenance_type,date,created_at',
+      bank_accounts: '++id,name,type,institution,last_four,payment_method_key,active,created_at',
+      bank_statements: '++id,account_id,account_name,period_start,period_end,status,created_at',
+      bank_transactions: '++id,statement_id,account_id,account_name,date,description,amount,direction,category,match_status,match_event_id,match_type,created_at',
+      vendor_aliases: '++id,canonical_name,*aliases,category,created_at',
+      employee_payments: '++id,employee_id,employee_name,date,job_id,event_id,created_at',
+      contract_service_records: '++id,contract_id,client_name,date,invoice_id,event_id,created_at'
     })
 
     // Version 22 — Employee payments table for 480.6B tracking

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract } from './types'
+import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract, ContractServiceRecord } from './types'
 import type { EmployeePayment } from './db'
 
 // ============ COMPANY INFO ============
@@ -2013,6 +2013,83 @@ export function generateContractsReport(
     doc.text(`Página ${i} de ${totalPages}`, pageW - marginR, pageH - 8, { align: 'right' })
   }
   doc.save(`Contratos-Recurrentes-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+// ============ CONTRACT SERVICE HISTORY PDF ============
+export function generateContractServiceHistoryPDF(
+  contract: RecurringContract,
+  serviceRecords: ContractServiceRecord[]
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+  const fmt = (n: number) => `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('es-PR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+
+  const FREQ_LABELS: Record<string, string> = {
+    monthly: 'Mensual', bimonthly: 'Bimestral', quarterly: 'Trimestral',
+    semiannual: 'Semestral', annual: 'Anual'
+  }
+
+  // Header
+  doc.setFillColor(0, 100, 120)
+  doc.rect(0, 0, 216, 32, 'F')
+  doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
+  doc.text(COMPANY_NAME, 14, 12)
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal')
+  doc.text('Historial de Servicios — Contrato Recurrente', 14, 20)
+  doc.text(`Generado: ${fmtDate(Date.now())}`, 14, 27)
+
+  // Contract info box
+  doc.setFontSize(13); doc.setFont('helvetica', 'bold'); doc.setTextColor(20, 20, 20)
+  doc.text(contract.client_name || `Contrato #${contract.id}`, 14, 45)
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(80, 80, 80)
+  doc.text(`Servicio: ${contract.service_type}${contract.description ? ' — ' + contract.description : ''}`, 14, 52)
+  if (contract.location_name) doc.text(`Localidad: ${contract.location_name}`, 14, 58)
+  doc.text(`Frecuencia: ${FREQ_LABELS[contract.frequency] || contract.frequency} · Monto/visita: ${fmt(contract.monthly_fee)}`, 14, 65)
+  doc.text(`Inicio: ${fmtDate(contract.start_date)}${contract.end_date ? ` · Vence: ${fmtDate(contract.end_date)}` : ''}`, 14, 72)
+
+  // Summary box
+  const sorted = [...serviceRecords].sort((a, b) => a.date - b.date)
+  const totalPaid = sorted.reduce((s, r) => s + r.amount, 0)
+  doc.setFillColor(240, 248, 255)
+  doc.rect(14, 78, 183, 16, 'F')
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(0, 80, 100)
+  doc.text(`${sorted.length} servicios completados`, 20, 86)
+  doc.text(`Total facturado: ${fmt(totalPaid)}`, 100, 86)
+  if (sorted.length > 0) {
+    doc.text(`Último: ${fmtDate(sorted[sorted.length - 1].date)}`, 160, 86)
+  }
+
+  // Services table
+  autoTable(doc, {
+    startY: 100,
+    head: [['#', 'Fecha', 'Técnico', 'Notas', 'Monto']],
+    body: sorted.map((r, i) => [
+      String(i + 1),
+      fmtDate(r.date),
+      r.completed_by || '—',
+      r.notes || '—',
+      fmt(r.amount),
+    ]),
+    foot: [['', '', '', 'TOTAL', fmt(totalPaid)]],
+    headStyles: { fillColor: [0, 100, 120], textColor: [255, 255, 255], fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    footStyles: { fillColor: [220, 240, 245], fontStyle: 'bold', fontSize: 9 },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 28 },
+      2: { cellWidth: 35 },
+      3: { cellWidth: 80 },
+      4: { cellWidth: 28, halign: 'right' },
+    },
+    alternateRowStyles: { fillColor: [248, 252, 255] },
+  })
+
+  const finalY = (doc as any).lastAutoTable?.finalY || 180
+  doc.setFontSize(7); doc.setTextColor(120, 120, 120)
+  doc.text(`${COMPANY_NAME} · ${COMPANY_PHONE}`, 14, finalY + 10)
+
+  const clientLabel = (contract.client_name || 'Contrato').replace(/\s+/g, '_')
+  doc.save(`Historial_${clientLabel}_${new Date().toISOString().split('T')[0]}.pdf`)
 }
 
 // ============ PRODUCTIVITY / JOBS REPORT ============

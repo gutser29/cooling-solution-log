@@ -159,13 +159,34 @@ export interface Vehicle {
 export interface RecurringContract {
   id?: number
   client_id: number
+  client_name?: string            // denormalized for display
   service_type: string
-  frequency: 'monthly' | 'quarterly'
-  monthly_fee: number
+  description?: string            // detailed description
+  frequency: 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'annual'
+  monthly_fee: number             // fee per visit (kept as monthly_fee for back-compat)
   start_date: number
+  end_date?: number               // contract expiration date
   next_service_due: number
   auto_reminder_days: number
-  status: 'active' | 'cancelled'
+  status: 'active' | 'paused' | 'expired' | 'cancelled'
+  location_id?: number
+  location_name?: string
+  equipment_ids?: number[]        // linked equipment IDs
+  notes?: string
+  created_at: number
+  updated_at?: number
+}
+
+export interface ContractServiceRecord {
+  id?: number
+  contract_id: number
+  client_name?: string
+  date: number
+  completed_by?: string
+  notes?: string
+  invoice_id?: number
+  event_id?: number
+  amount: number
   created_at: number
 }
 
