@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from '@/lib/db'
+import { Client } from '@/lib/types'
 
 interface ReceiptsPageProps {
   onNavigate: (page: string) => void
@@ -7,15 +8,27 @@ interface ReceiptsPageProps {
 
 interface ReceiptItem {
   id: number
+  event_id: number
   photo: string
   category: string
   amount: number
   vendor?: string
   client?: string
+  client_id?: number
   payment_method?: string
   date: number
   type: 'event' | 'client_photo'
   note?: string
+  split_receipt_id?: string
+  is_split: boolean
+  all_photos?: string[]  // all photos on the original event
+}
+
+interface SplitRow {
+  client: string
+  client_id?: number
+  amount: string
+  note: string
 }
 
 export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
@@ -26,6 +39,12 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [clients, setClients] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
+
+  // Split modal state
+  const [splitReceipt, setSplitReceipt] = useState<ReceiptItem | null>(null)
+  const [splitRows, setSplitRows] = useState<SplitRow[]>([{ client: '', amount: '', note: '' }, { client: '', amount: '', note: '' }])
+  const [allClients, setAllClients] = useState<Client[]>([])
+  const [splitBusy, setSplitBusy] = useState(false)
 
   useEffect(() => { loadReceipts() }, [])
 
@@ -40,51 +59,62 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
           e.receipt_photos.forEach((photo: string, idx: number) => {
             allReceipts.push({
               id: e.id! * 1000 + idx,
+              event_id: e.id!,
               photo,
               category: e.category || 'Sin categoría',
               amount: e.amount,
               vendor: e.vendor,
               client: e.client || 'General',
+              client_id: e.client_id,
               payment_method: e.payment_method,
               date: e.timestamp,
               type: 'event',
-              note: e.note
+              note: e.note,
+              split_receipt_id: e.split_receipt_id,
+              is_split: !!e.split_receipt_id,
+              all_photos: e.receipt_photos
             })
           })
         } else if ((e as any).photo) {
           allReceipts.push({
             id: e.id!,
+            event_id: e.id!,
             photo: (e as any).photo,
             category: e.category || 'Sin categoría',
             amount: e.amount,
             vendor: e.vendor,
             client: e.client || 'General',
+            client_id: e.client_id,
             payment_method: e.payment_method,
             date: e.timestamp,
             type: 'event',
-            note: e.note
+            note: e.note,
+            split_receipt_id: e.split_receipt_id,
+            is_split: !!e.split_receipt_id,
+            all_photos: [(e as any).photo]
           })
         }
       })
 
-      // 2. Fotos de client_photos con categoría 'receipt'
+      // 2. Fotos de client_photos con categoría 'receipt' (sin duplicar con eventos)
       const clientPhotos = await db.client_photos.toArray()
       clientPhotos.forEach(p => {
         if (p.category === 'receipt') {
-          // Evitar duplicados — si ya existe un evento con la misma descripción y fecha similar, skip
-          const isDuplicate = allReceipts.some(r => 
+          const isDuplicate = allReceipts.some(r =>
             Math.abs(r.date - p.timestamp) < 60000 && r.note === p.description
           )
           if (!isDuplicate) {
             allReceipts.push({
               id: p.id! + 100000,
+              event_id: -1,
               photo: p.photo_data,
               category: 'Recibo',
               amount: 0,
               client: p.client_name || 'General',
               date: p.timestamp,
               type: 'client_photo',
-              note: p.description
+              note: p.description,
+              is_split: false
             })
           }
         }
@@ -102,6 +132,9 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
       const uniqueCats = [...new Set(allReceipts.map(r => r.category).filter(Boolean))].sort()
       setCategories(uniqueCats)
 
+      // Load all clients for split modal
+      const dbClients = await db.clients.filter(c => c.active).toArray()
+      setAllClients(dbClients.sort((a, b) => a.first_name.localeCompare(b.first_name)))
     } catch (error) {
       console.error('Error loading receipts:', error)
     } finally {
@@ -134,6 +167,78 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
     return labels[method] || method
   }
 
+  // ======= SPLIT LOGIC =======
+
+  const openSplitModal = (r: ReceiptItem) => {
+    setSelectedReceipt(null)
+    setSplitReceipt(r)
+    setSplitRows([
+      { client: r.client && r.client !== 'General' ? r.client : '', amount: '', note: '' },
+      { client: '', amount: '', note: '' }
+    ])
+  }
+
+  const splitTotal = splitRows.reduce((s, row) => s + (parseFloat(row.amount) || 0), 0)
+  const splitRemaining = splitReceipt ? splitReceipt.amount - splitTotal : 0
+
+  const updateSplitRow = (idx: number, field: keyof SplitRow, value: string) => {
+    setSplitRows(prev => prev.map((row, i) => i === idx ? { ...row, [field]: value } : row))
+  }
+
+  const pickClientForRow = (idx: number, c: Client) => {
+    setSplitRows(prev => prev.map((row, i) => i === idx ? {
+      ...row,
+      client: `${c.first_name} ${c.last_name}`.trim(),
+      client_id: c.id
+    } : row))
+  }
+
+  const addSplitRow = () => setSplitRows(prev => [...prev, { client: '', amount: '', note: '' }])
+  const removeSplitRow = (idx: number) => setSplitRows(prev => prev.filter((_, i) => i !== idx))
+
+  const executeSplit = async () => {
+    if (!splitReceipt || splitReceipt.event_id < 0) return
+    const validRows = splitRows.filter(r => r.client.trim() && parseFloat(r.amount) > 0)
+    if (validRows.length < 2) return
+
+    setSplitBusy(true)
+    try {
+      const originalEvent = await db.events.get(splitReceipt.event_id)
+      if (!originalEvent) return
+
+      const splitId = `split_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const photos = originalEvent.receipt_photos || ((originalEvent as any).photo ? [(originalEvent as any).photo] : [])
+
+      for (const row of validRows) {
+        await db.events.add({
+          timestamp: originalEvent.timestamp,
+          type: originalEvent.type,
+          status: originalEvent.status,
+          subtype: originalEvent.subtype,
+          category: originalEvent.category,
+          amount: parseFloat(row.amount),
+          payment_method: originalEvent.payment_method,
+          vendor: originalEvent.vendor,
+          client: row.client,
+          client_id: row.client_id,
+          vehicle_id: originalEvent.vehicle_id,
+          note: row.note || originalEvent.note,
+          expense_type: originalEvent.expense_type || 'business',
+          receipt_photos: photos.length > 0 ? photos : undefined,
+          split_receipt_id: splitId
+        })
+      }
+
+      await db.events.delete(splitReceipt.event_id)
+      setSplitReceipt(null)
+      await loadReceipts()
+    } catch (e) {
+      console.error('Split error:', e)
+    } finally {
+      setSplitBusy(false)
+    }
+  }
+
   // Agrupar por mes
   const groupedReceipts: Record<string, ReceiptItem[]> = {}
   filteredReceipts.forEach(r => {
@@ -142,7 +247,6 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
     groupedReceipts[monthKey].push(r)
   })
 
-  // Stats por cliente filtrado
   const totalAmount = filteredReceipts.reduce((sum, r) => sum + r.amount, 0)
 
   if (loading) {
@@ -169,7 +273,6 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
 
       {/* Filtros */}
       <div className="p-4 space-y-2">
-        {/* Filtro por cliente */}
         <select
           value={filterClient}
           onChange={e => setFilterClient(e.target.value)}
@@ -183,7 +286,6 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
           ))}
         </select>
 
-        {/* Filtro por categoría */}
         <select
           value={filterCategory}
           onChange={e => setFilterCategory(e.target.value)}
@@ -197,7 +299,6 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
           ))}
         </select>
 
-        {/* Stats */}
         <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Recibos:</span>
@@ -247,6 +348,11 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
                   >
                     <div className="aspect-square relative">
                       <img src={r.photo} alt="Recibo" className="w-full h-full object-cover" />
+                      {r.is_split && (
+                        <div className="absolute top-1.5 right-1.5 bg-purple-600/90 rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          ✂️ div
+                        </div>
+                      )}
                       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
                         {r.amount > 0 && <p className="text-white font-bold text-sm">{formatCurrency(r.amount)}</p>}
                         {r.client && r.client !== 'General' && (
@@ -276,7 +382,12 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
           <div className="fixed inset-4 bg-[#111a2e] rounded-2xl z-50 overflow-hidden flex flex-col border border-white/10">
             <div className="bg-[#111a2e] p-4 border-b border-white/10 flex justify-between items-center flex-shrink-0">
               <div>
-                <h2 className="text-lg font-bold">{selectedReceipt.vendor || selectedReceipt.category}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold">{selectedReceipt.vendor || selectedReceipt.category}</h2>
+                  {selectedReceipt.is_split && (
+                    <span className="text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded-full px-2 py-0.5">✂️ dividido</span>
+                  )}
+                </div>
                 {selectedReceipt.amount > 0 && (
                   <p className="text-red-400 font-bold">{formatCurrency(selectedReceipt.amount)}</p>
                 )}
@@ -326,6 +437,145 @@ export default function ReceiptsPage({ onNavigate }: ReceiptsPageProps) {
                   </div>
                 )}
               </div>
+
+              {/* Botón Dividir — solo para eventos con amount > 0 y no ya divididos individualmente */}
+              {selectedReceipt.type === 'event' && selectedReceipt.amount > 0 && (
+                <button
+                  onClick={() => openSplitModal(selectedReceipt)}
+                  className="mt-4 w-full bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/40 text-purple-300 rounded-xl py-3 text-sm font-medium transition-colors"
+                >
+                  ✂️ Dividir entre clientes
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Modal de División */}
+      {splitReceipt && (
+        <>
+          <div className="fixed inset-0 bg-black/90 z-50" onClick={() => !splitBusy && setSplitReceipt(null)} />
+          <div className="fixed inset-x-2 top-4 bottom-4 bg-[#111a2e] rounded-2xl z-50 overflow-hidden flex flex-col border border-purple-500/30">
+            {/* Header */}
+            <div className="p-4 border-b border-white/10 flex justify-between items-center flex-shrink-0 bg-purple-900/20">
+              <div>
+                <h2 className="text-lg font-bold text-purple-300">✂️ Dividir recibo</h2>
+                <p className="text-sm text-gray-400">Total: <span className="text-white font-bold">{formatCurrency(splitReceipt.amount)}</span></p>
+              </div>
+              {!splitBusy && (
+                <button onClick={() => setSplitReceipt(null)} className="text-gray-400 text-2xl">✕</button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-auto p-4 space-y-3">
+              {/* Thumbnail */}
+              <img src={splitReceipt.photo} alt="Recibo" className="w-full max-h-32 object-contain rounded-xl bg-black/30" />
+
+              {/* Balance tracker */}
+              <div className={`rounded-xl p-3 border text-center ${Math.abs(splitRemaining) < 0.01 ? 'bg-green-900/20 border-green-500/30' : 'bg-yellow-900/20 border-yellow-500/30'}`}>
+                <p className="text-xs text-gray-400 mb-1">Restante por asignar</p>
+                <p className={`text-2xl font-bold ${Math.abs(splitRemaining) < 0.01 ? 'text-green-400' : splitRemaining < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
+                  {formatCurrency(Math.abs(splitRemaining))}
+                  {splitRemaining < -0.01 && ' (excede)'}
+                </p>
+              </div>
+
+              {/* Filas de división */}
+              {splitRows.map((row, idx) => (
+                <div key={idx} className="bg-[#0b1220] rounded-xl p-3 space-y-2 border border-white/5">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-500 font-medium">División {idx + 1}</span>
+                    {splitRows.length > 2 && (
+                      <button onClick={() => removeSplitRow(idx)} className="text-red-400 text-xs">✕ quitar</button>
+                    )}
+                  </div>
+
+                  {/* Cliente — selector */}
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Cliente</label>
+                    <select
+                      value={row.client_id ? String(row.client_id) : ''}
+                      onChange={e => {
+                        const c = allClients.find(cl => cl.id === parseInt(e.target.value))
+                        if (c) pickClientForRow(idx, c)
+                        else updateSplitRow(idx, 'client', e.target.value)
+                      }}
+                      className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">-- Seleccionar cliente --</option>
+                      {allClients.map(c => (
+                        <option key={c.id} value={String(c.id)}>
+                          {`${c.first_name} ${c.last_name}`.trim()}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Fallback texto manual si no seleccionó de lista */}
+                    {!row.client_id && (
+                      <input
+                        type="text"
+                        placeholder="o escribe nombre..."
+                        value={row.client}
+                        onChange={e => updateSplitRow(idx, 'client', e.target.value)}
+                        className="mt-1 w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                      />
+                    )}
+                    {row.client_id && (
+                      <p className="text-xs text-cyan-400 mt-1">👤 {row.client}</p>
+                    )}
+                  </div>
+
+                  {/* Monto */}
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Monto ($)</label>
+                    <input
+                      type="number"
+                      placeholder="0.00"
+                      value={row.amount}
+                      onChange={e => updateSplitRow(idx, 'amount', e.target.value)}
+                      className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                      inputMode="decimal"
+                    />
+                  </div>
+
+                  {/* Nota opcional */}
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Artículos / nota (opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: Filtros, cobre..."
+                      value={row.note}
+                      onChange={e => updateSplitRow(idx, 'note', e.target.value)}
+                      className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              ))}
+
+              <button
+                onClick={addSplitRow}
+                className="w-full border border-dashed border-white/20 rounded-xl py-2.5 text-sm text-gray-400 hover:border-white/40 hover:text-gray-300 transition-colors"
+              >
+                + Agregar cliente
+              </button>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-white/10 flex gap-3 flex-shrink-0">
+              <button
+                onClick={() => setSplitReceipt(null)}
+                disabled={splitBusy}
+                className="flex-1 bg-[#0b1220] border border-white/10 rounded-xl py-3 text-sm disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={executeSplit}
+                disabled={splitBusy || splitRows.filter(r => r.client.trim() && parseFloat(r.amount) > 0).length < 2 || Math.abs(splitRemaining) > 0.01}
+                className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-900/40 disabled:text-purple-700 rounded-xl py-3 text-sm font-bold transition-colors"
+              >
+                {splitBusy ? 'Guardando...' : '✂️ Dividir'}
+              </button>
             </div>
           </div>
         </>

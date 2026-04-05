@@ -1223,10 +1223,15 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const eventMatches = assistantText.match(/SAVE_EVENT:\s*\{/gi)
       if (eventMatches && eventMatches.length > 0) {
         const allEvents = extractAllJSON(assistantText, 'SAVE_EVENT:')
+        const hasPhotos = receiptPhotosRef.current.length > 0
+        // When multiple events share the same receipt photos, link them with a split_receipt_id
+        const sharedSplitId = (allEvents.length > 1 && hasPhotos)
+          ? `split_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          : undefined
         for (let i = 0; i < allEvents.length; i++) {
           const evData = allEvents[i]
           try {
-           const eventPhotos = receiptPhotosRef.current.length > 0 ? [...receiptPhotosRef.current] : []
+           const eventPhotos = hasPhotos ? [...receiptPhotosRef.current] : []
             await db.events.add({
               timestamp: evData.timestamp || Date.now(),
               type: evData.type,
@@ -1240,7 +1245,8 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
               vehicle_id: evData.vehicle_id,
               note: evData.note,
               expense_type: evData.expense_type || 'business',
-              receipt_photos: eventPhotos.length > 0 ? eventPhotos : undefined
+              receipt_photos: eventPhotos.length > 0 ? eventPhotos : undefined,
+              split_receipt_id: sharedSplitId
             })
             savedItems.push(`${evData.type === 'income' ? 'Ingreso' : 'Gasto'}: $${evData.amount} ${evData.category || ''}${evData.client ? ` (${evData.client})` : ''}${eventPhotos.length > 0 ? ' 📷' : ''}`)
             needsSync = true

@@ -26,6 +26,7 @@ export interface EventRecord {
   location_id?: number
   receipt_photos?: string[]
   retention_amount?: number
+  split_receipt_id?: string
 }
 
 // ========== CLIENT LOCATIONS ==========
