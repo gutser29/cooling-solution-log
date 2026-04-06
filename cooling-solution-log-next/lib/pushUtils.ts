@@ -83,12 +83,14 @@ export async function syncAlertsToServer(): Promise<void> {
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
     const tomorrowEnd = new Date(todayStart); tomorrowEnd.setDate(tomorrowEnd.getDate() + 1); tomorrowEnd.setHours(23, 59, 59, 999)
 
-    const [equipment, contracts, invoices, appointments, inventoryItems] = await Promise.all([
+    const today = new Date().toISOString().split('T')[0]
+    const [equipment, contracts, invoices, appointments, inventoryItems, todayBitacora] = await Promise.all([
       db.equipment.toArray(),
       db.contracts.toArray(),
       db.invoices.toArray(),
       db.appointments.toArray(),
       db.inventory_items.filter(i => i.active).toArray(),
+      db.table('bitacora').where('date').equals(today).count(),
     ])
 
     const payload = {
@@ -107,6 +109,7 @@ export async function syncAlertsToServer(): Promise<void> {
       lowStockItems: inventoryItems
         .filter(i => i.quantity <= i.min_quantity)
         .map(i => ({ id: i.id, name: i.name, quantity: i.quantity, minQuantity: i.min_quantity, unit: i.unit })),
+      lastBitacoraDate: todayBitacora > 0 ? today : null,
       syncedAt: now,
     }
 

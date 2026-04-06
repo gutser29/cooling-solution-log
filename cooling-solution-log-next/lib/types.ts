@@ -354,13 +354,16 @@ export interface BitacoraEntry {
   raw_text: string              // Texto original del usuario
   summary: string               // Resumen organizado por AI
   tags: string[]                // mantenimiento, instalación, compras...
-  clients_mentioned: string[]   // Nombres de clientes
+  clients_mentioned: string[]   // Nombres de clientes (texto libre)
+  client_ids?: number[]         // IDs resueltos por fuzzy match contra clients table
   locations: string[]           // Ciudades, barrios
   equipment: string[]           // Equipos mencionados
   jobs_count: number
+  job_ids?: number[]            // IDs de jobs específicos vinculados
   hours_estimated: number
   had_emergency: boolean
   highlights: string[]          // Puntos importantes del día
+  invoice_pending?: boolean     // AI detectó trabajo sin factura
   created_at: number
   updated_at?: number
 }

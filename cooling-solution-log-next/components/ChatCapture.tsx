@@ -926,6 +926,25 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
           }
         } catch {}
 
+        // Bitácora (últimas entradas + trabajos sin factura)
+        try {
+          const bitacoraAll = await db.table('bitacora').orderBy('date').reverse().limit(30).toArray()
+          if (bitacoraAll.length > 0) {
+            ctx += `\n\nBITÁCORA (últimas ${bitacoraAll.length} entradas):\n` + bitacoraAll.map((e: any) => {
+              const pending = e.invoice_pending ? ' ⚠️SIN_FACTURA' : ''
+              const clients = (e.clients_mentioned || []).join(', ') || 'sin clientes'
+              return `[${e.date}] ${e.jobs_count || 0} trabajo(s) | ~${e.hours_estimated || 0}h | Clientes: ${clients} | ${(e.locations || []).join(', ') || ''}${pending}`
+            }).join('\n')
+
+            const pendingInvoice = bitacoraAll.filter((e: any) => e.invoice_pending)
+            if (pendingInvoice.length > 0) {
+              ctx += `\n\n⚠️ TRABAJOS SIN FACTURA (bitácora):\n` + pendingInvoice.map((e: any) =>
+                `[${e.date}] ${(e.clients_mentioned || []).join(', ')} — ${(e.summary || '').substring(0, 100)}`
+              ).join('\n')
+            }
+          }
+        } catch {}
+
         dbContextRef.current = ctx
 
         // Summary message

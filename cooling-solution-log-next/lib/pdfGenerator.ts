@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract, ContractServiceRecord, InventoryItem, InventoryMovement } from './types'
+import type { EventRecord, Job, Invoice, Client, ClientPhoto, ClientDocument, Employee, RecurringContract, ContractServiceRecord, InventoryItem, InventoryMovement, BitacoraEntry } from './types'
 import type { EmployeePayment } from './db'
 
 // ============ COMPANY INFO ============
@@ -3210,6 +3210,125 @@ export function generateInventoryReport(items: InventoryItem[]) {
   doc.setFontSize(8).text(`Valor total del inventario activo: $${totalValue.toFixed(2)}`, pageW - 14, finalY, { align: 'right' })
 
   doc.save(`Inventario-${new Date().toISOString().split('T')[0]}.pdf`)
+}
+
+export function generateBitacoraMonthlyPDF(entries: BitacoraEntry[], monthLabel: string) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+  const pageW = doc.internal.pageSize.getWidth()
+  let y = 14
+
+  doc.setFontSize(18).setFont('helvetica', 'bold').setTextColor(0, 150, 150)
+  doc.text(COMPANY_NAME, pageW / 2, y, { align: 'center' }); y += 8
+  doc.setFontSize(13).setFont('helvetica', 'bold').setTextColor(40, 40, 40)
+  doc.text(`Resumen Mensual de Bitácora — ${monthLabel}`, pageW / 2, y, { align: 'center' }); y += 7
+  doc.setFontSize(8).setFont('helvetica', 'normal').setTextColor(120, 120, 120)
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-PR', { day: '2-digit', month: 'long', year: 'numeric' })}`, pageW / 2, y, { align: 'center' }); y += 8
+
+  // Summary stats
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date))
+  const totalDays = sorted.length
+  const totalJobs = sorted.reduce((s, e) => s + (e.jobs_count || 0), 0)
+  const totalHours = sorted.reduce((s, e) => s + (e.hours_estimated || 0), 0)
+  const allClients = [...new Set(sorted.flatMap(e => e.clients_mentioned || []))]
+  const allLocations = [...new Set(sorted.flatMap(e => e.locations || []))]
+  const emergencies = sorted.filter(e => e.had_emergency).length
+  const pending = sorted.filter(e => e.invoice_pending)
+
+  doc.setFontSize(9).setFont('helvetica', 'bold').setTextColor(40, 40, 40)
+  doc.text('RESUMEN DEL MES', 14, y); y += 5
+  doc.setFont('helvetica', 'normal')
+
+  const stats = [
+    [`Días trabajados: ${totalDays}`, `Trabajos realizados: ${totalJobs}`, `Horas estimadas: ${totalHours}h`],
+    [`Clientes atendidos: ${allClients.length}`, `Municipios visitados: ${allLocations.length}`, `Emergencias: ${emergencies}`],
+    [`Sin factura: ${pending.length}`, '', ''],
+  ]
+  stats.forEach(row => {
+    doc.text(row[0], 14, y)
+    if (row[1]) doc.text(row[1], 80, y)
+    if (row[2]) doc.text(row[2], 150, y)
+    y += 5
+  })
+  y += 3
+
+  // Daily entries table
+  doc.setFontSize(9).setFont('helvetica', 'bold').setTextColor(0, 150, 150)
+  doc.text('ENTRADAS DIARIAS', 14, y); y += 3
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Fecha', 'Clientes', 'Municipio', 'Trabajos', 'Horas', 'Factura', 'Resumen']],
+    body: sorted.map(e => [
+      new Date(e.date + 'T12:00:00').toLocaleDateString('es-PR', { weekday: 'short', day: '2-digit', month: 'short' }),
+      (e.clients_mentioned || []).join(', ') || '—',
+      (e.locations || []).join(', ') || '—',
+      `${e.jobs_count || 0}`,
+      e.hours_estimated ? `${e.hours_estimated}h` : '—',
+      e.invoice_pending ? '⚠️ Pendiente' : '✅ OK',
+      (e.summary || '').substring(0, 60),
+    ]),
+    styles: { fontSize: 7, cellPadding: 1.5 },
+    headStyles: { fillColor: [0, 150, 150], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [240, 250, 250] },
+    columnStyles: {
+      0: { cellWidth: 22 }, 1: { cellWidth: 35 }, 2: { cellWidth: 25 },
+      3: { cellWidth: 12, halign: 'center' }, 4: { cellWidth: 12, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center' }, 6: { cellWidth: 60 },
+    },
+    didParseCell: (data) => {
+      if (data.column.index === 5 && data.cell.raw === '⚠️ Pendiente') {
+        data.cell.styles.textColor = [180, 90, 0]
+        data.cell.styles.fontStyle = 'bold'
+      }
+    },
+  })
+
+  y = (doc as any).lastAutoTable.finalY + 8
+
+  // Pending invoices section
+  if (pending.length > 0) {
+    if (y > 230) { doc.addPage(); y = 14 }
+    doc.setFontSize(9).setFont('helvetica', 'bold').setTextColor(180, 90, 0)
+    doc.text('⚠️ TRABAJOS SIN FACTURA', 14, y); y += 3
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Fecha', 'Clientes', 'Municipio', 'Trabajos', 'Descripción']],
+      body: pending.map(e => [
+        new Date(e.date + 'T12:00:00').toLocaleDateString('es-PR', { day: '2-digit', month: 'long', year: 'numeric' }),
+        (e.clients_mentioned || []).join(', '),
+        (e.locations || []).join(', '),
+        `${e.jobs_count || 0}`,
+        (e.highlights || []).join(' · ').substring(0, 80) || (e.summary || '').substring(0, 80),
+      ]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [180, 90, 0], textColor: 255 },
+      alternateRowStyles: { fillColor: [255, 248, 235] },
+    })
+  }
+
+  // Clients summary
+  if (allClients.length > 0) {
+    y = (doc as any).lastAutoTable.finalY + 8
+    if (y > 230) { doc.addPage(); y = 14 }
+    doc.setFontSize(9).setFont('helvetica', 'bold').setTextColor(40, 40, 40)
+    doc.text('CLIENTES ATENDIDOS', 14, y); y += 3
+
+    const clientVisits: Record<string, number> = {}
+    sorted.forEach(e => (e.clients_mentioned || []).forEach(c => { clientVisits[c] = (clientVisits[c] || 0) + 1 }))
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Cliente', 'Visitas en el mes']],
+      body: Object.entries(clientVisits).sort((a, b) => b[1] - a[1]).map(([c, v]) => [c, `${v} visita${v > 1 ? 's' : ''}`]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [60, 60, 100], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 245, 255] },
+      columnStyles: { 1: { halign: 'center' } },
+    })
+  }
+
+  doc.save(`Bitacora-${monthLabel.replace(/\s+/g, '-')}.pdf`)
 }
 
 export function generateInventoryMovementsReport(
