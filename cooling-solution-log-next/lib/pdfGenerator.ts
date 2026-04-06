@@ -78,7 +78,7 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   const marginL = 20
   const marginR = 20
   const FOOTER_ZONE = 30
-  const MAX_Y = pageH - FOOTER_ZONE
+  let MAX_Y = pageH - FOOTER_ZONE
 
   // === HELPERS ===
   function addFooter() {
@@ -170,18 +170,43 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   doc.setTextColor(60, 60, 60)
   let billY = y + 5
   doc.text(invoice.client_name, colRight, billY)
-  if (invoice.location_name) { billY += 5; doc.setTextColor(0, 130, 130); doc.text(invoice.location_name, colRight, billY); doc.setTextColor(60, 60, 60) }
+  if (invoice.location_name) { billY += 5; doc.text(invoice.location_name, colRight, billY) }
   if (invoice.client_address) { billY += 5; doc.text(invoice.client_address, colRight, billY) }
   if (invoice.client_phone) { billY += 5; doc.text(invoice.client_phone, colRight, billY) }
   if (invoice.client_email) { billY += 5; doc.text(invoice.client_email, colRight, billY) }
+
+  // === COMPACT CHECK: dry-run to see if content fits on one page ===
+  {
+    const DRY_THRESHOLD = 21 // mm (~80px at 96dpi)
+    const dry = new jsPDF()
+    dry.setFontSize(10)
+    const dryMaxDescWidth = pageW - marginL - marginR - 70
+    let dryY = 105 + 10 // table start + headers
+    invoice.items.forEach(item => {
+      const lines = dry.splitTextToSize(item.description, dryMaxDescWidth)
+      dryY += Math.max(7, lines.length * 4.5 + 3)
+    })
+    if (invoice.notes) {
+      dry.setFontSize(9)
+      const nl = dry.splitTextToSize(invoice.notes, pageW - marginL - marginR)
+      dryY += 10 + nl.length * 4
+    }
+    dryY += 55 // totals + paid stamp estimate
+    const overflow = dryY - MAX_Y
+    if (overflow > 0 && overflow <= DRY_THRESHOLD) {
+      MAX_Y = pageH - FOOTER_ZONE + 12 // reclaim 12mm footer margin
+    }
+  }
 
   // === ITEMS TABLE ===
   y = 105
   y = drawTableHeaders(y)
 
-  const lineHeight = 4.5
+  const descFontSize = MAX_Y > pageH - FOOTER_ZONE ? 8 : 10
+  const lineHeight = MAX_Y > pageH - FOOTER_ZONE ? 4.0 : 4.5
   invoice.items.forEach((item) => {
     const maxDescWidth = pageW - marginL - marginR - 70
+    doc.setFontSize(descFontSize)
     const descLines = doc.splitTextToSize(item.description, maxDescWidth)
     const rowHeight = Math.max(7, descLines.length * lineHeight + 3)
 
@@ -190,10 +215,11 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
       y = drawTableHeaders(y)
     }
 
-    doc.setFontSize(10)
+    doc.setFontSize(descFontSize)
     doc.setTextColor(30, 30, 30)
     doc.setFont('helvetica', 'normal')
     doc.text(descLines, marginL, y)
+    doc.setFontSize(10)
     doc.text(String(item.quantity), pageW - marginR - 55, y, { align: 'right' })
     doc.text(formatCurrency(item.unit_price), pageW - marginR - 25, y, { align: 'right' })
     doc.text(formatCurrency(item.total), pageW - marginR, y, { align: 'right' })

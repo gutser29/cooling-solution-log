@@ -33,7 +33,7 @@ export default function NavMenu({ onNavigate, onClose }: Props) {
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 max-h-[80vh] overflow-y-auto">
+      <div className="fixed top-12 right-2 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 max-h-[calc(100vh-56px)] overflow-y-auto" onClick={e => e.stopPropagation()}>
         {NAV_ITEMS.map(({ page, icon, label }) => (
           <button
             key={page}

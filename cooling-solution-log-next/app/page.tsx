@@ -56,18 +56,29 @@ export default function Home() {
     }
   }
 
+  const isChat = currentPage === 'chat'
+
   return (
     <AuthGuard>
-      {renderPage()}
-      {currentPage !== 'chat' && (
-        <button
-          onClick={() => setShowMenu(true)}
-          className="fixed top-3 right-3 z-50 w-10 h-10 flex items-center justify-center text-2xl text-white/80 hover:text-white"
-          aria-label="Menú"
-        >
-          ☰
-        </button>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+        {!isChat && (
+          <div style={{ flexShrink: 0, height: 48 }}
+            className="bg-[#0b1220] border-b border-white/5 flex items-center justify-between px-4 z-40"
+          >
+            <span className="text-xs text-gray-500 uppercase tracking-widest">Cooling Solution</span>
+            <button
+              onClick={() => setShowMenu(s => !s)}
+              className="w-10 h-10 flex items-center justify-center text-2xl text-white/70 hover:text-white transition-colors"
+              aria-label="Menú"
+            >
+              {showMenu ? '✕' : '☰'}
+            </button>
+          </div>
+        )}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {renderPage()}
+        </div>
+      </div>
       {showMenu && <NavMenu onNavigate={navigate} onClose={() => setShowMenu(false)} />}
     </AuthGuard>
   )
