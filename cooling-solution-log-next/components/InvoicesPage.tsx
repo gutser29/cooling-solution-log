@@ -45,6 +45,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [formClientId, setFormClientId] = useState<number | undefined>(undefined)
   const [formLocationId, setFormLocationId] = useState<number | undefined>(undefined)
   const [formLocationName, setFormLocationName] = useState('')
+  const [formLocationAddress, setFormLocationAddress] = useState('')
   const [clientLocations, setClientLocations] = useState<ClientLocation[]>([])
   const [formRetentionPercent, setFormRetentionPercent] = useState(0)
   // Feature 1: pending payment with custom date
@@ -176,6 +177,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormClientId(undefined)
     setFormLocationId(undefined)
     setFormLocationName('')
+    setFormLocationAddress('')
     setFormRetentionPercent(0)
     setClientLocations([])
     setSelected(null)
@@ -204,6 +206,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setFormClientId(inv.client_id)
     setFormLocationId(inv.location_id)
     setFormLocationName(inv.location_name || '')
+    setFormLocationAddress(inv.location_address || '')
     setFormRetentionPercent(inv.retention_percent || 0)
     if (inv.client_id) {
       db.client_locations.where('client_id').equals(inv.client_id).filter(l => l.active).toArray()
@@ -231,8 +234,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const balanceDue = total - depositAmount
 
     const locationData = formLocationId
-      ? { location_id: formLocationId, location_name: formLocationName || undefined }
-      : { location_id: undefined, location_name: undefined }
+      ? { location_id: formLocationId, location_name: formLocationName || undefined, location_address: formLocationAddress || undefined }
+      : { location_id: undefined, location_name: undefined, location_address: undefined }
     const retentionData = formRetentionPercent > 0 ? { retention_percent: formRetentionPercent } : { retention_percent: undefined }
 
     if (selected?.id && viewMode === 'edit') {
@@ -514,10 +517,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                     setFormLocationId(id)
                     const loc = clientLocations.find(l => l.id === id)
                     setFormLocationName(loc?.name || '')
-                    if (loc) {
-                      const addrParts = [loc.address, loc.city, loc.zip].filter(Boolean)
-                      if (addrParts.length > 0) setFormClientAddress(addrParts.join(', '))
-                    }
+                    const addrParts = loc ? [loc.address, loc.city, loc.zip].filter(Boolean) : []
+                    setFormLocationAddress(addrParts.join(', '))
                   }}
                   className="w-full bg-[#0b1220] border border-teal-700/50 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-teal-500"
                 >

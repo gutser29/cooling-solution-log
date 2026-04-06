@@ -281,6 +281,7 @@ export interface Invoice {
   updated_at: number
   location_id?: number
   location_name?: string
+  location_address?: string
   retention_percent?: number
   retention_amount?: number
   payment_date?: number

@@ -171,7 +171,11 @@ export function generateInvoicePDF(invoice: Invoice): Blob {
   let billY = y + 5
   doc.text(invoice.client_name, colRight, billY)
   if (invoice.location_name) { billY += 5; doc.text(invoice.location_name, colRight, billY) }
-  if (invoice.client_address) { billY += 5; doc.text(invoice.client_address, colRight, billY) }
+  if (invoice.location_id) {
+    if (invoice.location_address) { billY += 5; doc.text(invoice.location_address, colRight, billY) }
+  } else {
+    if (invoice.client_address) { billY += 5; doc.text(invoice.client_address, colRight, billY) }
+  }
   if (invoice.client_phone) { billY += 5; doc.text(invoice.client_phone, colRight, billY) }
   if (invoice.client_email) { billY += 5; doc.text(invoice.client_email, colRight, billY) }
 
