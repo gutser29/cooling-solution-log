@@ -18,9 +18,11 @@ type CacheEntry = { lat: number; lng: number } | null
 type GeoCache = Record<string, CacheEntry>
 
 function loadCache(): GeoCache {
+  if (typeof window === 'undefined') return {}
   try { return JSON.parse(localStorage.getItem(GEOCACHE_KEY) || '{}') } catch { return {} }
 }
 function saveCache(c: GeoCache) {
+  if (typeof window === 'undefined') return
   try { localStorage.setItem(GEOCACHE_KEY, JSON.stringify(c)) } catch {}
 }
 
@@ -74,12 +76,19 @@ function Legend() {
 export default function ClientMapView({ clients, onSelectClient, onClose }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
+  const [mounted, setMounted] = useState(false)
   const [status, setStatus] = useState('Cargando datos...')
   const [total, setTotal] = useState(0)
   const [geocoded, setGeocoded] = useState(0)
   const [done, setDone] = useState(false)
 
+  // Mount guard — ensures this component never executes browser APIs during SSR
+  useEffect(() => { setMounted(true) }, [])
+
   useEffect(() => {
+    if (!mounted) return
+    if (typeof window === 'undefined') return
+
     // Inject Leaflet CSS
     const link = document.createElement('link')
     link.rel = 'stylesheet'
@@ -277,7 +286,10 @@ export default function ClientMapView({ clients, onSelectClient, onClose }: Prop
       link.remove()
       delete (window as any)._csSelectClient
     }
-  }, []) // intentionally no deps — runs once on mount
+  }, [mounted]) // runs once after client mount confirmed
+
+  // Never render anything on the server — prevents Leaflet SSR crashes
+  if (!mounted) return null
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[#0b1220]">
