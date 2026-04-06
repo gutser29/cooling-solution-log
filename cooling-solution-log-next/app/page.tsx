@@ -75,7 +75,7 @@ export default function Home() {
             </button>
           </div>
         )}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0 }}>
           {renderPage()}
         </div>
       </div>
