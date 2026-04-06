@@ -140,7 +140,10 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       unit_price: i.unit_price,
       total: i.quantity * i.unit_price
     }))
-    setFormItems(newItems)
+    setFormItems(prev => {
+      const existing = prev.filter(i => i.description.trim())
+      return [...existing, ...newItems]
+    })
     if (t.default_tax_rate) setFormTaxRate(t.default_tax_rate)
     if (t.notes) setFormNotes(t.notes)
     if (t.client_name && !formClientName) {
@@ -511,7 +514,10 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                     setFormLocationId(id)
                     const loc = clientLocations.find(l => l.id === id)
                     setFormLocationName(loc?.name || '')
-                    if (loc?.address) setFormClientAddress(loc.address)
+                    if (loc) {
+                      const addrParts = [loc.address, loc.city, loc.zip].filter(Boolean)
+                      if (addrParts.length > 0) setFormClientAddress(addrParts.join(', '))
+                    }
                   }}
                   className="w-full bg-[#0b1220] border border-teal-700/50 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-teal-500"
                 >

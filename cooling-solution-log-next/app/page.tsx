@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import AuthGuard from '@/components/AuthGuard'
+import NavMenu from '@/components/NavMenu'
 import ChatCapture from '@/components/ChatCapture'
 import Dashboard from '@/components/Dashboard'
 import ClientsPage from '@/components/ClientsPage'
@@ -25,6 +26,7 @@ import ContractsPage from '@/components/ContractsPage'
 import InventoryPage from '@/components/InventoryPage'
 export default function Home() {
   const [currentPage, setCurrentPage] = useState('chat')
+  const [showMenu, setShowMenu] = useState(false)
 
   const navigate = (page: string) => setCurrentPage(page)
 
@@ -57,6 +59,16 @@ export default function Home() {
   return (
     <AuthGuard>
       {renderPage()}
+      {currentPage !== 'chat' && (
+        <button
+          onClick={() => setShowMenu(true)}
+          className="fixed top-3 right-3 z-50 w-10 h-10 flex items-center justify-center text-2xl text-white/80 hover:text-white"
+          aria-label="Menú"
+        >
+          ☰
+        </button>
+      )}
+      {showMenu && <NavMenu onNavigate={navigate} onClose={() => setShowMenu(false)} />}
     </AuthGuard>
   )
 }

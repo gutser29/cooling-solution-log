@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import type { Equipment, MaintenanceLog } from '@/lib/db'
 import type { ClientLocation } from '@/lib/types'
 import { generateMaintenancePDF } from '@/lib/pdfGenerator'
+import ConfirmDialog from '@/components/ConfirmDialog'
 
 interface Props { onNavigate: (page: string) => void }
 
@@ -90,6 +91,7 @@ export default function MaintenancePage({ onNavigate }: Props) {
   })
 
   const [msg, setMsg] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Equipment | null>(null)
 
   const showMsg = (text: string) => { setMsg(text); setTimeout(() => setMsg(''), 3000) }
 
@@ -212,9 +214,9 @@ export default function MaintenancePage({ onNavigate }: Props) {
 
   const deleteEquipment = async (eq: Equipment) => {
     if (!eq.id) return
-    if (!confirm(`¿Eliminar ${eq.equipment_type} ${eq.brand}? También se eliminarán sus logs.`)) return
     await db.maintenance_logs.where('equipment_id').equals(eq.id).delete()
     await db.equipment.delete(eq.id)
+    setDeleteTarget(null)
     setView('list')
     setSelected(null)
     await load()
@@ -347,32 +349,38 @@ export default function MaintenancePage({ onNavigate }: Props) {
                     const s = st(eq)
                     const eqLog = eqLogs(eq)
                     return (
-                      <button key={eq.id} onClick={() => { setSelected(eq); setView('detail') }}
-                        className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-white/5 transition-colors">
-                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${s.dot}`}></div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium text-gray-200">{eq.equipment_type}</span>
-                            {eq.brand && <span className="text-xs text-gray-500">{eq.brand} {eq.model}</span>}
+                      <div key={eq.id} className="flex items-center hover:bg-white/5 transition-colors">
+                        <button onClick={() => { setSelected(eq); setView('detail') }}
+                          className="flex-1 px-4 py-3 flex items-center gap-3 text-left">
+                          <div className={`w-3 h-3 rounded-full flex-shrink-0 ${s.dot}`}></div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-gray-200">{eq.equipment_type}</span>
+                              {eq.brand && <span className="text-xs text-gray-500">{eq.brand} {eq.model}</span>}
+                            </div>
+                            {eq.location && <p className="text-xs text-gray-500 truncate">📍 {eq.location}</p>}
+                            {eq.serial_number && <p className="text-xs text-gray-600">S/N: {eq.serial_number}</p>}
                           </div>
-                          {eq.location && <p className="text-xs text-gray-500 truncate">📍 {eq.location}</p>}
-                          {eq.serial_number && <p className="text-xs text-gray-600">S/N: {eq.serial_number}</p>}
-                        </div>
-                        <div className="flex-shrink-0 text-right">
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${s.badge}`}>{s.label}</span>
-                          {eq.next_service_due && (
-                            <p className={`text-xs mt-1 ${s.text}`}>
-                              {eq.next_service_due < now
-                                ? `${Math.floor((now - eq.next_service_due) / 86400000)}d venció`
-                                : `${Math.floor((eq.next_service_due - now) / 86400000)}d`}
-                            </p>
-                          )}
-                          {eqLog.length > 0 && (
-                            <p className="text-xs text-gray-600 mt-0.5">Último: {fmtDate(eqLog[0].date).slice(0, 6)}</p>
-                          )}
-                        </div>
-                        <span className="text-gray-600 flex-shrink-0">›</span>
-                      </button>
+                          <div className="flex-shrink-0 text-right">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${s.badge}`}>{s.label}</span>
+                            {eq.next_service_due && (
+                              <p className={`text-xs mt-1 ${s.text}`}>
+                                {eq.next_service_due < now
+                                  ? `${Math.floor((now - eq.next_service_due) / 86400000)}d venció`
+                                  : `${Math.floor((eq.next_service_due - now) / 86400000)}d`}
+                              </p>
+                            )}
+                            {eqLog.length > 0 && (
+                              <p className="text-xs text-gray-600 mt-0.5">Último: {fmtDate(eqLog[0].date).slice(0, 6)}</p>
+                            )}
+                          </div>
+                          <span className="text-gray-600 flex-shrink-0">›</span>
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setDeleteTarget(eq) }}
+                          className="px-3 py-3 text-red-400/50 hover:text-red-400 flex-shrink-0"
+                        >🗑️</button>
+                      </div>
                     )
                   })}
                 </div>
@@ -398,8 +406,8 @@ export default function MaintenancePage({ onNavigate }: Props) {
                 </div>
                 <p className="text-sm text-gray-400 mt-0.5">{selected.client_name}</p>
               </div>
-              <button onClick={() => deleteEquipment(selected)}
-                className="text-red-400/60 hover:text-red-400 text-xs px-2 py-1 rounded border border-red-900/30">Eliminar</button>
+              <button onClick={() => setDeleteTarget(selected)}
+                className="text-red-400/60 hover:text-red-400 text-xs px-2 py-1 rounded border border-red-900/30">🗑️ Eliminar</button>
             </div>
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -646,6 +654,15 @@ export default function MaintenancePage({ onNavigate }: Props) {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        show={!!deleteTarget}
+        title="¿Eliminar equipo?"
+        message={deleteTarget ? `¿Eliminar ${deleteTarget.equipment_type}${deleteTarget.brand ? ' ' + deleteTarget.brand : ''}? También se eliminarán todos sus logs de servicio.` : ''}
+        confirmText="Sí, eliminar"
+        onConfirm={() => deleteTarget && deleteEquipment(deleteTarget)}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }
