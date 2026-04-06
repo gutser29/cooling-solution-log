@@ -63,6 +63,16 @@ export default function JobsPage({ onNavigate }: Props) {
   const [payMethod, setPayMethod] = useState('cash')
   const [payBusy, setPayBusy] = useState(false)
 
+  // record client payment panel
+  const [showRecordPayment, setShowRecordPayment] = useState(false)
+  const [recordPayAmount, setRecordPayAmount] = useState('')
+  const [recordPayDate, setRecordPayDate] = useState(new Date().toISOString().split('T')[0])
+  const [recordPayMethod, setRecordPayMethod] = useState('cash')
+  const [recordPayBusy, setRecordPayBusy] = useState(false)
+
+  // inventory sync confirmation
+  const [pendingInventorySync, setPendingInventorySync] = useState<{ job: Job; matches: Array<{ material: string; qty: number; itemId: number; itemName: string; currentStock: number }> } | null>(null)
+
   const load = useCallback(async () => {
     setLoading(true)
     const [j, c, e] = await Promise.all([
@@ -195,6 +205,87 @@ export default function JobsPage({ onNavigate }: Props) {
     await load()
   }
 
+  // ─── record client payment ────────────────────────────────────────────────────
+  async function recordClientPayment(job: Job) {
+    const amount = parseFloat(recordPayAmount)
+    if (!amount || amount <= 0) { alert('Ingresa un monto válido.'); return }
+    setRecordPayBusy(true)
+    const now = Date.now()
+    const dateTs = new Date(recordPayDate + 'T12:00:00').getTime()
+    const newPayment = { date: dateTs, amount, method: recordPayMethod }
+    const payments = [...(job.payments || []), newPayment]
+    const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+    const balanceDue = Math.max(0, job.total_charged - totalPaid)
+    const payment_status: Job['payment_status'] = balanceDue <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'pending'
+    await db.jobs.update(job.id!, { payments, balance_due: balanceDue, payment_status })
+    await db.events.add({
+      timestamp: dateTs,
+      type: 'income',
+      status: 'completed',
+      category: job.type === 'maintenance' ? 'Mantenimiento' : job.type === 'installation' ? 'Instalación' : 'Servicio',
+      amount,
+      client: job.client_name || undefined,
+      client_id: job.client_id || undefined,
+      job_id: job.id,
+      payment_method: recordPayMethod,
+      note: `Pago trabajo #${job.id} — ${job.description || job.type}${balanceDue > 0 ? ` — Balance pendiente: ${fmt(balanceDue)}` : ' — Pagado completo'}`,
+      expense_type: 'business',
+      created_at: now,
+    } as any)
+    setRecordPayBusy(false)
+    setShowRecordPayment(false)
+    setRecordPayAmount('')
+    const updatedJob = { ...job, payments, balance_due: balanceDue, payment_status }
+    setSelectedJob(updatedJob)
+    await load()
+  }
+
+  // ─── check inventory sync after job completion ─────────────────────────────
+  async function checkInventorySync(job: Job) {
+    if (!job.materials?.length) return
+    try {
+      const invItems = await db.inventory_items.filter((i: any) => i.active).toArray()
+      const matches: Array<{ material: string; qty: number; itemId: number; itemName: string; currentStock: number }> = []
+      for (const mat of job.materials) {
+        const matLower = mat.item.toLowerCase()
+        const found = invItems.find((inv: any) => {
+          const invLower = inv.name.toLowerCase()
+          return invLower.includes(matLower) || matLower.includes(invLower) ||
+            invLower.split(' ').some((w: string) => w.length > 3 && matLower.includes(w))
+        })
+        if (found) {
+          matches.push({ material: mat.item, qty: mat.quantity, itemId: found.id!, itemName: found.name, currentStock: found.quantity })
+        }
+      }
+      if (matches.length > 0) {
+        setPendingInventorySync({ job, matches })
+      }
+    } catch {}
+  }
+
+  // ─── apply inventory sync ─────────────────────────────────────────────────
+  async function applyInventorySync(job: Job, matches: Array<{ material: string; qty: number; itemId: number; itemName: string; currentStock: number }>) {
+    const now = Date.now()
+    for (const m of matches) {
+      const newQty = Math.max(0, m.currentStock - m.qty)
+      await db.inventory_items.update(m.itemId, { quantity: newQty, updated_at: now } as any)
+      await db.inventory_movements.add({
+        item_id: m.itemId,
+        item_name: m.itemName,
+        type: 'out',
+        quantity: m.qty,
+        date: now,
+        reason: `Uso en trabajo #${job.id} — ${job.client_name || ''}`,
+        job_id: job.id,
+        client_name: job.client_name,
+        notes: `Material: ${m.material}`,
+        created_at: now,
+      } as any)
+    }
+    setPendingInventorySync(null)
+    alert(`✅ Inventario actualizado: ${matches.length} ítem(s) descontados.`)
+  }
+
   // ─── delete job ──────────────────────────────────────────────────────────────
   async function deleteJob(job: Job) {
     if (!confirm(`¿Borrar trabajo de ${job.client_name}? Esta acción no se puede deshacer.`)) return
@@ -321,7 +412,48 @@ export default function JobsPage({ onNavigate }: Props) {
           onTogglePayPanel={() => setShowPayPanel(p => !p)}
           onPayEmployees={() => payEmployeesFromJob(selectedJob)}
           onDelete={() => deleteJob(selectedJob)}
+          showRecordPayment={showRecordPayment}
+          recordPayAmount={recordPayAmount}
+          recordPayDate={recordPayDate}
+          recordPayMethod={recordPayMethod}
+          recordPayBusy={recordPayBusy}
+          onToggleRecordPayment={() => setShowRecordPayment(p => !p)}
+          onRecordPayAmountChange={setRecordPayAmount}
+          onRecordPayDateChange={setRecordPayDate}
+          onRecordPayMethodChange={setRecordPayMethod}
+          onRecordPayment={() => recordClientPayment(selectedJob)}
         />
+      )}
+
+      {/* ─── INVENTORY SYNC MODAL ─────────────────────────────────────────── */}
+      {pendingInventorySync && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-end justify-center p-4">
+          <div className="bg-[#111a2e] border border-white/10 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-base font-bold text-cyan-400 mb-2">📦 Descontar del Inventario</h3>
+            <p className="text-sm text-gray-300 mb-3">Se encontraron estos materiales del trabajo en tu inventario. ¿Descontarlos?</p>
+            <div className="space-y-2 mb-4">
+              {pendingInventorySync.matches.map((m, i) => (
+                <div key={i} className="bg-[#0b1220] rounded-lg px-3 py-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-200">{m.itemName}</span>
+                    <span className="text-red-400">-{m.qty} und</span>
+                  </div>
+                  <div className="text-xs text-gray-500">Material: {m.material} · Stock actual: {m.currentStock} → {Math.max(0, m.currentStock - m.qty)}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setPendingInventorySync(null)}
+                className="flex-1 py-2 border border-white/20 rounded-xl text-sm text-gray-400 hover:text-white">
+                Omitir
+              </button>
+              <button onClick={() => applyInventorySync(pendingInventorySync.job, pendingInventorySync.matches)}
+                className="flex-1 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-xl text-sm font-semibold text-white">
+                ✅ Descontar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ─── FORM VIEW ──────────────────────────────────────────────────────── */}
@@ -333,6 +465,8 @@ export default function JobsPage({ onNavigate }: Props) {
           employees={employees}
           onSave={async (data) => {
             const now = Date.now()
+            const wasCompleted = editingJob?.status === 'completed'
+            const nowCompleted = data.status === 'completed'
             if (editingJob?.id) {
               await db.jobs.update(editingJob.id, { ...data, updated_at: now } as any)
             } else {
@@ -341,6 +475,11 @@ export default function JobsPage({ onNavigate }: Props) {
             await load()
             setView('list')
             setEditingJob(null)
+            // Check inventory sync when job just became completed
+            if (!wasCompleted && nowCompleted && (data as any).materials?.length) {
+              const savedJob = { ...data, id: editingJob?.id } as Job
+              await checkInventorySync(savedJob)
+            }
           }}
           onCancel={() => { setView(selectedJob ? 'detail' : 'list'); setEditingJob(null) }}
         />
@@ -388,12 +527,17 @@ function JobCard({ job, employees, onClick }: { job: Job; employees: Employee[];
 
 // ─── Job Detail ───────────────────────────────────────────────────────────────
 function JobDetail({ job, employees, showPayPanel, payDate, payMethod, payBusy,
-  onPayDateChange, onPayMethodChange, onTogglePayPanel, onPayEmployees, onDelete
+  onPayDateChange, onPayMethodChange, onTogglePayPanel, onPayEmployees, onDelete,
+  showRecordPayment, recordPayAmount, recordPayDate, recordPayMethod, recordPayBusy,
+  onToggleRecordPayment, onRecordPayAmountChange, onRecordPayDateChange, onRecordPayMethodChange, onRecordPayment
 }: {
   job: Job; employees: Employee[]
   showPayPanel: boolean; payDate: string; payMethod: string; payBusy: boolean
   onPayDateChange: (d: string) => void; onPayMethodChange: (m: string) => void
   onTogglePayPanel: () => void; onPayEmployees: () => void; onDelete: () => void
+  showRecordPayment: boolean; recordPayAmount: string; recordPayDate: string; recordPayMethod: string; recordPayBusy: boolean
+  onToggleRecordPayment: () => void; onRecordPayAmountChange: (v: string) => void
+  onRecordPayDateChange: (v: string) => void; onRecordPayMethodChange: (v: string) => void; onRecordPayment: () => void
 }) {
   const laborTotal = (job.employees || []).reduce((s, je) => s + je.total_gross, 0)
   const taxAmt = job.tax || 0
@@ -432,6 +576,76 @@ function JobDetail({ job, employees, showPayPanel, payDate, payMethod, payBusy,
           </div>
         )}
       </div>
+
+      {/* Record Client Payment */}
+      {job.status === 'completed' && job.payment_status !== 'paid' && (
+        <div className="bg-[#111a2e] border border-yellow-500/30 rounded-xl overflow-hidden">
+          <button onClick={onToggleRecordPayment}
+            className="w-full flex items-center justify-between p-4 text-left">
+            <span className="text-sm font-medium text-yellow-300">💰 Registrar Pago del Cliente</span>
+            <span className="text-gray-400">{showRecordPayment ? '▲' : '▼'}</span>
+          </button>
+          {showRecordPayment && (
+            <div className="px-4 pb-4 space-y-3 border-t border-white/10">
+              {job.payments?.length > 0 && (
+                <div className="pt-3 space-y-1">
+                  <p className="text-xs text-gray-400 font-medium">Pagos registrados:</p>
+                  {job.payments.map((p, i) => (
+                    <div key={i} className="flex justify-between text-xs text-gray-300">
+                      <span>{new Date(p.date).toLocaleDateString('es-PR')} · {PM_LABEL[p.method] || p.method}</span>
+                      <span className="text-green-400">{fmt(p.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Monto recibido</label>
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={recordPayAmount}
+                    onChange={e => onRecordPayAmountChange(e.target.value)}
+                    placeholder={fmt(job.balance_due || job.total_charged)}
+                    className="w-full bg-[#0b1220] border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">Fecha</label>
+                  <input type="date" value={recordPayDate} onChange={e => onRecordPayDateChange(e.target.value)}
+                    className="w-full bg-[#0b1220] border border-white/20 rounded-lg px-3 py-2 text-sm text-white" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Método de pago</label>
+                <select value={recordPayMethod} onChange={e => onRecordPayMethodChange(e.target.value)}
+                  className="w-full bg-[#0b1220] border border-white/20 rounded-lg px-3 py-2 text-sm text-white">
+                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{PM_LABEL[m]}</option>)}
+                </select>
+              </div>
+              <button onClick={onRecordPayment} disabled={recordPayBusy}
+                className="w-full py-2.5 bg-yellow-600 hover:bg-yellow-500 rounded-xl text-sm font-semibold text-white disabled:opacity-50">
+                {recordPayBusy ? 'Registrando...' : '✅ Confirmar Pago'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {job.payment_status === 'paid' && (
+        <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center text-sm text-green-400">
+          ✅ Trabajo pagado completo
+          {job.payments?.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {job.payments.map((p, i) => (
+                <div key={i} className="flex justify-between text-xs text-gray-300">
+                  <span>{new Date(p.date).toLocaleDateString('es-PR')} · {PM_LABEL[p.method] || p.method}</span>
+                  <span className="text-green-400">{fmt(p.amount)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Services */}
       {job.services?.length > 0 && (

@@ -551,6 +551,17 @@ DELETE_EVENT:{"id":123}
 [FORMATO - NO EJECUTAR]:
 SAVE_CLIENT:{"first_name":"Juan","last_name":"Rivera","phone":"787-555-1234","type":"residential"}
 
+## SAVE_CLIENT_LOCATION (agregar localidad/ubicación a cliente existente)
+Cuando el usuario diga "agrega localidad", "nueva ubicación para [cliente]", "tienda X de [cliente]", "registra dirección de [cliente]":
+- Primero valida el cliente (Regla #0)
+- Usa el client_id del CONTEXTO_DB
+- name: nombre corto de la ubicación ("Tienda #32", "Casa Bayamón", "Oficina Principal")
+- is_primary: true solo si es la ubicación principal o única del cliente
+[FORMATO - NO EJECUTAR]:
+SAVE_CLIENT_LOCATION:{"client_id":5,"client_name":"Farmacia Caridad #32","name":"Tienda #32","address":"Carr. 2 Km 14.2, Bayamón, PR 00961","city":"Bayamón","zip":"00961","contact_person":"María López","contact_phone":"787-555-1234","access_instructions":"Decir que viene de Cooling Solution","equipment_info":"2x Package Unit 5ton Carrier","is_primary":true,"notes":""}
+Campos requeridos: client_id, name, address, is_primary.
+Si el usuario no da dirección → PREGUNTA antes de guardar.
+
 ## SAVE_NOTE
 [FORMATO - NO EJECUTAR]:
 SAVE_NOTE:{"title":"Título","content":"Contenido de la nota"}

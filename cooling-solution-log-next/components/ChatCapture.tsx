@@ -156,7 +156,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:', 'SAVE_INVENTORY_ITEM:', 'SAVE_INVENTORY_MOVEMENT:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:', 'SAVE_INVENTORY_ITEM:', 'SAVE_INVENTORY_MOVEMENT:', 'SAVE_CLIENT_LOCATION:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -679,10 +679,15 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
         // ====== FIX: Clientes — handle both boolean true and number 1 for active ======
         const clients = await db.clients.toArray().then(all => all.filter(c => c.active === true || (c.active as any) === 1))
+        const clientLocations = await db.client_locations.where('active').equals(1).toArray()
         if (clients.length > 0) {
-        ctx += '\n\nCLIENTES:\n' + clients.map(c =>
-            `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}${c.address ? ' | 📍 ' + c.address : ''}${c.retention_percent ? ' | ⚠️ Retención: ' + c.retention_percent + '%' : ''}${c.notes ? ' | ' + c.notes : ''}`
-          ).join('\n')
+          ctx += '\n\nCLIENTES:\n' + clients.map(c => {
+            const locs = clientLocations.filter(l => l.client_id === c.id)
+            const locsStr = locs.length > 0
+              ? ` | Localidades: ${locs.map(l => `${l.name}${l.address ? ' ('+l.address+')' : ''} [LocID:${l.id}]`).join(', ')}`
+              : ''
+            return `[ID:${c.id}] ${c.first_name} ${c.last_name} | ${c.type} | Tel: ${c.phone || 'N/A'}${c.address ? ' | 📍 ' + c.address : ''}${c.retention_percent ? ' | ⚠️ Retención: ' + c.retention_percent + '%' : ''}${c.notes ? ' | ' + c.notes : ''}${locsStr}`
+          }).join('\n')
         }
 
         // Jobs
@@ -2182,6 +2187,34 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           }
         } catch (e) {
           console.error('SAVE_INVENTORY_MOVEMENT error:', e)
+        }
+      }
+
+      // ====== PROCESS SAVE_CLIENT_LOCATION ======
+      const locationData = extractJSON(assistantText, 'SAVE_CLIENT_LOCATION:')
+      if (locationData) {
+        try {
+          const now = Date.now()
+          const locId = await db.client_locations.add({
+            client_id: locationData.client_id,
+            name: locationData.name,
+            address: locationData.address || '',
+            city: locationData.city,
+            zip: locationData.zip,
+            contact_person: locationData.contact_person,
+            contact_phone: locationData.contact_phone,
+            access_instructions: locationData.access_instructions,
+            equipment_info: locationData.equipment_info,
+            notes: locationData.notes,
+            is_primary: locationData.is_primary ?? false,
+            active: true,
+            created_at: now,
+          })
+          savedItems.push(`Localidad: ${locationData.name} → ${locationData.client_name || `Cliente #${locationData.client_id}`}`)
+          needsSync = true
+          contextLoadedRef.current = false
+        } catch (e) {
+          console.error('SAVE_CLIENT_LOCATION error:', e)
         }
       }
 
