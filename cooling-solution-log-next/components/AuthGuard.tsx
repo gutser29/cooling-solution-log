@@ -88,22 +88,14 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     }
   }, [pin])
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0b1220] flex items-center justify-center">
-        <div className="text-cyan-400 text-lg">Cargando...</div>
-      </div>
-    )
-  }
-
   // Initialize push notifications after authentication
+  // Must be declared BEFORE any early returns to satisfy Rules of Hooks
   useEffect(() => {
     if (!authenticated) return
     ;(async () => {
       try {
         const reg = await registerServiceWorker()
         if (!reg) return
-        // Only prompt if not yet decided
         if (Notification.permission === 'default') {
           const perm = await Notification.requestPermission()
           if (perm !== 'granted') return
@@ -115,6 +107,14 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       } catch {}
     })()
   }, [authenticated])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0b1220] flex items-center justify-center">
+        <div className="text-cyan-400 text-lg">Cargando...</div>
+      </div>
+    )
+  }
 
   if (authenticated) {
     return <>{children}</>
