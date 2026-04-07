@@ -953,6 +953,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   if (viewMode === 'groupPay') {
     const allUnpaid = invoices.filter(i => i.type === 'invoice' && (i.status === 'sent' || i.status === 'overdue'))
 
+    // DEBUG
+    console.log('[GP] allUnpaid facturas:', allUnpaid.map(i => ({ id: i.id, invoice_number: i.invoice_number, client_id: i.client_id, client_name: i.client_name, status: i.status, total: i.total })))
+
     // Available months derived from service_date ?? issue_date
     const invoiceMonth = (inv: Invoice) => {
       const ts = inv.service_date ?? inv.issue_date
@@ -984,10 +987,16 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     })
     const gpClients = [...gpClientMap.values()].sort((a, b) => a.name.localeCompare(b.name))
 
+    // DEBUG
+    console.log('[GP] gpClients construidos:', gpClients)
+
     // Invoices for selected group — match by the same key (client_id or fallback name)
     const clientUnpaid = groupPayClientId
       ? unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === groupPayClientId)
       : []
+
+    // DEBUG
+    if (groupPayClientId) console.log('[GP] clientUnpaid para key', groupPayClientId, ':', clientUnpaid.map(i => ({ id: i.id, invoice_number: i.invoice_number, client_id: i.client_id, client_name: i.client_name, location_name: i.location_name })))
 
     const selectedInvoices = clientUnpaid.filter(i => groupPaySelected.has(i.id!))
     const totalFacturado = selectedInvoices.reduce((s, i) => s + i.total, 0)
