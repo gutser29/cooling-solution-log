@@ -299,11 +299,21 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       try { equipment = await db.table('equipment').toArray() } catch {}
       let maintenance_logs: any[] = []
       try { maintenance_logs = await db.table('maintenance_logs').toArray() } catch {}
+      let invoice_batches: any[] = []
+      try { invoice_batches = await db.table('invoice_batches').toArray() } catch {}
+      let inventory_items: any[] = []
+      try { inventory_items = await db.table('inventory_items').toArray() } catch {}
+      let inventory_movements: any[] = []
+      try { inventory_movements = await db.table('inventory_movements').toArray() } catch {}
+      let employee_payments: any[] = []
+      try { employee_payments = await db.table('employee_payments').toArray() } catch {}
+      let contract_service_records: any[] = []
+      try { contract_service_records = await db.table('contract_service_records').toArray() } catch {}
 
       const res = await fetch('/api/sync/drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_documents, client_locations, bitacora, warranties, product_prices, equipment, maintenance_logs })
+        body: JSON.stringify({ events, clients, jobs, employees, vehicles, contracts, notes, appointments, reminders, invoices, job_templates, client_documents, client_locations, bitacora, warranties, product_prices, equipment, maintenance_logs, invoice_batches, inventory_items, inventory_movements, employee_payments, contract_service_records })
       })
 
       if (res.ok) {
@@ -483,6 +493,11 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       try { await mergeArray(db.table('product_prices'), data.product_prices) } catch {}
       try { await mergeArray(db.table('equipment'), data.equipment) } catch {}
       try { await mergeArray(db.table('maintenance_logs'), data.maintenance_logs) } catch {}
+      try { await mergeArray(db.table('invoice_batches'), data.invoice_batches) } catch {}
+      try { await mergeArray(db.table('inventory_items'), data.inventory_items) } catch {}
+      try { await mergeArray(db.table('inventory_movements'), data.inventory_movements) } catch {}
+      try { await mergeArray(db.table('employee_payments'), data.employee_payments) } catch {}
+      try { await mergeArray(db.table('contract_service_records'), data.contract_service_records) } catch {}
 
       console.log('✅ Data restored')
 
@@ -2368,7 +2383,7 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       {showMenu && (
         <>
           <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowMenu(false)} />
-          <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 max-h-[80vh] overflow-y-auto">
+          <div className="fixed top-16 right-4 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 80px)' }}>
             <button onClick={() => { setShowMenu(false); onNavigate('dashboard') }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               📊 Dashboard
             </button>

@@ -33,7 +33,20 @@ export default function NavMenu({ onNavigate, onClose }: Props) {
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed top-12 right-2 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 max-h-[calc(100vh-56px)] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div
+        className="fixed top-12 right-2 bg-[#111a2e] rounded-xl shadow-2xl z-50 w-60 border border-white/10 overflow-y-auto"
+        style={{ maxHeight: 'calc(100dvh - 56px)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Google Drive — always visible at top */}
+        <a
+          href="/api/auth/google"
+          onClick={onClose}
+          className="flex items-center gap-2 w-full px-4 py-3 text-blue-400 hover:bg-white/10 border-b border-blue-900/40 bg-blue-900/10 text-sm font-medium"
+        >
+          ☁️ <span>Google Drive Sync</span>
+        </a>
+
         {NAV_ITEMS.map(({ page, icon, label }) => (
           <button
             key={page}
