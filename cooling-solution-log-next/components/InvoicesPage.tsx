@@ -68,8 +68,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   // Revert confirmation
   const [confirmRevert, setConfirmRevert] = useState<{ show: boolean; inv: Invoice | null; action: 'toDraft' | 'toSent' }>({ show: false, inv: null, action: 'toDraft' })
   // Feature 2: group pay
-  const [groupPayClientId, setGroupPayClientId] = useState<number | undefined>()
-  const [groupPayClientName, setGroupPayClientName] = useState('')
+  const [groupPayClientId, setGroupPayClientId] = useState<string>('')  // "id:12" or "name:Foo"
+  const [groupPayClientName, setGroupPayClientName] = useState('')       // display label
   const [groupPayRetentionPct, setGroupPayRetentionPct] = useState(0)
   const [groupPaySelected, setGroupPaySelected] = useState<Set<number>>(new Set())
   const [groupPayDate, setGroupPayDate] = useState('')
@@ -966,27 +966,27 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       ? allUnpaid.filter(i => invoiceMonth(i) === gpMonth)
       : allUnpaid
 
-    // Group by client_name — this is the "parent client" key.
-    // Invoices for "Farmacia Caridad Tienda #32" (client_id=32) and "Farmacia Caridad Tienda #15"
-    // (client_id=15) each appear under their own client_name. If they share the SAME client_name,
-    // they're merged into one group regardless of client_id.
-    type GpClient = { name: string; retentionPct: number; count: number; total: number }
+    // Group by client_id when present (parent client), fall back to client_name for invoices
+    // without a linked client. This ensures all tiendas/locations of the same parent client
+    // (e.g. "Farmacia Caridad #32" and "Farmacia Caridad #40", both client_id=12) appear as one group.
+    type GpClient = { key: string; name: string; retentionPct: number; count: number; total: number }
     const gpClientMap = new Map<string, GpClient>()
     allUnpaid.forEach(inv => {  // unfiltered by month for sidebar counts
-      const name = inv.client_name
-      const existing = gpClientMap.get(name)
+      const key = inv.client_id ? `id:${inv.client_id}` : `name:${inv.client_name}`
+      const existing = gpClientMap.get(key)
       if (existing) { existing.count++; existing.total += inv.total }
       else {
         const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
-        gpClientMap.set(name, { name, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
+        // Use parent client's first+last name as label; fall back to invoice's client_name
+        const label = linked ? `${linked.first_name} ${linked.last_name}`.trim() : inv.client_name
+        gpClientMap.set(key, { key, name: label, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
       }
     })
     const gpClients = [...gpClientMap.values()].sort((a, b) => a.name.localeCompare(b.name))
 
-    // Invoices for selected parent client — match by client_name, includes ALL tiendas/locations
-    // that share that client_name. Month filter applied here.
-    const clientUnpaid = groupPayClientName
-      ? unpaidInvoices.filter(i => i.client_name === groupPayClientName)
+    // Invoices for selected group — match by the same key (client_id or fallback name)
+    const clientUnpaid = groupPayClientId
+      ? unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === groupPayClientId)
       : []
 
     const selectedInvoices = clientUnpaid.filter(i => groupPaySelected.has(i.id!))
@@ -1060,15 +1060,15 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
             ) : (
               <div className="divide-y divide-white/5">
                 {gpClients.map(c => {
-                  const isSelected = groupPayClientName === c.name
-                  // Month-filtered count for this client
-                  const mCount = unpaidInvoices.filter(i => i.client_name === c.name).length
-                  const mTotal = unpaidInvoices.filter(i => i.client_name === c.name).reduce((s,i) => s+i.total, 0)
+                  const isSelected = groupPayClientId === c.key
+                  // Month-filtered count for this group
+                  const mCount = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).length
+                  const mTotal = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).reduce((s,i) => s+i.total, 0)
                   if (gpMonth && mCount === 0) return null
                   return (
-                    <button key={c.name} onClick={() => {
-                      if (isSelected) { setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()) }
-                      else { setGroupPayClientName(c.name); setGroupPayRetentionPct(c.retentionPct); setGroupPaySelected(new Set()) }
+                    <button key={c.key} onClick={() => {
+                      if (isSelected) { setGroupPayClientId(''); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()) }
+                      else { setGroupPayClientId(c.key); setGroupPayClientName(c.name); setGroupPayRetentionPct(c.retentionPct); setGroupPaySelected(new Set()) }
                     }}
                       className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${isSelected ? 'bg-yellow-900/30 border-l-2 border-yellow-500' : 'hover:bg-white/5'}`}>
                       <div>
@@ -1218,7 +1218,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           <h1 className="text-xl font-bold">🧾 Facturación</h1>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()); setGroupPayDate(''); setGroupPayMethod('check'); setGpMonth(''); setViewMode('groupPay') }}
+          <button onClick={() => { setGroupPayClientId(''); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()); setGroupPayDate(''); setGroupPayMethod('check'); setGpMonth(''); setViewMode('groupPay') }}
             className="bg-yellow-600 rounded-lg px-3 py-1.5 text-sm font-medium">💰 Grupal</button>
           <button onClick={() => startCreate(tab === 'quotes' ? 'quote' : 'invoice')}
             className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">
