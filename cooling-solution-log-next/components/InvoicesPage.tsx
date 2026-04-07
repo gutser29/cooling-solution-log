@@ -15,6 +15,17 @@ type Tab = 'invoices' | 'quotes'
 
 const emptyItem = (): InvoiceItem => ({ description: '', quantity: 1, unit_price: 0, total: 0 })
 
+const PAYMENT_METHODS = [
+  { key: 'cash',        label: '💵 Efectivo' },
+  { key: 'ath_movil',   label: '📱 ATH Móvil' },
+  { key: 'check',       label: '📝 Cheque' },
+  { key: 'ach',         label: '🏦 ACH' },
+  { key: 'credit_card', label: '💳 Tarjeta' },
+  { key: 'zelle',       label: '⚡ Zelle' },
+  { key: 'transfer',    label: '🔄 Transferencia' },
+  { key: 'paypal',      label: '🅿️ PayPal' },
+]
+
 export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [tab, setTab] = useState<Tab>('invoices')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
@@ -51,6 +62,10 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   // Feature 1: pending payment with custom date
   const [pendingPayMethod, setPendingPayMethod] = useState<string | null>(null)
   const [pendingPayDate, setPendingPayDate] = useState('')
+  // Quick pay from list
+  const [quickPayInvoiceId, setQuickPayInvoiceId] = useState<number | undefined>(undefined)
+  // Revert confirmation
+  const [confirmRevert, setConfirmRevert] = useState<{ show: boolean; inv: Invoice | null; action: 'toDraft' | 'toSent' }>({ show: false, inv: null, action: 'toDraft' })
   // Feature 2: group pay
   const [groupPayClientId, setGroupPayClientId] = useState<number | undefined>()
   const [groupPayClientName, setGroupPayClientName] = useState('')
@@ -345,6 +360,37 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     setViewMode('list')
     setSelected(null)
     loadAll()
+  }
+
+  const revertToDraft = async (inv: Invoice) => {
+    if (!inv.id) return
+    const now = Date.now()
+    await db.invoices.update(inv.id, { status: 'draft', updated_at: now })
+    loadAll()
+    setSelected(prev => prev?.id === inv.id ? ({ ...prev, status: 'draft', updated_at: now } as Invoice) : prev)
+  }
+
+  const revertToSent = async (inv: Invoice) => {
+    if (!inv.id) return
+    // Delete the associated income event (matched by invoice_number in note + category)
+    try {
+      const events = await db.events
+        .filter(e => e.category === 'factura' && e.type === 'income' && !!(e.note?.includes(inv.invoice_number)))
+        .toArray()
+      for (const e of events) { if (e.id) await db.events.delete(e.id) }
+    } catch {}
+    const now = Date.now()
+    const cleared: Partial<Invoice> = {
+      status: 'sent',
+      paid_date: undefined,
+      payment_date: undefined,
+      paid_method: undefined,
+      retention_amount: undefined,
+      updated_at: now,
+    }
+    await db.invoices.update(inv.id, cleared)
+    loadAll()
+    setSelected(prev => prev?.id === inv.id ? { ...prev, ...cleared } as Invoice : prev)
   }
 
   const convertQuoteToInvoice = async (inv: Invoice) => {
@@ -805,16 +851,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
               <div className="space-y-2">
                 <p className="text-xs text-gray-500 text-center">Marcar como pagada con:</p>
                 <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { key: 'cash', label: '💵 Efectivo' },
-                    { key: 'ath_movil', label: '📱 ATH Móvil' },
-                    { key: 'check', label: '📝 Cheque' },
-                    { key: 'ach', label: '🏦 ACH' },
-                    { key: 'credit_card', label: '💳 Tarjeta Crédito' },
-                    { key: 'paypal', label: '🅿️ PayPal' },
-                    { key: 'zelle', label: '⚡ Zelle' },
-                    { key: 'transfer', label: '🔄 Transferencia' },
-                  ].map(method => (
+                  {PAYMENT_METHODS.map(method => (
                     <button key={method.key}
                       onClick={() => { setPendingPayMethod(method.key); setPendingPayDate(new Date().toISOString().split('T')[0]) }}
                       className={`py-2.5 rounded-xl text-xs font-medium border ${pendingPayMethod === method.key ? 'bg-green-600 text-white border-green-500' : 'bg-green-900/30 text-green-400 border-green-800/30'}`}>
@@ -850,6 +887,22 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 )}
               </div>
             )}
+            {selected.status === 'sent' && (
+              <button
+                onClick={() => setConfirmRevert({ show: true, inv: selected, action: 'toDraft' })}
+                className="w-full py-3 rounded-xl text-sm font-medium bg-gray-800/60 text-gray-400 border border-white/10"
+              >
+                ↩ Reversar a Pendiente
+              </button>
+            )}
+            {selected.status === 'paid' && (
+              <button
+                onClick={() => setConfirmRevert({ show: true, inv: selected, action: 'toSent' })}
+                className="w-full py-3 rounded-xl text-sm font-medium bg-orange-900/30 text-orange-400 border border-orange-800/30"
+              >
+                ↩ Reversar a Enviada
+              </button>
+            )}
             {selected.status !== 'paid' && selected.status !== 'cancelled' && (
               <button onClick={() => updateStatus(selected, 'cancelled')} className="w-full py-3 rounded-xl text-sm font-medium bg-gray-800 text-gray-400 border border-white/10">
                 ✕ Cancelar
@@ -869,6 +922,22 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           confirmColor="red"
           onConfirm={() => confirmDelete.item && deleteInvoice(confirmDelete.item)}
           onCancel={() => setConfirmDelete({ show: false, item: null })}
+        />
+        <ConfirmDialog
+          show={confirmRevert.show}
+          title={confirmRevert.action === 'toSent' ? '¿Reversar pago?' : '¿Reversar a pendiente?'}
+          message={confirmRevert.action === 'toSent'
+            ? '¿Estás seguro? Esto eliminará el registro de ingreso asociado a esta factura.'
+            : '¿Reversar la factura de "Enviada" a "Borrador/Pendiente"?'}
+          confirmText="Sí, reversar"
+          confirmColor="bg-orange-600"
+          onConfirm={() => {
+            if (!confirmRevert.inv) return
+            if (confirmRevert.action === 'toSent') revertToSent(confirmRevert.inv)
+            else revertToDraft(confirmRevert.inv)
+            setConfirmRevert({ show: false, inv: null, action: 'toDraft' })
+          }}
+          onCancel={() => setConfirmRevert({ show: false, inv: null, action: 'toDraft' })}
         />
       </div>
     )
@@ -1046,24 +1115,68 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         ) : (
           <div className="space-y-2">
             {filtered.map(inv => (
-              <button
-                key={inv.id}
-                onClick={() => { setSelected(inv); setViewMode('detail') }}
-                className="w-full bg-[#111a2e] rounded-xl p-4 border border-white/5 text-left hover:bg-[#1a2332] transition-colors"
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-gray-200">{inv.client_name}</p>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColor(inv.status)}`}>
-                        {statusLabel(inv.status)}
-                      </span>
+              <div key={inv.id} className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
+                {/* Main tap area */}
+                <button
+                  onClick={() => { setSelected(inv); setViewMode('detail'); setQuickPayInvoiceId(undefined) }}
+                  className="w-full p-4 text-left hover:bg-[#1a2332] transition-colors"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-gray-200">{inv.client_name}</p>
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${statusColor(inv.status)}`}>
+                          {statusLabel(inv.status)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">#{inv.invoice_number} • {fmtDate(inv.issue_date)}</p>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">#{inv.invoice_number} • {fmtDate(inv.issue_date)}</p>
+                    <p className="text-lg font-bold text-green-400">{fmt(inv.total)}</p>
                   </div>
-                  <p className="text-lg font-bold text-green-400">{fmt(inv.total)}</p>
-                </div>
-              </button>
+                </button>
+
+                {/* Quick actions */}
+                {(inv.status === 'draft' || inv.status === 'sent' || inv.status === 'overdue') && (
+                  <div className="px-4 pb-3 flex items-center gap-2 border-t border-white/5 pt-2">
+                    {(inv.status === 'draft') && (
+                      <button
+                        onClick={e => { e.stopPropagation(); updateStatus(inv, 'sent') }}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-blue-900/40 text-blue-400 border border-blue-800/30 font-medium"
+                      >
+                        📤 Enviado
+                      </button>
+                    )}
+                    {(inv.status === 'sent' || inv.status === 'overdue') && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setQuickPayInvoiceId(quickPayInvoiceId === inv.id ? undefined : inv.id) }}
+                        className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${quickPayInvoiceId === inv.id ? 'bg-green-700 text-white border-green-600' : 'bg-green-900/40 text-green-400 border-green-800/30'}`}
+                      >
+                        💰 Pagado
+                      </button>
+                    )}
+                    <span className="text-xs text-gray-600 ml-1">toca para abrir</span>
+                  </div>
+                )}
+
+                {/* Inline quick-pay method picker */}
+                {quickPayInvoiceId === inv.id && (
+                  <div className="px-4 pb-3 border-t border-green-900/30">
+                    <p className="text-xs text-gray-500 mb-2 pt-2">Método de pago:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PAYMENT_METHODS.map(m => (
+                        <button
+                          key={m.key}
+                          onClick={async e => { e.stopPropagation(); await updateStatus(inv, 'paid', m.key, Date.now()); setQuickPayInvoiceId(undefined) }}
+                          className="text-xs px-2.5 py-1.5 bg-green-900/30 text-green-400 border border-green-800/30 rounded-lg"
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                      <button onClick={e => { e.stopPropagation(); setQuickPayInvoiceId(undefined) }} className="text-xs px-2.5 py-1.5 bg-gray-800 text-gray-400 rounded-lg">✕</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
