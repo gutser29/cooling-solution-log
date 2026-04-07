@@ -18,7 +18,8 @@ import type {
   BitacoraEntry,
   Warranty,
   InventoryItem,
-  InventoryMovement
+  InventoryMovement,
+  InvoiceBatch
 } from './types'
 
 export interface SyncQueueItem {
@@ -192,6 +193,7 @@ export class CoolingDB extends Dexie {
   contract_service_records!: Dexie.Table<ContractServiceRecord, number>
   inventory_items!: Dexie.Table<InventoryItem, number>
   inventory_movements!: Dexie.Table<InventoryMovement, number>
+  invoice_batches!: Dexie.Table<InvoiceBatch, number>
   constructor() {
     super('CoolingSolutionDB')
     
@@ -698,6 +700,11 @@ export class CoolingDB extends Dexie {
       contract_service_records: '++id,contract_id,client_name,date,invoice_id,event_id,created_at',
       inventory_items: '++id,name,category,location,supplier,active,created_at',
       inventory_movements: '++id,item_id,item_name,type,date,job_id,created_at'
+    })
+
+    // Version 26 — Invoice batches (lotes de facturación)
+    this.version(26).stores({
+      invoice_batches: '++id,client_name,client_id,status,created_at'
     })
   }
 }

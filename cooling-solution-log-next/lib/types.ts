@@ -433,3 +433,22 @@ export interface InventoryMovement {
   notes?: string
   created_at: number
 }
+
+// ========== LOTES DE FACTURACIÓN ==========
+
+export interface InvoiceBatch {
+  id?: number
+  title: string
+  client_name: string
+  client_id?: number
+  status: 'draft' | 'sent' | 'paid'
+  invoice_ids: number[]          // IDs de las facturas incluidas
+  total: number                  // suma de totales de facturas
+  retention_percent: number      // 0 si no aplica
+  net_amount: number             // total - retención
+  notes?: string
+  created_at: number
+  sent_date?: number
+  paid_date?: number
+  paid_method?: string
+}
