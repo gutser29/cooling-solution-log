@@ -966,24 +966,27 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       ? allUnpaid.filter(i => invoiceMonth(i) === gpMonth)
       : allUnpaid
 
-    // Group by "parent client" — same client_id = same parent; no client_id = group by client_name
-    type GpClient = { key: string; id?: number; name: string; retentionPct: number; count: number; total: number }
+    // Group by client_name — this is the "parent client" key.
+    // Invoices for "Farmacia Caridad Tienda #32" (client_id=32) and "Farmacia Caridad Tienda #15"
+    // (client_id=15) each appear under their own client_name. If they share the SAME client_name,
+    // they're merged into one group regardless of client_id.
+    type GpClient = { name: string; retentionPct: number; count: number; total: number }
     const gpClientMap = new Map<string, GpClient>()
-    allUnpaid.forEach(inv => {  // use allUnpaid for counts (unfiltered by month)
-      const key = inv.client_id ? `id:${inv.client_id}` : `name:${inv.client_name}`
-      const existing = gpClientMap.get(key)
+    allUnpaid.forEach(inv => {  // unfiltered by month for sidebar counts
+      const name = inv.client_name
+      const existing = gpClientMap.get(name)
       if (existing) { existing.count++; existing.total += inv.total }
       else {
         const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
-        gpClientMap.set(key, { key, id: inv.client_id, name: inv.client_name, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
+        gpClientMap.set(name, { name, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
       }
     })
     const gpClients = [...gpClientMap.values()].sort((a, b) => a.name.localeCompare(b.name))
 
-    // Invoices for selected client (apply month filter here)
-    const selectedKey = groupPayClientId ? `id:${groupPayClientId}` : groupPayClientName ? `name:${groupPayClientName}` : ''
-    const clientUnpaid = selectedKey
-      ? unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === selectedKey)
+    // Invoices for selected parent client — match by client_name, includes ALL tiendas/locations
+    // that share that client_name. Month filter applied here.
+    const clientUnpaid = groupPayClientName
+      ? unpaidInvoices.filter(i => i.client_name === groupPayClientName)
       : []
 
     const selectedInvoices = clientUnpaid.filter(i => groupPaySelected.has(i.id!))
@@ -1057,15 +1060,15 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
             ) : (
               <div className="divide-y divide-white/5">
                 {gpClients.map(c => {
-                  const isSelected = selectedKey === c.key
+                  const isSelected = groupPayClientName === c.name
                   // Month-filtered count for this client
-                  const mCount = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).length
-                  const mTotal = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).reduce((s,i) => s+i.total, 0)
+                  const mCount = unpaidInvoices.filter(i => i.client_name === c.name).length
+                  const mTotal = unpaidInvoices.filter(i => i.client_name === c.name).reduce((s,i) => s+i.total, 0)
                   if (gpMonth && mCount === 0) return null
                   return (
-                    <button key={c.key} onClick={() => {
-                      if (isSelected) { setGroupPayClientId(undefined); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()) }
-                      else { setGroupPayClientId(c.id); setGroupPayClientName(c.name); setGroupPayRetentionPct(c.retentionPct); setGroupPaySelected(new Set()) }
+                    <button key={c.name} onClick={() => {
+                      if (isSelected) { setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()) }
+                      else { setGroupPayClientName(c.name); setGroupPayRetentionPct(c.retentionPct); setGroupPaySelected(new Set()) }
                     }}
                       className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${isSelected ? 'bg-yellow-900/30 border-l-2 border-yellow-500' : 'hover:bg-white/5'}`}>
                       <div>
@@ -1087,7 +1090,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           </div>
 
           {/* Invoice list */}
-          {selectedKey && (
+          {groupPayClientName && (
             <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
               <div className="flex justify-between items-center px-4 py-3 border-b border-white/5">
                 <div>
@@ -1215,7 +1218,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           <h1 className="text-xl font-bold">🧾 Facturación</h1>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { setGroupPayClientId(undefined); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()); setGroupPayDate(''); setGroupPayMethod('check'); setViewMode('groupPay') }}
+          <button onClick={() => { setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()); setGroupPayDate(''); setGroupPayMethod('check'); setGpMonth(''); setViewMode('groupPay') }}
             className="bg-yellow-600 rounded-lg px-3 py-1.5 text-sm font-medium">💰 Grupal</button>
           <button onClick={() => startCreate(tab === 'quotes' ? 'quote' : 'invoice')}
             className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">
