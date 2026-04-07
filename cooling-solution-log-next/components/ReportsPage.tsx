@@ -23,6 +23,7 @@ interface ReportsPageProps {
 }
 
 type PeriodType = 'week' | 'month' | 'year' | 'custom'
+type PLPeriodType = 'current_month' | 'prev_month' | 'last_3' | 'last_6' | 'current_year' | 'prev_year' | 'custom'
 
 export default function ReportsPage({ onNavigate }: ReportsPageProps) {
   const [generating, setGenerating] = useState<string | null>(null)
@@ -32,6 +33,11 @@ export default function ReportsPage({ onNavigate }: ReportsPageProps) {
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
+
+  // P&L dedicated period
+  const [plPeriod, setPlPeriod] = useState<PLPeriodType>('current_month')
+  const [plCustomStart, setPlCustomStart] = useState('')
+  const [plCustomEnd, setPlCustomEnd] = useState('')
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setMessage({ text, type })
@@ -55,6 +61,47 @@ export default function ReportsPage({ onNavigate }: ReportsPageProps) {
     }
   }, [period, selectedMonth, selectedYear, customStart, customEnd])
 
+  const getPLDateRange = useCallback((): { startDate: number; endDate: number; label: string } => {
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = now.getMonth()
+    const months = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    switch (plPeriod) {
+      case 'current_month':
+        return { startDate: new Date(y, m, 1).getTime(), endDate: new Date(y, m + 1, 0, 23, 59, 59, 999).getTime(), label: `${months[m]} ${y}` }
+      case 'prev_month': {
+        const pm = m === 0 ? 11 : m - 1; const py = m === 0 ? y - 1 : y
+        return { startDate: new Date(py, pm, 1).getTime(), endDate: new Date(py, pm + 1, 0, 23, 59, 59, 999).getTime(), label: `${months[pm]} ${py}` }
+      }
+      case 'last_3':
+        return { startDate: new Date(y, m - 2, 1).getTime(), endDate: new Date(y, m + 1, 0, 23, 59, 59, 999).getTime(), label: `Últimos 3 meses` }
+      case 'last_6':
+        return { startDate: new Date(y, m - 5, 1).getTime(), endDate: new Date(y, m + 1, 0, 23, 59, 59, 999).getTime(), label: `Últimos 6 meses` }
+      case 'current_year':
+        return { startDate: new Date(y, 0, 1).getTime(), endDate: new Date(y, 11, 31, 23, 59, 59, 999).getTime(), label: `${y}` }
+      case 'prev_year':
+        return { startDate: new Date(y - 1, 0, 1).getTime(), endDate: new Date(y - 1, 11, 31, 23, 59, 59, 999).getTime(), label: `${y - 1}` }
+      case 'custom':
+        if (!plCustomStart || !plCustomEnd) return { startDate: 0, endDate: 0, label: 'custom' }
+        return { startDate: new Date(plCustomStart).getTime(), endDate: new Date(plCustomEnd + 'T23:59:59').getTime(), label: `${plCustomStart} al ${plCustomEnd}` }
+    }
+  }, [plPeriod, plCustomStart, plCustomEnd])
+
+  const generatePL = async () => {
+    if (plPeriod === 'custom' && (!plCustomStart || !plCustomEnd)) { showMsg('Selecciona fechas de inicio y fin', 'error'); return }
+    setGenerating('pl')
+    try {
+      const { startDate, endDate, label } = getPLDateRange()
+      const [events, invoices] = await Promise.all([db.events.toArray(), db.invoices.toArray()])
+      generatePLReport(events, startDate, endDate, label, invoices)
+      showMsg(`✅ P&L generado — ${label}`)
+    } catch (e) {
+      console.error(e); showMsg('Error al generar P&L', 'error')
+    } finally {
+      setGenerating(null)
+    }
+  }
+
   const generate = async (reportType: string) => {
     setGenerating(reportType)
     try {
@@ -62,12 +109,7 @@ export default function ReportsPage({ onNavigate }: ReportsPageProps) {
       const events = await db.events.toArray()
 
       switch (reportType) {
-        case 'pl': {
-          const invoices = await db.invoices.toArray()
-          generatePLReport(events, startDate, endDate, label, invoices)
-          showMsg(`✅ P&L de ${label} generado`)
-          break
-        }
+        // pl handled by generatePL()
         case 'expenses': {
           const filtered = events.filter(e => e.type === 'expense' && e.timestamp >= startDate && e.timestamp <= endDate)
           if (filtered.length === 0) { showMsg('No hay gastos en este período', 'error'); break }
@@ -316,11 +358,66 @@ export default function ReportsPage({ onNavigate }: ReportsPageProps) {
           )}
         </div>
 
+        {/* P&L Card */}
+        <div className="bg-[#111a2e] rounded-xl p-4 border border-green-800/30">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xl">📈</span>
+            <div>
+              <p className="text-sm font-semibold text-gray-200">P&L — Estado de Pérdidas y Ganancias</p>
+              <p className="text-xs text-gray-500">Ingresos, gastos deducibles, retención Hacienda, IVU, margen</p>
+            </div>
+          </div>
+
+          {/* Quick period chips */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {([
+              { key: 'current_month', label: 'Mes actual' },
+              { key: 'prev_month',    label: 'Mes anterior' },
+              { key: 'last_3',        label: 'Últimos 3 meses' },
+              { key: 'last_6',        label: 'Últimos 6 meses' },
+              { key: 'current_year',  label: `Año ${new Date().getFullYear()}` },
+              { key: 'prev_year',     label: `Año ${new Date().getFullYear() - 1}` },
+              { key: 'custom',        label: 'Personalizado' },
+            ] as { key: PLPeriodType; label: string }[]).map(p => (
+              <button
+                key={p.key}
+                onClick={() => setPlPeriod(p.key)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${plPeriod === p.key ? 'bg-green-700 text-white' : 'bg-[#0b1220] text-gray-400 border border-white/10 hover:border-green-700/40'}`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom date inputs */}
+          {plPeriod === 'custom' && (
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div>
+                <label className="text-xs text-gray-500">Desde</label>
+                <input type="date" value={plCustomStart} onChange={e => setPlCustomStart(e.target.value)}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Hasta</label>
+                <input type="date" value={plCustomEnd} onChange={e => setPlCustomEnd(e.target.value)}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" />
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={generatePL}
+            disabled={!!generating}
+            className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white rounded-lg py-2.5 text-sm font-semibold transition-colors"
+          >
+            {generating === 'pl' ? '⏳ Generando...' : '📄 Generar P&L PDF →'}
+          </button>
+        </div>
+
         {/* Financieros */}
         <div>
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">💰 Financieros</p>
           <div className="space-y-2">
-            <ReportButton id="pl" icon="📈" title="P&L (Ganancia y Pérdida)" subtitle="Ingresos vs gastos, ganancia neta" color="green" />
             <ReportButton id="expenses" icon="📉" title="Reporte de Gastos" subtitle="Todos los gastos desglosados por categoría" color="red" />
             <ReportButton id="income" icon="💵" title="Reporte de Ingresos" subtitle="Todos los ingresos por categoría y cliente" color="green" />
             <ReportButton id="ar" icon="💰" title="Cuentas por Cobrar" subtitle="Facturas pendientes, aging 30/60/90" color="yellow" />
