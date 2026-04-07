@@ -60,6 +60,18 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
   const [pdfAccount, setPdfAccount] = useState('all')
   const [pdfMonth, setPdfMonth] = useState('all')
 
+  // Organize mode
+  const [organizeMode, setOrganizeMode] = useState(false)
+  const [organizeQueue, setOrganizeQueue] = useState<BankTransaction[]>([])
+  const [organizeIdx, setOrganizeIdx] = useState(0)
+  const [organizeCategory, setOrganizeCategory] = useState('')
+  const [organizeVendor, setOrganizeVendor] = useState('')
+  const [organizeClient, setOrganizeClient] = useState('')
+  const [organizeNote, setOrganizeNote] = useState('')
+  const [organizeExpenseType, setOrganizeExpenseType] = useState<'business' | 'personal'>('business')
+  const [organizeBusy, setOrganizeBusy] = useState(false)
+  const [clients, setClients] = useState<any[]>([])
+
   // CSV import
   const csvInputRef = useRef<HTMLInputElement>(null)
   const [csvParsed, setCsvParsed] = useState<CsvParseResult | null>(null)
@@ -174,6 +186,78 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
     await db.bank_transactions.delete(tx.id!)
     setSelectedTx(null)
     await loadData()
+  }
+
+  // ── Organize mode ────────────────────────────────────────
+
+  const isOrientalCredit = (tx: BankTransaction) =>
+    tx.direction === 'credit' && tx.account_name?.includes('oriental')
+
+  const resetOrganizeForm = (tx: BankTransaction) => {
+    setOrganizeCategory(isOrientalCredit(tx) ? 'Servicio' : '')
+    setOrganizeVendor('')
+    setOrganizeClient('')
+    setOrganizeNote('')
+    setOrganizeExpenseType('business')
+  }
+
+  const startOrganize = async () => {
+    const queue = transactions.filter(t => t.match_status === 'pending')
+    if (queue.length === 0) { alert('No hay transacciones pendientes de organizar'); return }
+    const cls = await db.clients.toArray()
+    setClients(cls)
+    setOrganizeQueue(queue)
+    setOrganizeIdx(0)
+    resetOrganizeForm(queue[0])
+    setOrganizeMode(true)
+  }
+
+  const advanceOrganize = (updated?: BankTransaction[]) => {
+    const queue = updated ?? organizeQueue
+    const next = organizeIdx + 1
+    if (next >= queue.length) {
+      setOrganizeMode(false)
+      loadData()
+    } else {
+      setOrganizeIdx(next)
+      resetOrganizeForm(queue[next])
+    }
+  }
+
+  const saveOrganizeEvent = async () => {
+    const tx = organizeQueue[organizeIdx]
+    if (!tx || !organizeCategory) return
+    setOrganizeBusy(true)
+    try {
+      const isIncome = isOrientalCredit(tx)
+      const eventId = await (db.events as any).add({
+        timestamp: tx.date,
+        type: isIncome ? 'income' : 'expense',
+        status: 'completed',
+        category: organizeCategory,
+        amount: tx.amount,
+        client: isIncome ? (organizeClient || undefined) : undefined,
+        vendor: !isIncome ? (organizeVendor || undefined) : undefined,
+        payment_method: tx.account_name,
+        note: organizeNote || undefined,
+        expense_type: isIncome ? undefined : organizeExpenseType,
+      })
+      await db.bank_transactions.update(tx.id!, {
+        match_status: 'matched',
+        match_event_id: eventId as number,
+        match_type: 'manual',
+      })
+      advanceOrganize()
+    } finally {
+      setOrganizeBusy(false)
+    }
+  }
+
+  const skipOrganize = async () => {
+    const tx = organizeQueue[organizeIdx]
+    if (!tx) return
+    await db.bank_transactions.update(tx.id!, { match_status: 'unmatched' })
+    advanceOrganize()
   }
 
   const clearAccount = async (accountName: string) => {
@@ -507,6 +591,17 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
       {/* ===== TRANSACTIONS TAB ===== */}
       {tab === 'transactions' && (
         <div className="p-4 pb-20">
+          {/* Organize button */}
+          {transactions.filter(t => t.match_status === 'pending').length > 0 && (
+            <button
+              onClick={startOrganize}
+              className="w-full mb-3 bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 rounded-xl py-3 text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+            >
+              <span>📋</span>
+              <span>Organizar transacciones pendientes ({transactions.filter(t => t.match_status === 'pending').length})</span>
+            </button>
+          )}
+
           {/* Stats */}
           <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="bg-green-900/20 rounded-xl p-3 border border-green-800/30 text-center">
@@ -970,6 +1065,153 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
           </div>
         </>
       )}
+
+      {/* ===== ORGANIZE MODE MODAL ===== */}
+      {organizeMode && organizeQueue.length > 0 && (() => {
+        const tx = organizeQueue[organizeIdx]
+        if (!tx) return null
+        const isIncome = isOrientalCredit(tx)
+        const done = organizeIdx
+        const total = organizeQueue.length
+        const pct = Math.round((done / total) * 100)
+
+        const EXPENSE_CATS = ['Gasolina','Materiales','Herramientas','Empleados/Nómina','Vehículos','Mantenimiento de Vehículo','Comunicaciones','Seguros','Renta','Comida','Peajes','Personal','Servicios Profesionales','Otros']
+        const INCOME_CATS  = ['Servicio','Instalación','Reparación','Mantenimiento','Contrato','Depósito','Transferencia']
+
+        return (
+          <>
+            <div className="fixed inset-0 bg-black/90 z-50" />
+            <div className="fixed inset-x-2 top-4 bottom-4 bg-[#111a2e] rounded-2xl z-50 flex flex-col border border-amber-500/30 overflow-hidden">
+              {/* Header */}
+              <div className="p-4 border-b border-white/10 flex-shrink-0 bg-amber-900/20">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-base font-bold text-amber-300">📋 Organizar transacciones</h2>
+                  <button onClick={() => { setOrganizeMode(false); loadData() }} className="text-gray-400 text-xl">✕</button>
+                </div>
+                {/* Progress bar */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-[#0b1220] rounded-full h-2">
+                    <div className="bg-amber-500 h-2 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{done} de {total}</span>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto p-4 space-y-4">
+                {/* Transaction card */}
+                <div className={`rounded-xl p-4 border ${isIncome ? 'bg-green-900/20 border-green-700/40' : 'bg-red-900/10 border-red-800/30'}`}>
+                  <div className="flex justify-between items-start mb-1">
+                    <p className="text-xs text-gray-400">{fmtDate(tx.date)} · {getAccountLabel(tx.account_name)}</p>
+                    <p className={`text-lg font-bold ${isIncome ? 'text-green-400' : 'text-red-400'}`}>
+                      {isIncome ? '+' : '-'}{fmt(tx.amount)}
+                    </p>
+                  </div>
+                  <p className="text-sm font-medium text-gray-200">{tx.description}</p>
+                  {isIncome && (
+                    <p className="text-xs text-green-400 mt-1">💚 Crédito en Oriental Bank — probable ingreso de cliente</p>
+                  )}
+                </div>
+
+                {/* Category chips */}
+                <div>
+                  <p className="text-xs text-gray-400 mb-2 font-medium">{isIncome ? 'Tipo de ingreso' : 'Categoría del gasto'}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(isIncome ? INCOME_CATS : EXPENSE_CATS).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setOrganizeCategory(cat)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${organizeCategory === cat ? (isIncome ? 'bg-green-700 text-white' : 'bg-amber-600 text-white') : 'bg-[#0b1220] text-gray-400 border border-white/10'}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Income: client */}
+                {isIncome && (
+                  <div>
+                    <label className="text-xs text-gray-400 mb-1 block">Cliente que pagó</label>
+                    <input
+                      list="organize-clients"
+                      type="text"
+                      value={organizeClient}
+                      onChange={e => setOrganizeClient(e.target.value)}
+                      placeholder="Nombre del cliente..."
+                      className="w-full bg-[#0b1220] border border-white/10 rounded-xl px-3 py-2 text-sm"
+                    />
+                    <datalist id="organize-clients">
+                      {clients.map(c => (
+                        <option key={c.id} value={`${c.first_name} ${c.last_name}`} />
+                      ))}
+                    </datalist>
+                  </div>
+                )}
+
+                {/* Expense: vendor + expense type */}
+                {!isIncome && (
+                  <>
+                    <div>
+                      <label className="text-xs text-gray-400 mb-1 block">Vendor / Proveedor (opcional)</label>
+                      <input
+                        type="text"
+                        value={organizeVendor}
+                        onChange={e => setOrganizeVendor(e.target.value)}
+                        placeholder="Ej: Walmart, Shell, AutoZone..."
+                        className="w-full bg-[#0b1220] border border-white/10 rounded-xl px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setOrganizeExpenseType('business')}
+                        className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${organizeExpenseType === 'business' ? 'bg-blue-700 border-blue-600 text-white' : 'bg-[#0b1220] border-white/10 text-gray-400'}`}
+                      >
+                        💼 Negocio
+                      </button>
+                      <button
+                        onClick={() => setOrganizeExpenseType('personal')}
+                        className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${organizeExpenseType === 'personal' ? 'bg-purple-700 border-purple-600 text-white' : 'bg-[#0b1220] border-white/10 text-gray-400'}`}
+                      >
+                        🏠 Personal
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {/* Note */}
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Nota (opcional)</label>
+                  <input
+                    type="text"
+                    value={organizeNote}
+                    onChange={e => setOrganizeNote(e.target.value)}
+                    placeholder="Descripción adicional..."
+                    className="w-full bg-[#0b1220] border border-white/10 rounded-xl px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Footer actions */}
+              <div className="p-4 border-t border-white/10 flex-shrink-0 flex gap-3">
+                <button
+                  onClick={skipOrganize}
+                  disabled={organizeBusy}
+                  className="flex-1 bg-[#0b1220] border border-white/10 rounded-xl py-3 text-sm text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+                >
+                  ⏭ Ignorar
+                </button>
+                <button
+                  onClick={saveOrganizeEvent}
+                  disabled={organizeBusy || !organizeCategory}
+                  className={`flex-1 rounded-xl py-3 text-sm font-bold transition-colors disabled:opacity-50 ${isIncome ? 'bg-green-700 hover:bg-green-600' : 'bg-amber-600 hover:bg-amber-500'} text-white`}
+                >
+                  {organizeBusy ? '⏳ Guardando...' : '✓ Crear evento'}
+                </button>
+              </div>
+            </div>
+          </>
+        )
+      })()}
 
       {/* ===== PDF FILTER MODAL ===== */}
       {showPdfModal && (
