@@ -64,6 +64,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [pendingPayDate, setPendingPayDate] = useState('')
   // Quick pay from list
   const [quickPayInvoiceId, setQuickPayInvoiceId] = useState<number | undefined>(undefined)
+  const [quickPayDate, setQuickPayDate] = useState(new Date().toISOString().split('T')[0])
   // Revert confirmation
   const [confirmRevert, setConfirmRevert] = useState<{ show: boolean; inv: Invoice | null; action: 'toDraft' | 'toSent' }>({ show: false, inv: null, action: 'toDraft' })
   // Feature 2: group pay
@@ -1148,7 +1149,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                     )}
                     {(inv.status === 'sent' || inv.status === 'overdue') && (
                       <button
-                        onClick={e => { e.stopPropagation(); setQuickPayInvoiceId(quickPayInvoiceId === inv.id ? undefined : inv.id) }}
+                        onClick={e => { e.stopPropagation(); if (quickPayInvoiceId !== inv.id) setQuickPayDate(new Date().toISOString().split('T')[0]); setQuickPayInvoiceId(quickPayInvoiceId === inv.id ? undefined : inv.id) }}
                         className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${quickPayInvoiceId === inv.id ? 'bg-green-700 text-white border-green-600' : 'bg-green-900/40 text-green-400 border-green-800/30'}`}
                       >
                         💰 Pagado
@@ -1160,13 +1161,27 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
 
                 {/* Inline quick-pay method picker */}
                 {quickPayInvoiceId === inv.id && (
-                  <div className="px-4 pb-3 border-t border-green-900/30">
-                    <p className="text-xs text-gray-500 mb-2 pt-2">Método de pago:</p>
+                  <div className="px-4 pb-3 border-t border-green-900/30 space-y-2">
+                    <div className="flex items-center gap-2 pt-2">
+                      <label className="text-xs text-gray-500 whitespace-nowrap">📅 Fecha de pago</label>
+                      <input
+                        type="date"
+                        value={quickPayDate}
+                        onChange={e => setQuickPayDate(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        className="flex-1 bg-[#0b1220] border border-white/10 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      />
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {PAYMENT_METHODS.map(m => (
                         <button
                           key={m.key}
-                          onClick={async e => { e.stopPropagation(); await updateStatus(inv, 'paid', m.key, Date.now()); setQuickPayInvoiceId(undefined) }}
+                          onClick={async e => {
+                            e.stopPropagation()
+                            const dateMs = quickPayDate ? new Date(quickPayDate + 'T12:00:00').getTime() : Date.now()
+                            await updateStatus(inv, 'paid', m.key, dateMs)
+                            setQuickPayInvoiceId(undefined)
+                          }}
                           className="text-xs px-2.5 py-1.5 bg-green-900/30 text-green-400 border border-green-800/30 rounded-lg"
                         >
                           {m.label}
