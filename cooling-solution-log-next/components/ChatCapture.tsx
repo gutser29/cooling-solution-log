@@ -1180,7 +1180,8 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const { period, periodLabel } = data.payload
         const { startDate, endDate } = getDateRange(period, periodLabel)
         const events = await db.events.toArray()
-        generatePLReport(events, startDate, endDate, periodLabel || 'este mes')
+        const invoices = await db.invoices.toArray()
+        generatePLReport(events, startDate, endDate, periodLabel || 'este mes', invoices)
         setMessages(prev => [...prev, { role: 'assistant', content: `✅ P&L generado para ${periodLabel || 'este mes'}` }])
         return
       }
@@ -2449,7 +2450,8 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
               setShowMenu(false)
               const d = new Date()
               const events = await db.events.toArray()
-              generatePLReport(events, new Date(d.getFullYear(), d.getMonth(), 1).getTime(), Date.now(), 'este mes')
+              const invoices = await db.invoices.toArray()
+              generatePLReport(events, new Date(d.getFullYear(), d.getMonth(), 1).getTime(), Date.now(), 'este mes', invoices)
               setMessages(prev => [...prev, { role: 'assistant', content: '✅ P&L del mes generado' }])
             }} className="block w-full text-left px-4 py-3 text-gray-200 hover:bg-white/10 border-b border-white/5">
               📈 P&L del Mes

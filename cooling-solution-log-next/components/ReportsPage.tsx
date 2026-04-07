@@ -63,7 +63,8 @@ export default function ReportsPage({ onNavigate }: ReportsPageProps) {
 
       switch (reportType) {
         case 'pl': {
-          generatePLReport(events, startDate, endDate, label)
+          const invoices = await db.invoices.toArray()
+          generatePLReport(events, startDate, endDate, label, invoices)
           showMsg(`✅ P&L de ${label} generado`)
           break
         }
