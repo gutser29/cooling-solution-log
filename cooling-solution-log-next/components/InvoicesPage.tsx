@@ -488,7 +488,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         <div className="p-4 max-w-2xl mx-auto space-y-4 pb-20">
 
           {/* ====== TEMPLATE PICKER ====== */}
-          {templates.length > 0 && viewMode === 'create' && (
+          {templates.length > 0 && (
             <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
               <div className="flex justify-between items-center">
                 <p className="text-sm font-semibold text-gray-300">📋 Usar Template</p>
