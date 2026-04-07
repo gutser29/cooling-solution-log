@@ -25,10 +25,22 @@ export async function POST(request: Request) {
     const userText = (lastMsg.content || '').toLowerCase()
     const hasPhotos = lastMsg.photos && lastMsg.photos.length > 0
 
-    // ====== SOLO INTERCEPTAR REPORTES P&L Y AR ======
-    if (userText.includes('p&l') || userText.includes('p & l') || userText.includes('profit') ||
-        (userText.includes('perdida') && userText.includes('ganancia')) ||
-        (userText.includes('pérdida') && userText.includes('ganancia'))) {
+    // ====== INTERCEPTAR REPORTES — SOLO CON INTENCIÓN EXPLÍCITA ======
+    // El usuario DEBE pedir explícitamente el reporte para que se active.
+    // Si está dictando gastos/ingresos sin pedir reporte → NO interceptar.
+    const reportIntent =
+      userText.includes('genera') || userText.includes('generar') ||
+      userText.includes('dame el') || userText.includes('dame un') ||
+      userText.includes('crear reporte') || userText.includes('crea reporte') ||
+      userText.includes('reporte de') || userText.includes('reporte del') ||
+      userText.includes('hacer reporte') || userText.includes('hazme') ||
+      userText.includes('pdf de') || userText.includes('exporta')
+
+    // P&L — requiere intención explícita O mención directa de "p&l"
+    const plKeyword = userText.includes('p&l') || userText.includes('p & l') ||
+      userText.includes('profit and loss') ||
+      ((userText.includes('perdida') || userText.includes('pérdida')) && userText.includes('ganancia'))
+    if (plKeyword && (reportIntent || userText.includes('p&l') || userText.includes('p & l'))) {
       let period: 'week' | 'month' | 'year' = 'month'
       let periodLabel = 'este mes'
       if (userText.includes('semana') || userText.includes('week')) { period = 'week'; periodLabel = 'esta semana' }
@@ -40,13 +52,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_PL', payload: { period, periodLabel } })
     }
 
+    // AR — "quien me debe" es suficientemente explícito; "cuentas por cobrar" requiere intención
     if (userText.includes('quien me debe') || userText.includes('quién me debe') ||
-        userText.includes('cuentas por cobrar') || userText.includes('me deben dinero')) {
+        (userText.includes('cuentas por cobrar') && reportIntent)) {
       return NextResponse.json({ type: 'GENERATE_AR' })
     }
-    if (userText.includes('ingresos por cliente') || userText.includes('reporte de ingresos') ||
-        userText.includes('dinero recibido') || userText.includes('cobros por cliente') ||
-        userText.includes('income report') || userText.includes('cuanto me han pagado')) {
+
+    // Reporte de ingresos — solo con intención explícita
+    if (reportIntent && (userText.includes('ingresos por cliente') || userText.includes('reporte de ingresos') ||
+        userText.includes('income report') || userText.includes('cobros por cliente'))) {
       let period: 'month' | 'year' = 'year'
       let periodLabel = 'este año'
       if (userText.includes('mes') || userText.includes('month')) { period = 'month'; periodLabel = 'este mes' }
@@ -57,14 +71,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'GENERATE_INCOME_REPORT', payload: { period, periodLabel } })
     }
 
+    // Paginación de conciliación — solo dentro de sesión activa
     if (userText.includes('siguientes') || userText.includes('más transacciones') ||
-        userText.includes('mas transacciones') || userText.includes('next') ||
-        userText.includes('proximas') || userText.includes('próximas')) {
+        userText.includes('mas transacciones') || userText.includes('proximas') || userText.includes('próximas')) {
       return NextResponse.json({ type: 'NEXT_RECONCILIATION_PAGE' })
     }
 
+    // Ejecutar conciliación — requiere frases explícitas
     if (userText.includes('genera conciliacion') || userText.includes('genera conciliación') ||
+        userText.includes('generar conciliacion') || userText.includes('generar conciliación') ||
         userText.includes('concilia todo') || userText.includes('cruza los statements') ||
+        userText.includes('ejecuta conciliacion') || userText.includes('ejecuta la conciliación') ||
         userText.includes('reconcilia')) {
       let period: 'month' | 'year' | 'all' = 'all'
       let periodLabel = 'todo'
@@ -77,13 +94,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ type: 'RUN_RECONCILIATION', payload: { period, periodLabel } })
     }
 
-    if (userText.includes('conciliacion') || userText.includes('conciliación') ||
-        userText.includes('estados de cuenta') || userText.includes('statement') ||
-        userText.includes('matchear') || userText.includes('comparar tarjetas') ||
-        userText.includes('reporte bancario') || userText.includes('oriental bank')) {
+    // Reporte de conciliación — solo con intención explícita + keywords específicos
+    const reconcKeyword = userText.includes('conciliacion') || userText.includes('conciliación') ||
+      userText.includes('matchear') || userText.includes('comparar tarjetas') ||
+      userText.includes('reporte bancario')
+    if (reconcKeyword && reportIntent) {
       let period: 'month' | 'year' = 'year'
       let periodLabel = 'este año'
-      if (userText.includes('mes') || userText.includes('marzo')) { period = 'month'; periodLabel = 'este mes' }
+      if (userText.includes('mes')) { period = 'month'; periodLabel = 'este mes' }
       const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
       for (const m of months) {
         if (userText.includes(m)) { period = 'month'; periodLabel = m; break }
@@ -107,6 +125,24 @@ export async function POST(request: Request) {
 
     const systemPrompt = `Eres el asistente de Cooling Solution, negocio HVAC en Puerto Rico.
 FECHA: ${todayStr} | TIMESTAMP: ${epochNow} | ISO: ${todayISO}
+
+# ===========================================
+# REGLA ABSOLUTA — REPORTES SOLO CUANDO SE PIDEN EXPLÍCITAMENTE
+# ===========================================
+NUNCA generes un reporte (P&L, AR, conciliación, etc.) a menos que el usuario use palabras explícitas como:
+"genera reporte", "dame reporte", "crear reporte", "reporte de", "P&L", "generar P&L", "quien me debe",
+"conciliación", "genera conciliación", "cuentas por cobrar", "exportar", "hacer PDF".
+
+Si el usuario está dictando gastos, ingresos, recibos, trabajos o cualquier información SIN pedir reporte →
+NUNCA generes ni sugieras un reporte. Solo guarda los datos y confirma.
+
+Ejemplos:
+✅ "Genera el P&L de marzo" → genera reporte
+✅ "Dame las cuentas por cobrar" → genera reporte
+✅ "Genera conciliación" → ejecuta conciliación
+❌ "Gasté $50 en gasolina" → NO generes reporte, solo guarda el gasto
+❌ "Cobré $500 a Farmacia Caridad" → NO generes reporte, solo guarda el ingreso
+❌ "Hice un servicio en Nikkos hoy" → NO generes reporte, solo registra el trabajo
 
 # ===========================================
 # REGLA #0 — VALIDACIÓN INTELIGENTE DE CLIENTES
