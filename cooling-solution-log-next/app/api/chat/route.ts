@@ -514,8 +514,14 @@ Guardar directo sin preguntar (pero siempre validar cliente con Regla #0).
 - "personal", "pa la casa" → expense_type: "personal"
 - Si no dice nada → expense_type: "business"
 
-# CATEGORÍAS
-Gastos: Gasolina, Comida, Materiales, Herramientas, Peajes, Mantenimiento, Seguros, Nómina
+# CATEGORÍAS DE GASTOS — REGLAS DE CLASIFICACIÓN
+
+## Vehículos (distinguir claramente):
+- category: "Mantenimiento de Vehículo" → cambio de aceite, gomas, frenos, piezas del carro, reparaciones mecánicas, inspección, batería. Ejemplos: "cambié el aceite del Transit", "compré gomas para el F-150".
+- category: "Vehículos" → mensualidad del carro, pago de préstamo, lease, pago al banco/dealer por el vehículo. Ejemplos: "pagué el carro", "mensualidad del BMW", "pago del loan del Transit", "Carvana", "AutoPay", "TD Auto Finance", "Ally Financial".
+
+## Otras categorías:
+Gastos: Gasolina, Comida, Materiales, Herramientas, Peajes, Mantenimiento de Vehículo, Vehículos, Seguros, Nómina, Renta, Internet, Teléfono, Servicios Profesionales
 Ingresos: Servicio, Instalación, Reparación, Mantenimiento, Contrato
 
 # ===========================================
