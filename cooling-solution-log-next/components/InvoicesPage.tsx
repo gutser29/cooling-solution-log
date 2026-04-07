@@ -969,18 +969,33 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       ? allUnpaid.filter(i => invoiceMonth(i) === gpMonth)
       : allUnpaid
 
-    // Group by client_id when present (parent client), fall back to client_name for invoices
-    // without a linked client. This ensures all tiendas/locations of the same parent client
-    // (e.g. "Farmacia Caridad #32" and "Farmacia Caridad #40", both client_id=12) appear as one group.
+    // Resolve a canonical group key for each invoice.
+    // Priority:
+    //   1. client_id present → "id:{client_id}" (exact parent match)
+    //   2. no client_id → try prefix match against clients table:
+    //      if invoice.client_name starts with a client's full name → use that client's id key
+    //      e.g. "Farmacia Caridad #32" starts with "Farmacia Caridad" → "id:12"
+    //   3. no match → "name:{client_name}" (unlinked, standalone group)
+    const resolveKey = (inv: Invoice): { key: string; linked: Client | undefined } => {
+      if (inv.client_id) {
+        return { key: `id:${inv.client_id}`, linked: clients.find(c => c.id === inv.client_id) }
+      }
+      const nameLower = inv.client_name.toLowerCase().trim()
+      const matched = clients.find(c => {
+        const full = `${c.first_name} ${c.last_name}`.toLowerCase().trim()
+        return nameLower.startsWith(full) || full.startsWith(nameLower)
+      })
+      if (matched) return { key: `id:${matched.id}`, linked: matched }
+      return { key: `name:${inv.client_name}`, linked: undefined }
+    }
+
     type GpClient = { key: string; name: string; retentionPct: number; count: number; total: number }
     const gpClientMap = new Map<string, GpClient>()
     allUnpaid.forEach(inv => {  // unfiltered by month for sidebar counts
-      const key = inv.client_id ? `id:${inv.client_id}` : `name:${inv.client_name}`
+      const { key, linked } = resolveKey(inv)
       const existing = gpClientMap.get(key)
       if (existing) { existing.count++; existing.total += inv.total }
       else {
-        const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
-        // Use parent client's first+last name as label; fall back to invoice's client_name
         const label = linked ? `${linked.first_name} ${linked.last_name}`.trim() : inv.client_name
         gpClientMap.set(key, { key, name: label, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
       }
@@ -990,9 +1005,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     // DEBUG
     console.log('[GP] gpClients construidos:', gpClients)
 
-    // Invoices for selected group — match by the same key (client_id or fallback name)
+    // Invoices for selected group — resolve each invoice's key and compare
     const clientUnpaid = groupPayClientId
-      ? unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === groupPayClientId)
+      ? unpaidInvoices.filter(i => resolveKey(i).key === groupPayClientId)
       : []
 
     // DEBUG
