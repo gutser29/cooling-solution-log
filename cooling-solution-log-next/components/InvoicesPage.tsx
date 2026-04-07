@@ -68,9 +68,6 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   // Revert confirmation
   const [confirmRevert, setConfirmRevert] = useState<{ show: boolean; inv: Invoice | null; action: 'toDraft' | 'toSent' }>({ show: false, inv: null, action: 'toDraft' })
   // Feature 2: group pay
-  const [groupPayClientId, setGroupPayClientId] = useState<string>('')  // "id:12" or "name:Foo"
-  const [groupPayClientName, setGroupPayClientName] = useState('')       // display label
-  const [groupPayRetentionPct, setGroupPayRetentionPct] = useState(0)
   const [groupPaySelected, setGroupPaySelected] = useState<Set<number>>(new Set())
   const [groupPayDate, setGroupPayDate] = useState('')
   const [groupPayMethod, setGroupPayMethod] = useState('check')
@@ -953,69 +950,31 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   if (viewMode === 'groupPay') {
     const allUnpaid = invoices.filter(i => i.type === 'invoice' && (i.status === 'sent' || i.status === 'overdue'))
 
-    // DEBUG
-    console.log('[GP] allUnpaid facturas:', allUnpaid.map(i => ({ id: i.id, invoice_number: i.invoice_number, client_id: i.client_id, client_name: i.client_name, status: i.status, total: i.total })))
-
-    // Available months derived from service_date ?? issue_date
     const invoiceMonth = (inv: Invoice) => {
       const ts = inv.service_date ?? inv.issue_date
       const d = new Date(ts)
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     }
+    const monthLabel = (m: string) => {
+      const [y, mo] = m.split('-')
+      return new Date(+y, +mo - 1, 1).toLocaleDateString('es-PR', { month: 'long', year: 'numeric' })
+    }
     const availableMonths = [...new Set(allUnpaid.map(invoiceMonth))].sort().reverse()
 
-    // Apply month filter
-    const unpaidInvoices = gpMonth
+    const visibleInvoices = gpMonth
       ? allUnpaid.filter(i => invoiceMonth(i) === gpMonth)
       : allUnpaid
 
-    // Resolve a canonical group key for each invoice.
-    // Priority:
-    //   1. client_id present → "id:{client_id}" (exact parent match)
-    //   2. no client_id → try prefix match against clients table:
-    //      if invoice.client_name starts with a client's full name → use that client's id key
-    //      e.g. "Farmacia Caridad #32" starts with "Farmacia Caridad" → "id:12"
-    //   3. no match → "name:{client_name}" (unlinked, standalone group)
-    const resolveKey = (inv: Invoice): { key: string; linked: Client | undefined } => {
-      if (inv.client_id) {
-        return { key: `id:${inv.client_id}`, linked: clients.find(c => c.id === inv.client_id) }
-      }
-      const nameLower = inv.client_name.toLowerCase().trim()
-      const matched = clients.find(c => {
-        const full = `${c.first_name} ${c.last_name}`.toLowerCase().trim()
-        return nameLower.startsWith(full) || full.startsWith(nameLower)
-      })
-      if (matched) return { key: `id:${matched.id}`, linked: matched }
-      return { key: `name:${inv.client_name}`, linked: undefined }
-    }
-
-    type GpClient = { key: string; name: string; retentionPct: number; count: number; total: number }
-    const gpClientMap = new Map<string, GpClient>()
-    allUnpaid.forEach(inv => {  // unfiltered by month for sidebar counts
-      const { key, linked } = resolveKey(inv)
-      const existing = gpClientMap.get(key)
-      if (existing) { existing.count++; existing.total += inv.total }
-      else {
-        const label = linked ? `${linked.first_name} ${linked.last_name}`.trim() : inv.client_name
-        gpClientMap.set(key, { key, name: label, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
-      }
-    })
-    const gpClients = [...gpClientMap.values()].sort((a, b) => a.name.localeCompare(b.name))
-
-    // DEBUG
-    console.log('[GP] gpClients construidos:', gpClients)
-
-    // Invoices for selected group — resolve each invoice's key and compare
-    const clientUnpaid = groupPayClientId
-      ? unpaidInvoices.filter(i => resolveKey(i).key === groupPayClientId)
-      : []
-
-    // DEBUG
-    if (groupPayClientId) console.log('[GP] clientUnpaid para key', groupPayClientId, ':', clientUnpaid.map(i => ({ id: i.id, invoice_number: i.invoice_number, client_id: i.client_id, client_name: i.client_name, location_name: i.location_name })))
-
-    const selectedInvoices = clientUnpaid.filter(i => groupPaySelected.has(i.id!))
+    const selectedInvoices = visibleInvoices.filter(i => groupPaySelected.has(i.id!))
     const totalFacturado = selectedInvoices.reduce((s, i) => s + i.total, 0)
-    const totalRetencion = groupPayRetentionPct > 0 ? totalFacturado * groupPayRetentionPct / 100 : 0
+
+    // Retention: if ANY selected invoice belongs to a client with retention_percent > 0, apply it.
+    // Use the highest retention_percent found among selected invoices' clients.
+    const maxRetention = selectedInvoices.reduce((max, inv) => {
+      const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
+      return Math.max(max, linked?.retention_percent || 0)
+    }, 0)
+    const totalRetencion = maxRetention > 0 ? totalFacturado * maxRetention / 100 : 0
     const totalNeto = totalFacturado - totalRetencion
 
     const executeGroupPay = async () => {
@@ -1024,7 +983,9 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
       try {
         const dateMs = new Date(groupPayDate + 'T12:00:00').getTime()
         for (const inv of selectedInvoices) {
-          const retention = groupPayRetentionPct > 0 ? inv.total * groupPayRetentionPct / 100 : 0
+          const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
+          const retPct = linked?.retention_percent || 0
+          const retention = retPct > 0 ? inv.total * retPct / 100 : 0
           await updateStatus(inv, 'paid', groupPayMethod, dateMs, retention)
         }
         setViewMode('list')
@@ -1035,198 +996,158 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const itemsSummary = (inv: Invoice) => {
       const descs = inv.items.map(i => i.description.trim()).filter(Boolean)
       if (descs.length === 0) return ''
-      if (descs.length === 1) return descs[0].length > 55 ? descs[0].slice(0, 52) + '…' : descs[0]
-      return `${descs[0].length > 35 ? descs[0].slice(0, 32) + '…' : descs[0]} +${descs.length - 1} más`
-    }
-
-    const monthLabel = (m: string) => {
-      const [y, mo] = m.split('-')
-      return new Date(+y, +mo - 1, 1).toLocaleDateString('es-PR', { month: 'long', year: 'numeric' })
+      if (descs.length === 1) return descs[0].length > 50 ? descs[0].slice(0, 47) + '…' : descs[0]
+      return `${descs[0].length > 30 ? descs[0].slice(0, 27) + '…' : descs[0]} +${descs.length - 1} más`
     }
 
     return (
-      <div className="min-h-screen bg-[#0b1220] text-gray-100">
-        <div className="sticky top-0 z-30 bg-gradient-to-r from-yellow-600 to-orange-600 text-white p-4 shadow-lg flex justify-between items-center">
+      <div className="bg-[#0b1220] text-gray-100" style={{ minHeight: '100%' }}>
+        {/* Header */}
+        <div className="sticky top-0 z-30 bg-gradient-to-r from-yellow-600 to-orange-600 text-white px-4 py-3 shadow-lg flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button onClick={() => setViewMode('list')} className="text-lg">←</button>
             <div>
-              <h1 className="text-lg font-bold">💰 Pago Grupal</h1>
-              <p className="text-xs opacity-75">{allUnpaid.length} facturas pendientes en total</p>
+              <h1 className="text-base font-bold">💰 Pago Grupal</h1>
+              <p className="text-xs opacity-75">{allUnpaid.length} pendiente{allUnpaid.length !== 1 ? 's' : ''}</p>
             </div>
           </div>
+          {groupPaySelected.size > 0 && (
+            <div className="text-right">
+              <p className="text-sm font-bold">{fmt(totalNeto)}</p>
+              <p className="text-xs opacity-75">{groupPaySelected.size} seleccionada{groupPaySelected.size !== 1 ? 's' : ''}</p>
+            </div>
+          )}
         </div>
-        <div className="p-4 max-w-2xl mx-auto space-y-4">
+
+        <div className="p-3 max-w-2xl mx-auto space-y-3 pb-6">
 
           {/* Month filter */}
           {availableMonths.length > 1 && (
-            <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
-              <p className="text-xs text-gray-500 mb-2">📅 Filtrar por mes</p>
-              <div className="flex flex-wrap gap-1.5">
-                <button onClick={() => { setGpMonth(''); setGroupPaySelected(new Set()) }}
-                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${!gpMonth ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
-                  Todos
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => { setGpMonth(''); setGroupPaySelected(new Set()) }}
+                className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${!gpMonth ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
+                Todos
+              </button>
+              {availableMonths.map(m => (
+                <button key={m} onClick={() => { setGpMonth(m); setGroupPaySelected(new Set()) }}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium capitalize ${gpMonth === m ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
+                  {monthLabel(m)}
                 </button>
-                {availableMonths.map(m => (
-                  <button key={m} onClick={() => { setGpMonth(m); setGroupPaySelected(new Set()) }}
-                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium capitalize ${gpMonth === m ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
-                    {monthLabel(m)}
-                  </button>
-                ))}
-              </div>
+              ))}
             </div>
           )}
-
-          {/* Client selector */}
-          <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
-            <p className="text-sm font-semibold text-gray-300 px-4 pt-4 pb-2">👤 Cliente / Empresa</p>
-            {gpClients.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center py-6 px-4">No hay facturas enviadas pendientes</p>
-            ) : (
-              <div className="divide-y divide-white/5">
-                {gpClients.map(c => {
-                  const isSelected = groupPayClientId === c.key
-                  // Month-filtered count for this group
-                  const mCount = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).length
-                  const mTotal = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).reduce((s,i) => s+i.total, 0)
-                  if (gpMonth && mCount === 0) return null
-                  return (
-                    <button key={c.key} onClick={() => {
-                      if (isSelected) { setGroupPayClientId(''); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()) }
-                      else { setGroupPayClientId(c.key); setGroupPayClientName(c.name); setGroupPayRetentionPct(c.retentionPct); setGroupPaySelected(new Set()) }
-                    }}
-                      className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${isSelected ? 'bg-yellow-900/30 border-l-2 border-yellow-500' : 'hover:bg-white/5'}`}>
-                      <div>
-                        <p className="text-sm font-medium text-gray-200">{c.name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {gpMonth ? mCount : c.count} factura{(gpMonth ? mCount : c.count) !== 1 ? 's' : ''} pendiente{(gpMonth ? mCount : c.count) !== 1 ? 's' : ''}
-                          {c.retentionPct > 0 && <span className="ml-2 text-yellow-500">⚠️ ret. {c.retentionPct}%</span>}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-green-400">{fmt(gpMonth ? mTotal : c.total)}</p>
-                        {isSelected && <p className="text-xs text-yellow-400">seleccionado ✓</p>}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
 
           {/* Invoice list */}
-          {groupPayClientName && (
-            <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
-              <div className="flex justify-between items-center px-4 py-3 border-b border-white/5">
-                <div>
-                  <p className="text-sm font-semibold text-gray-300">🧾 Facturas de {groupPayClientName}</p>
-                  {gpMonth && <p className="text-xs text-blue-400">{monthLabel(gpMonth)}</p>}
-                </div>
-                <button onClick={() => {
-                  if (groupPaySelected.size === clientUnpaid.length) setGroupPaySelected(new Set())
-                  else setGroupPaySelected(new Set(clientUnpaid.map(i => i.id!)))
-                }} className="text-xs text-blue-400 font-medium">
-                  {groupPaySelected.size === clientUnpaid.length ? 'Deseleccionar todo' : 'Seleccionar todo'}
-                </button>
-              </div>
-              {clientUnpaid.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-6">
-                  {gpMonth ? `Sin facturas en ${monthLabel(gpMonth)}` : 'Sin facturas pendientes'}
-                </p>
-              ) : clientUnpaid.map(inv => {
-                const summary = itemsSummary(inv)
-                const refDate = inv.service_date ?? inv.issue_date
-                return (
-                  <label key={inv.id} className="flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-0 cursor-pointer hover:bg-white/5 active:bg-white/10">
-                    <input type="checkbox" checked={groupPaySelected.has(inv.id!)}
-                      onChange={e => setGroupPaySelected(prev => { const s = new Set(prev); e.target.checked ? s.add(inv.id!) : s.delete(inv.id!); return s })}
-                      className="w-4 h-4 rounded mt-0.5 flex-shrink-0 accent-green-500" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-gray-200">#{inv.invoice_number}</span>
-                        {inv.location_name && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-teal-900/40 text-teal-400 border border-teal-800/30">{inv.location_name}</span>
-                        )}
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${statusColor(inv.status)}`}>{statusLabel(inv.status)}</span>
-                      </div>
-                      {summary && <p className="text-xs text-gray-400 mt-0.5 truncate">{summary}</p>}
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {inv.service_date ? `Servicio: ${fmtDate(inv.service_date)}` : `Emitida: ${fmtDate(inv.issue_date)}`}
-                      </p>
-                    </div>
-                    <p className="text-sm font-bold text-green-400 flex-shrink-0">{fmt(inv.total)}</p>
-                  </label>
-                )
-              })}
-              {clientUnpaid.length > 0 && (
-                <div className="px-4 py-2 bg-white/3 border-t border-white/5 flex justify-between text-xs text-gray-400">
-                  <span>{groupPaySelected.size} seleccionada{groupPaySelected.size !== 1 ? 's' : ''} de {clientUnpaid.length}</span>
-                  {groupPaySelected.size > 0 && <span className="text-green-400 font-medium">{fmt(totalFacturado)} seleccionado</span>}
-                </div>
-              )}
+          <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
+            <div className="flex justify-between items-center px-4 py-3 border-b border-white/5">
+              <p className="text-sm font-semibold text-gray-300">
+                🧾 {visibleInvoices.length} factura{visibleInvoices.length !== 1 ? 's' : ''} pendiente{visibleInvoices.length !== 1 ? 's' : ''}
+                {gpMonth && <span className="text-blue-400 font-normal"> · {monthLabel(gpMonth)}</span>}
+              </p>
+              <button onClick={() => {
+                if (groupPaySelected.size === visibleInvoices.length) setGroupPaySelected(new Set())
+                else setGroupPaySelected(new Set(visibleInvoices.map(i => i.id!)))
+              }} className="text-xs text-blue-400 font-medium">
+                {groupPaySelected.size === visibleInvoices.length ? 'Deseleccionar todo' : 'Seleccionar todo'}
+              </button>
             </div>
-          )}
 
-          {/* Payment + summary */}
+            {visibleInvoices.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-8">
+                {gpMonth ? `Sin facturas en ${monthLabel(gpMonth)}` : 'No hay facturas pendientes'}
+              </p>
+            ) : visibleInvoices.map(inv => {
+              const checked = groupPaySelected.has(inv.id!)
+              const summary = itemsSummary(inv)
+              const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
+              const hasRetention = (linked?.retention_percent || 0) > 0
+              return (
+                <label key={inv.id}
+                  className={`flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-0 cursor-pointer transition-colors ${checked ? 'bg-green-900/15' : 'hover:bg-white/5'}`}>
+                  <input type="checkbox" checked={checked}
+                    onChange={e => setGroupPaySelected(prev => { const s = new Set(prev); e.target.checked ? s.add(inv.id!) : s.delete(inv.id!); return s })}
+                    className="w-4 h-4 rounded mt-1 flex-shrink-0 accent-green-500" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-100">{inv.client_name}</span>
+                      {inv.location_name && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-teal-900/40 text-teal-400 border border-teal-800/30">{inv.location_name}</span>
+                      )}
+                      {hasRetention && <span className="text-xs text-yellow-500">⚠️ ret.</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-gray-500">#{inv.invoice_number}</span>
+                      <span className="text-xs text-gray-500">·</span>
+                      <span className="text-xs text-gray-500">
+                        {inv.service_date ? fmtDate(inv.service_date) : fmtDate(inv.issue_date)}
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColor(inv.status)}`}>{statusLabel(inv.status)}</span>
+                    </div>
+                    {summary && <p className="text-xs text-gray-400 mt-0.5 truncate">{summary}</p>}
+                  </div>
+                  <p className={`text-sm font-bold flex-shrink-0 ${checked ? 'text-green-400' : 'text-gray-300'}`}>{fmt(inv.total)}</p>
+                </label>
+              )
+            })}
+          </div>
+
+          {/* Payment panel — always visible once something is selected */}
           {selectedInvoices.length > 0 && (
-            <>
-              <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-3">
-                <p className="text-sm font-semibold text-gray-300">💳 Método de pago</p>
-                <div className="grid grid-cols-2 gap-2">
+            <div className="bg-[#111a2e] rounded-xl border border-green-900/30 overflow-hidden">
+              {/* Summary lines */}
+              <div className="px-4 pt-4 pb-3 border-b border-white/5 space-y-1">
+                {selectedInvoices.map(inv => (
+                  <div key={inv.id} className="flex justify-between text-xs">
+                    <span className="text-gray-400 truncate">{inv.client_name}{inv.location_name ? ` · ${inv.location_name}` : ''} #{inv.invoice_number}</span>
+                    <span className="text-gray-300 font-medium ml-2 flex-shrink-0">{fmt(inv.total)}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="px-4 py-3 space-y-1.5 border-b border-white/5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Subtotal ({selectedInvoices.length} factura{selectedInvoices.length !== 1 ? 's' : ''})</span>
+                  <span className="text-gray-200 font-medium">{fmt(totalFacturado)}</span>
+                </div>
+                {totalRetencion > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-yellow-400">Retención Hacienda ({maxRetention}%)</span>
+                    <span className="text-yellow-400 font-medium">−{fmt(totalRetencion)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-base font-bold pt-1">
+                  <span className="text-green-400">Neto a recibir</span>
+                  <span className="text-green-400">{fmt(totalNeto)}</span>
+                </div>
+              </div>
+
+              {/* Method */}
+              <div className="px-4 pt-3 pb-2">
+                <p className="text-xs text-gray-500 mb-2">Método de pago</p>
+                <div className="grid grid-cols-2 gap-1.5">
                   {PAYMENT_METHODS.map(m => (
                     <button key={m.key} onClick={() => setGroupPayMethod(m.key)}
-                      className={`py-2.5 rounded-lg text-xs font-medium border ${groupPayMethod === m.key ? 'bg-green-600 text-white border-green-500' : 'bg-green-900/20 text-green-400 border-green-800/30'}`}>
+                      className={`py-2 rounded-lg text-xs font-medium border ${groupPayMethod === m.key ? 'bg-green-600 text-white border-green-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
                       {m.label}
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-3">
-                  <label className="text-xs text-gray-400 whitespace-nowrap">📅 Fecha del cheque</label>
-                  <input type="date" value={groupPayDate} onChange={e => setGroupPayDate(e.target.value)}
-                    className="flex-1 bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-green-500" />
-                </div>
               </div>
 
-              <div className="bg-[#111a2e] rounded-xl p-4 border border-green-900/30 space-y-2">
-                <p className="text-sm font-semibold text-gray-300 mb-2">📊 Resumen</p>
-                <div className="space-y-1 pb-2 border-b border-white/10">
-                  {selectedInvoices.map(inv => (
-                    <div key={inv.id} className="flex justify-between text-xs">
-                      <span className="text-gray-400 truncate">
-                        #{inv.invoice_number}{inv.location_name ? ` · ${inv.location_name}` : ''}
-                      </span>
-                      <span className="text-gray-300 font-medium ml-2 flex-shrink-0">{fmt(inv.total)}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">Subtotal ({selectedInvoices.length} facturas)</span>
-                    <span className="text-gray-200 font-medium">{fmt(totalFacturado)}</span>
-                  </div>
-                  {totalRetencion > 0 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-yellow-400">Retención Hacienda ({groupPayRetentionPct}%)</span>
-                      <span className="text-yellow-400 font-medium">−{fmt(totalRetencion)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-lg font-bold pt-1 border-t border-white/10">
-                    <span className="text-green-400">Neto a recibir</span>
-                    <span className="text-green-400">{fmt(totalNeto)}</span>
-                  </div>
-                  {groupPayDate && (
-                    <p className="text-xs text-gray-500">
-                      📅 {fmtDate(new Date(groupPayDate + 'T12:00:00').getTime())}
-                      {' · '}{PAYMENT_METHODS.find(m => m.key === groupPayMethod)?.label}
-                    </p>
-                  )}
-                </div>
+              {/* Date */}
+              <div className="px-4 pb-4 flex items-center gap-3">
+                <label className="text-xs text-gray-400 whitespace-nowrap">📅 Fecha</label>
+                <input type="date" value={groupPayDate} onChange={e => setGroupPayDate(e.target.value)}
+                  className="flex-1 bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-green-500" />
               </div>
 
-              <button onClick={executeGroupPay} disabled={groupPayBusy || !groupPayDate}
-                className="w-full py-4 rounded-xl text-base font-bold bg-green-600 hover:bg-green-500 text-white disabled:opacity-50 transition-colors">
-                {groupPayBusy ? '⏳ Procesando...' : `✅ Confirmar pago — ${fmt(totalNeto)}`}
-              </button>
-            </>
+              <div className="px-4 pb-4">
+                <button onClick={executeGroupPay} disabled={groupPayBusy || !groupPayDate}
+                  className="w-full py-3.5 rounded-xl text-base font-bold bg-green-600 hover:bg-green-500 text-white disabled:opacity-50 transition-colors">
+                  {groupPayBusy ? '⏳ Procesando...' : `✅ Confirmar pago — ${fmt(totalNeto)}`}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -1242,7 +1163,7 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           <h1 className="text-xl font-bold">🧾 Facturación</h1>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { setGroupPayClientId(''); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()); setGroupPayDate(''); setGroupPayMethod('check'); setGpMonth(''); setViewMode('groupPay') }}
+          <button onClick={() => { setGroupPaySelected(new Set()); setGroupPayDate(''); setGroupPayMethod('check'); setGpMonth(''); setViewMode('groupPay') }}
             className="bg-yellow-600 rounded-lg px-3 py-1.5 text-sm font-medium">💰 Grupal</button>
           <button onClick={() => startCreate(tab === 'quotes' ? 'quote' : 'invoice')}
             className="bg-white/20 rounded-lg px-3 py-1.5 text-sm font-medium">
