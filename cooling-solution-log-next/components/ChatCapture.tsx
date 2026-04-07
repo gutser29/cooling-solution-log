@@ -156,7 +156,7 @@ function cleanCommandsFromText(text: string): string {
   const commands = [
     'SAVE_EVENT:', 'SAVE_CLIENT:', 'SAVE_NOTE:', 'SAVE_APPOINTMENT:', 'SAVE_REMINDER:', 
     'SAVE_INVOICE:', 'SAVE_QUOTE:', 'SAVE_JOB_TEMPLATE:', 'SAVE_PHOTO:', 'SAVE_BITACORA:', 
-    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:', 'SAVE_INVENTORY_ITEM:', 'SAVE_INVENTORY_MOVEMENT:', 'SAVE_CLIENT_LOCATION:'
+    'SAVE_WARRANTY:', 'SAVE_QUICK_QUOTE:', 'SAVE_JOB:', 'SAVE_PRODUCT:', 'DELETE_EVENT:', 'SAVE_EQUIPMENT:', 'SAVE_MAINTENANCE:', 'SAVE_REPAIR:', 'SAVE_BANK_TRANSACTION:', 'SAVE_VENDOR_ALIAS:', 'SAVE_EMPLOYEE_PAYMENT:', 'SAVE_CONTRACT:', 'SAVE_INVENTORY_ITEM:', 'SAVE_INVENTORY_MOVEMENT:', 'SAVE_CLIENT_LOCATION:'
   ]
   let cleaned = text
   for (const cmd of commands) {
@@ -778,6 +778,8 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
 
             ctx += '\n\nEQUIPOS REGISTRADOS:\n' + equip.map((eq: any) => {
               const eqLogs = logs.filter((l: any) => l.equipment_id === eq.id).sort((a: any, b: any) => b.date - a.date)
+              const maintLogs = eqLogs.filter((l: any) => l.log_type !== 'repair')
+              const repairLogs = eqLogs.filter((l: any) => l.log_type === 'repair')
               const lastLog = eqLogs[0]
               const lastStr = lastLog ? new Date(lastLog.date).toLocaleDateString('es-PR') : 'Nunca'
               let statusStr = '⚪ Sin programa'
@@ -786,7 +788,15 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
                 else if (eq.next_service_due - nowTs <= THIRTY) statusStr = `🟡 Próximo (${Math.floor((eq.next_service_due - nowTs) / 86400000)}d)`
                 else statusStr = `🟢 Al día (próximo: ${new Date(eq.next_service_due).toLocaleDateString('es-PR')})`
               }
-              return `[ID:${eq.id}] ${eq.equipment_type} ${eq.brand || ''} ${eq.model || ''} | ${eq.client_name} @ ${eq.location || 'N/A'} | S/N: ${eq.serial_number || 'N/A'} | ${statusStr} | Último servicio: ${lastStr}`
+              let line = `[ID:${eq.id}] ${eq.equipment_type} ${eq.brand || ''} ${eq.model || ''} | ${eq.client_name} @ ${eq.location || 'N/A'} | S/N: ${eq.serial_number || 'N/A'} | ${statusStr} | Último servicio: ${lastStr} | 🔧${maintLogs.length} mant 🔩${repairLogs.length} rep`
+              // Include last repair detail if exists
+              if (repairLogs.length > 0) {
+                const lr = repairLogs[0]
+                const rDate = new Date(lr.date).toLocaleDateString('es-PR')
+                const rDetail = [lr.diagnosis, lr.parts_replaced?.join(', '), lr.parameters_set].filter(Boolean).join(' | ')
+                line += `\n  └ Última reparación ${rDate}: ${rDetail || lr.repair_notes || lr.notes || 'sin detalle'}`
+              }
+              return line
             }).join('\n')
 
             // Summary by client: which specific equipment is missing
@@ -2007,6 +2017,7 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
               equipment_id: m.equipment_id,
               client_name: m.client_name || '',
               client_id: m.client_id,
+              log_type: 'maintenance',
               maintenance_type: m.maintenance_type || 'cleaning',
               date: svcDate,
               notes: m.notes || '',
@@ -2035,6 +2046,43 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           }
         }
       }
+      // ====== PROCESS SAVE_REPAIR ======
+      const repairMatches = assistantText.match(/SAVE_REPAIR:\s*\{/gi)
+      if (repairMatches && repairMatches.length > 0) {
+        const allRepairs = extractAllJSON(assistantText, 'SAVE_REPAIR:')
+        for (const r of allRepairs) {
+          try {
+            const nowTs = Date.now()
+            const svcDate = r.date ? Number(r.date) : nowTs
+            const parts = Array.isArray(r.parts_replaced)
+              ? r.parts_replaced
+              : (r.parts_replaced ? String(r.parts_replaced).split(',').map((s: string) => s.trim()).filter(Boolean) : [])
+            await db.maintenance_logs.add({
+              equipment_id: r.equipment_id,
+              client_name: r.client_name || '',
+              client_id: r.client_id,
+              log_type: 'repair',
+              maintenance_type: 'repair',
+              date: svcDate,
+              technician: r.technician || 'Sergio',
+              diagnosis: r.diagnosis || undefined,
+              parts_replaced: parts.length > 0 ? parts : undefined,
+              parameters_set: r.parameters_set || undefined,
+              labor_hours: r.labor_hours ? Number(r.labor_hours) : undefined,
+              repair_notes: r.repair_notes || r.notes || undefined,
+              notes: r.repair_notes || r.notes || undefined,
+              photos: [],
+              created_at: nowTs,
+            })
+            savedItems.push(`Reparación: ${r.diagnosis || 'sin diagnóstico'} → ${r.client_name}`)
+            needsSync = true
+            contextLoadedRef.current = false
+          } catch (e) {
+            console.error('SAVE_REPAIR error:', e)
+          }
+        }
+      }
+
       // ====== PROCESS SAVE_EMPLOYEE_PAYMENT ======
       const empPayData = extractJSON(assistantText, 'SAVE_EMPLOYEE_PAYMENT:')
       if (empPayData) {

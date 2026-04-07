@@ -90,6 +90,21 @@ export default function MaintenancePage({ onNavigate }: Props) {
     notes: '',
   })
 
+  // Register repair modal
+  const [showRepair, setShowRepair] = useState(false)
+  const [repairForm, setRepairForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    technician: 'Sergio',
+    diagnosis: '',
+    parts_replaced: '',
+    parameters_set: '',
+    labor_hours: '',
+    repair_notes: '',
+  })
+
+  // Serial number search
+  const [serialSearch, setSerialSearch] = useState('')
+
   const [msg, setMsg] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<Equipment | null>(null)
 
@@ -119,6 +134,11 @@ export default function MaintenancePage({ onNavigate }: Props) {
       if (updated) setSelected(updated)
     }
   }, [equipment])
+
+  // Serial number search result
+  const serialResult = serialSearch.trim().length >= 3
+    ? equipment.find(e => e.serial_number?.toLowerCase().includes(serialSearch.toLowerCase().trim()))
+    : null
 
   const clients = [...new Set(equipment.map(e => e.client_name).filter(Boolean))].sort()
 
@@ -194,6 +214,7 @@ export default function MaintenancePage({ onNavigate }: Props) {
       equipment_id: selected.id,
       client_name: selected.client_name,
       client_id: selected.client_id,
+      log_type: 'maintenance',
       maintenance_type: serviceForm.maintenance_type as MaintenanceLog['maintenance_type'],
       date: dateTs,
       notes: serviceForm.notes,
@@ -209,6 +230,37 @@ export default function MaintenancePage({ onNavigate }: Props) {
     showMsg('✅ Servicio registrado')
     setShowService(false)
     setServiceForm({ maintenance_type: 'cleaning', date: new Date().toISOString().split('T')[0], technician: 'Sergio', notes: '' })
+    await load()
+  }
+
+  const saveRepair = async () => {
+    if (!selected?.id) return
+    const dateTs = new Date(repairForm.date + 'T12:00:00').getTime()
+    const parts = repairForm.parts_replaced
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    await db.maintenance_logs.add({
+      equipment_id: selected.id,
+      client_name: selected.client_name,
+      client_id: selected.client_id,
+      log_type: 'repair',
+      maintenance_type: 'repair',
+      date: dateTs,
+      notes: repairForm.repair_notes || undefined,
+      technician: repairForm.technician,
+      diagnosis: repairForm.diagnosis || undefined,
+      parts_replaced: parts.length > 0 ? parts : undefined,
+      parameters_set: repairForm.parameters_set || undefined,
+      labor_hours: repairForm.labor_hours ? Number(repairForm.labor_hours) : undefined,
+      repair_notes: repairForm.repair_notes || undefined,
+      photos: [],
+      created_at: Date.now(),
+    })
+    showMsg('✅ Reparación registrada')
+    setShowRepair(false)
+    setRepairForm({ date: new Date().toISOString().split('T')[0], technician: 'Sergio', diagnosis: '', parts_replaced: '', parameters_set: '', labor_hours: '', repair_notes: '' })
     await load()
   }
 
@@ -278,9 +330,11 @@ export default function MaintenancePage({ onNavigate }: Props) {
           {view === 'detail' && selected && (
             <>
               <button onClick={() => { setEditForm({ ...selected }); setShowEdit(true) }}
-                className="bg-white/20 rounded-lg px-3 py-1.5 text-xs font-medium">✏️ Editar</button>
+                className="bg-white/20 rounded-lg px-3 py-1.5 text-xs font-medium">✏️</button>
+              <button onClick={() => setShowRepair(true)}
+                className="bg-orange-500/40 rounded-lg px-3 py-1.5 text-xs font-medium">🔩 Reparación</button>
               <button onClick={() => setShowService(true)}
-                className="bg-cyan-500/40 rounded-lg px-3 py-1.5 text-xs font-medium">+ Servicio</button>
+                className="bg-cyan-500/40 rounded-lg px-3 py-1.5 text-xs font-medium">🔧 Servicio</button>
             </>
           )}
           <button onClick={() => onNavigate('chat')} className="bg-white/20 rounded-lg px-3 py-1.5 text-xs">💬</button>
@@ -311,6 +365,40 @@ export default function MaintenancePage({ onNavigate }: Props) {
               </button>
             ))}
           </div>
+
+          {/* Serial number search */}
+          <div className="relative">
+            <input
+              value={serialSearch}
+              onChange={e => setSerialSearch(e.target.value)}
+              placeholder="🔍 Buscar por número de serie..."
+              className="w-full bg-[#111a2e] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-300 placeholder:text-gray-600"
+            />
+            {serialSearch && <button onClick={() => setSerialSearch('')} className="absolute right-3 top-2.5 text-gray-500">✕</button>}
+          </div>
+
+          {/* Serial search result */}
+          {serialResult && (
+            <button onClick={() => { setSelected(serialResult); setView('detail') }}
+              className="w-full bg-cyan-900/30 border border-cyan-700/40 rounded-xl p-3 text-left">
+              <p className="text-xs text-cyan-400 font-medium mb-1">📍 Encontrado — toca para abrir</p>
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-semibold text-gray-200">{serialResult.equipment_type} {serialResult.brand} {serialResult.model}</p>
+                  <p className="text-xs text-gray-400">{serialResult.client_name} · {serialResult.location}</p>
+                  <p className="text-xs text-gray-500 font-mono">S/N: {serialResult.serial_number}</p>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${statusColors[equipmentStatus(serialResult)].badge}`}>
+                  {statusColors[equipmentStatus(serialResult)].label}
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">{eqLogs(serialResult).length} registros en historial</p>
+            </button>
+          )}
+
+          {serialSearch.trim().length >= 3 && !serialResult && (
+            <p className="text-xs text-gray-500 text-center py-2">Sin resultados para "{serialSearch}"</p>
+          )}
 
           {/* Filters */}
           <div className="flex gap-2">
@@ -430,37 +518,64 @@ export default function MaintenancePage({ onNavigate }: Props) {
             {selected.notes && <p className="mt-3 text-sm text-gray-400 italic">📝 {selected.notes}</p>}
           </div>
 
-          {/* Service history */}
+          {/* Unified history */}
           <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
             <div className="px-4 py-3 border-b border-white/5 flex justify-between items-center">
-              <p className="font-semibold text-gray-300">Historial de Servicios</p>
-              <span className="text-xs text-gray-500">{eqLogs(selected).length} registros</span>
+              <p className="font-semibold text-gray-300">📋 Historial Técnico</p>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">{eqLogs(selected).length} registros</span>
+                <span className="text-xs text-gray-600">🔧 mant · 🔩 rep</span>
+              </div>
             </div>
             {eqLogs(selected).length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-500 text-sm">Sin servicios registrados</div>
+              <div className="px-4 py-8 text-center text-gray-500 text-sm">Sin registros de servicio</div>
             ) : (
               <div className="divide-y divide-white/5">
-                {eqLogs(selected).map(log => (
-                  <div key={log.id} className="px-4 py-3 flex justify-between items-start gap-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-cyan-400">{maintenanceTypeLabel(log.maintenance_type)}</span>
-                        <span className="text-xs text-gray-500">{fmtDate(log.date)}</span>
+                {eqLogs(selected).map(log => {
+                  const isRepair = log.log_type === 'repair'
+                  return (
+                    <div key={log.id} className="px-4 py-3 flex justify-between items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-base">{isRepair ? '🔩' : '🔧'}</span>
+                          <span className={`text-sm font-medium ${isRepair ? 'text-orange-400' : 'text-cyan-400'}`}>
+                            {isRepair ? 'Reparación' : maintenanceTypeLabel(log.maintenance_type)}
+                          </span>
+                          <span className="text-xs text-gray-500">{fmtDate(log.date)}</span>
+                          {log.labor_hours && <span className="text-xs text-gray-600">{log.labor_hours}h</span>}
+                        </div>
+                        {log.technician && <p className="text-xs text-gray-500 mt-0.5">👤 {log.technician}</p>}
+                        {log.diagnosis && (
+                          <p className="text-xs text-yellow-400/80 mt-1">🔍 <span className="font-medium">Diagnóstico:</span> {log.diagnosis}</p>
+                        )}
+                        {log.parts_replaced && log.parts_replaced.length > 0 && (
+                          <p className="text-xs text-gray-400 mt-0.5">🔩 Piezas: {log.parts_replaced.join(', ')}</p>
+                        )}
+                        {log.parameters_set && (
+                          <p className="text-xs text-blue-400/80 mt-0.5">⚙️ Parámetros: {log.parameters_set}</p>
+                        )}
+                        {(log.repair_notes || log.notes) && (
+                          <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{log.repair_notes || log.notes}</p>
+                        )}
                       </div>
-                      {log.technician && <p className="text-xs text-gray-500 mt-0.5">👤 {log.technician}</p>}
-                      {log.notes && <p className="text-xs text-gray-400 mt-0.5">{log.notes}</p>}
+                      <button onClick={() => deleteLog(log)} className="text-red-400/50 hover:text-red-400 text-xs flex-shrink-0 pt-0.5">✕</button>
                     </div>
-                    <button onClick={() => deleteLog(log)} className="text-red-400/50 hover:text-red-400 text-xs flex-shrink-0">✕</button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
 
-          <button onClick={() => setShowService(true)}
-            className="w-full bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl py-3 text-sm font-semibold">
-            + Registrar Servicio
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowService(true)}
+              className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl py-3 text-sm font-semibold">
+              🔧 Registrar Servicio
+            </button>
+            <button onClick={() => setShowRepair(true)}
+              className="flex-1 bg-orange-600 hover:bg-orange-500 text-white rounded-xl py-3 text-sm font-semibold">
+              🔩 Registrar Reparación
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -649,6 +764,77 @@ export default function MaintenancePage({ onNavigate }: Props) {
               </div>
               <button onClick={saveService} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl py-3 text-sm font-semibold">
                 Guardar Servicio
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── REGISTER REPAIR MODAL ───────────────────────────────────────────── */}
+      {showRepair && selected && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-end">
+          <div className="w-full bg-[#111a2e] rounded-t-2xl p-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-100">🔩 Registrar Reparación</h2>
+                <p className="text-xs text-gray-400">{selected.equipment_type} — {selected.client_name}</p>
+              </div>
+              <button onClick={() => setShowRepair(false)} className="text-gray-400 text-2xl">×</button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Fecha</label>
+                  <input type="date" value={repairForm.date}
+                    onChange={e => setRepairForm(f => ({ ...f, date: e.target.value }))}
+                    className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-300" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Técnico</label>
+                  <input value={repairForm.technician}
+                    onChange={e => setRepairForm(f => ({ ...f, technician: e.target.value }))}
+                    className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="Sergio" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">🔍 Diagnóstico</label>
+                <textarea value={repairForm.diagnosis}
+                  onChange={e => setRepairForm(f => ({ ...f, diagnosis: e.target.value }))}
+                  rows={2}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm resize-none"
+                  placeholder="Describe el problema encontrado..." />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">🔩 Piezas Reemplazadas</label>
+                <input value={repairForm.parts_replaced}
+                  onChange={e => setRepairForm(f => ({ ...f, parts_replaced: e.target.value }))}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm"
+                  placeholder="Compresor, capacitor 45µF, filtro secador (separar con comas)" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">⚙️ Parámetros Configurados</label>
+                <textarea value={repairForm.parameters_set}
+                  onChange={e => setRepairForm(f => ({ ...f, parameters_set: e.target.value }))}
+                  rows={3}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm resize-none"
+                  placeholder="Presión descarga 250 PSI, succión 70 PSI, superheat 10°F, subcooling 12°F, refrigerante cargado 3 lbs R-410A..." />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">📝 Notas técnicas</label>
+                <textarea value={repairForm.repair_notes}
+                  onChange={e => setRepairForm(f => ({ ...f, repair_notes: e.target.value }))}
+                  rows={3}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm resize-none"
+                  placeholder="Observaciones adicionales, causa raíz, recomendaciones..." />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">⏱️ Horas de trabajo</label>
+                <input type="number" step="0.5" min="0" value={repairForm.labor_hours}
+                  onChange={e => setRepairForm(f => ({ ...f, labor_hours: e.target.value }))}
+                  className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm" placeholder="2.5" />
+              </div>
+              <button onClick={saveRepair} className="w-full bg-orange-600 hover:bg-orange-500 text-white rounded-xl py-3 text-sm font-semibold">
+                💾 Guardar Reparación
               </button>
             </div>
           </div>

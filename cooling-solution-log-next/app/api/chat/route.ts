@@ -586,9 +586,25 @@ SAVE_PHOTO:{"client_name":"Cliente","category":"before","description":"Descripci
 [FORMATO - NO EJECUTAR]:
 SAVE_EQUIPMENT:{"client_name":"Farmacia Caridad #32","location":"Tienda #32","equipment_type":"Package Unit","brand":"Carrier","model":"50XC048","serial_number":"2819E40123","status":"active"}
 
-## SAVE_MAINTENANCE (registrar mantenimiento/limpieza)
+## SAVE_MAINTENANCE (registrar mantenimiento/limpieza preventiva)
 [FORMATO - NO EJECUTAR]:
 SAVE_MAINTENANCE:{"equipment_id":5,"client_name":"Farmacia Caridad #32","maintenance_type":"deep_cleaning","date":TIMESTAMP_DEL_SERVICIO,"notes":"Limpieza profunda"}
+
+## SAVE_REPAIR (registrar reparación, diagnóstico o configuración técnica)
+Cuando el usuario diga "reparé", "cambié el compresor", "lo dejé funcionando", "configuré los parámetros", "le puse refrigerante", "le cambié":
+- Busca el equipo en EQUIPOS REGISTRADOS por número de serie, cliente, o descripción
+- Si encuentra múltiples equipos → pregunta cuál específicamente
+- diagnosis: descripción del problema encontrado
+- parts_replaced: array con las piezas reemplazadas
+- parameters_set: texto libre para presiones, temperaturas, cantidades de refrigerante, superheat, subcooling, etc.
+- repair_notes: observaciones adicionales
+[FORMATO - NO EJECUTAR]:
+SAVE_REPAIR:{"equipment_id":5,"client_name":"Farmacia Caridad #32","date":TIMESTAMP_DEL_SERVICIO,"technician":"Sergio","diagnosis":"Compresor quemado, capacitor abierto","parts_replaced":["Compresor Copeland 3 ton","Capacitor 40/5 MFD"],"parameters_set":"Presión descarga 250 PSI, succión 70 PSI, superheat 10°F, cargué 3 lbs R-410A","repair_notes":"Equipo operando normal al salir","labor_hours":3}
+
+## CONSULTAR HISTORIAL DE EQUIPO:
+Cuando el usuario diga "qué le hice a la nevera serial 12345", "historial de tienda 32 paquete 3", "cuántas reparaciones tiene":
+- Busca en EQUIPOS REGISTRADOS por S/N o descripción
+- Responde con el historial completo: 🔧 mantenimientos + 🔩 reparaciones con fechas, diagnósticos y piezas
 
 ## SAVE_BANK_TRANSACTION (transacción de estado de cuenta)
 [FORMATO - NO EJECUTAR]:

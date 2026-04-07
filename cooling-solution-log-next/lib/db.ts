@@ -135,11 +135,18 @@ export interface MaintenanceLog {
   equipment_id: number
   client_name: string
   client_id?: number
+  log_type: 'maintenance' | 'repair'   // NEW: distinguishes scheduled PM from repairs
   maintenance_type: 'cleaning' | 'deep_cleaning' | 'repair' | 'inspection' | 'other'
   date: number
   notes?: string
   technician: string
   photos?: string[]
+  // Repair-specific fields (only used when log_type === 'repair')
+  diagnosis?: string
+  parts_replaced?: string[]
+  parameters_set?: string
+  labor_hours?: number
+  repair_notes?: string
   created_at: number
 }
 
@@ -705,6 +712,11 @@ export class CoolingDB extends Dexie {
     // Version 26 — Invoice batches (lotes de facturación)
     this.version(26).stores({
       invoice_batches: '++id,client_name,client_id,status,created_at'
+    })
+
+    // Version 27 — maintenance_logs: add log_type index for repair/maintenance split
+    this.version(27).stores({
+      maintenance_logs: '++id,equipment_id,client_name,client_id,log_type,maintenance_type,date,created_at'
     })
   }
 }
