@@ -301,6 +301,7 @@ export default function ChatCapture({ onNavigate }: ChatCaptureProps) {
       try { maintenance_logs = await db.table('maintenance_logs').toArray() } catch {}
       let invoice_batches: any[] = []
       try { invoice_batches = await db.table('invoice_batches').toArray() } catch {}
+      console.log('📦 invoice_batches sync:', invoice_batches.length, invoice_batches)
       let inventory_items: any[] = []
       try { inventory_items = await db.table('inventory_items').toArray() } catch {}
       let inventory_movements: any[] = []
