@@ -72,9 +72,14 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
   const [groupPayClientName, setGroupPayClientName] = useState('')
   const [groupPayRetentionPct, setGroupPayRetentionPct] = useState(0)
   const [groupPaySelected, setGroupPaySelected] = useState<Set<number>>(new Set())
-  const [groupPayDate, setGroupPayDate] = useState(new Date().toISOString().split('T')[0])
+  const [groupPayDate, setGroupPayDate] = useState('')
   const [groupPayMethod, setGroupPayMethod] = useState('check')
   const [groupPayBusy, setGroupPayBusy] = useState(false)
+  const [gpMonth, setGpMonth] = useState('')
+  // Cleanup tool
+  const [showCleanup, setShowCleanup] = useState(false)
+  const [cleanupSelected, setCleanupSelected] = useState<Set<number>>(new Set())
+  const [cleanupBusy, setCleanupBusy] = useState(false)
 
   const loadAll = useCallback(async () => {
     const all = await db.invoices.orderBy('created_at').reverse().toArray()
@@ -946,29 +951,41 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
 
   // ========== GROUP PAY VIEW ==========
   if (viewMode === 'groupPay') {
-    // Build client list directly from invoices — catches all clients regardless of active status or missing client_id
-    const unpaidInvoices = invoices.filter(i => i.type === 'invoice' && (i.status === 'sent' || i.status === 'overdue'))
-    // Unique clients from those invoices
-    const gpClientMap = new Map<string, { key: string; id?: number; name: string; retentionPct: number }>()
-    unpaidInvoices.forEach(inv => {
+    const allUnpaid = invoices.filter(i => i.type === 'invoice' && (i.status === 'sent' || i.status === 'overdue'))
+
+    // Available months derived from service_date ?? issue_date
+    const invoiceMonth = (inv: Invoice) => {
+      const ts = inv.service_date ?? inv.issue_date
+      const d = new Date(ts)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    }
+    const availableMonths = [...new Set(allUnpaid.map(invoiceMonth))].sort().reverse()
+
+    // Apply month filter
+    const unpaidInvoices = gpMonth
+      ? allUnpaid.filter(i => invoiceMonth(i) === gpMonth)
+      : allUnpaid
+
+    // Group by "parent client" — same client_id = same parent; no client_id = group by client_name
+    type GpClient = { key: string; id?: number; name: string; retentionPct: number; count: number; total: number }
+    const gpClientMap = new Map<string, GpClient>()
+    allUnpaid.forEach(inv => {  // use allUnpaid for counts (unfiltered by month)
       const key = inv.client_id ? `id:${inv.client_id}` : `name:${inv.client_name}`
-      if (!gpClientMap.has(key)) {
+      const existing = gpClientMap.get(key)
+      if (existing) { existing.count++; existing.total += inv.total }
+      else {
         const linked = inv.client_id ? clients.find(c => c.id === inv.client_id) : undefined
-        gpClientMap.set(key, {
-          key,
-          id: inv.client_id,
-          name: inv.client_name,
-          retentionPct: linked?.retention_percent || 0,
-        })
+        gpClientMap.set(key, { key, id: inv.client_id, name: inv.client_name, retentionPct: linked?.retention_percent || 0, count: 1, total: inv.total })
       }
     })
     const gpClients = [...gpClientMap.values()].sort((a, b) => a.name.localeCompare(b.name))
 
-    const clientUnpaid = groupPayClientId
-      ? unpaidInvoices.filter(i => i.client_id === groupPayClientId)
-      : groupPayClientName
-        ? unpaidInvoices.filter(i => !i.client_id && i.client_name === groupPayClientName)
-        : []
+    // Invoices for selected client (apply month filter here)
+    const selectedKey = groupPayClientId ? `id:${groupPayClientId}` : groupPayClientName ? `name:${groupPayClientName}` : ''
+    const clientUnpaid = selectedKey
+      ? unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === selectedKey)
+      : []
+
     const selectedInvoices = clientUnpaid.filter(i => groupPaySelected.has(i.id!))
     const totalFacturado = selectedInvoices.reduce((s, i) => s + i.total, 0)
     const totalRetencion = groupPayRetentionPct > 0 ? totalFacturado * groupPayRetentionPct / 100 : 0
@@ -991,9 +1008,13 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
     const itemsSummary = (inv: Invoice) => {
       const descs = inv.items.map(i => i.description.trim()).filter(Boolean)
       if (descs.length === 0) return ''
-      if (descs.length === 1) return descs[0].length > 60 ? descs[0].slice(0, 57) + '…' : descs[0]
-      const first = descs[0].length > 40 ? descs[0].slice(0, 37) + '…' : descs[0]
-      return `${first} +${descs.length - 1} más`
+      if (descs.length === 1) return descs[0].length > 55 ? descs[0].slice(0, 52) + '…' : descs[0]
+      return `${descs[0].length > 35 ? descs[0].slice(0, 32) + '…' : descs[0]} +${descs.length - 1} más`
+    }
+
+    const monthLabel = (m: string) => {
+      const [y, mo] = m.split('-')
+      return new Date(+y, +mo - 1, 1).toLocaleDateString('es-PR', { month: 'long', year: 'numeric' })
     }
 
     return (
@@ -1001,78 +1022,124 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
         <div className="sticky top-0 z-30 bg-gradient-to-r from-yellow-600 to-orange-600 text-white p-4 shadow-lg flex justify-between items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => setViewMode('list')} className="text-lg">←</button>
-            <h1 className="text-xl font-bold">💰 Pago Grupal</h1>
+            <div>
+              <h1 className="text-lg font-bold">💰 Pago Grupal</h1>
+              <p className="text-xs opacity-75">{allUnpaid.length} facturas pendientes en total</p>
+            </div>
           </div>
         </div>
         <div className="p-4 max-w-2xl mx-auto space-y-4">
 
-          {/* Step 1: pick client */}
-          <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5">
-            <p className="text-sm font-semibold text-gray-300 mb-3">👤 Cliente</p>
-            {gpClients.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center py-2">No hay facturas enviadas pendientes de pago</p>
-            ) : (
-              <select value={groupPayClientId ?? ''} onChange={e => {
-                const val = e.target.value
-                const gpc = gpClients.find(c => c.key === val)
-                setGroupPayClientId(gpc?.id)
-                setGroupPayClientName(gpc?.name || '')
-                setGroupPayRetentionPct(gpc?.retentionPct || 0)
-                setGroupPaySelected(new Set())
-              }} className="w-full bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-gray-200">
-                <option value="">Seleccionar cliente ({gpClients.length} con facturas pendientes)…</option>
-                {gpClients.map(c => (
-                  <option key={c.key} value={c.key}>
-                    {c.name}{c.retentionPct ? ` ⚠️ ret. ${c.retentionPct}%` : ''}
-                    {' — '}{unpaidInvoices.filter(i => i.client_id === c.id || (!i.client_id && i.client_name === c.name)).length} factura(s)
-                  </option>
+          {/* Month filter */}
+          {availableMonths.length > 1 && (
+            <div className="bg-[#111a2e] rounded-xl p-3 border border-white/5">
+              <p className="text-xs text-gray-500 mb-2">📅 Filtrar por mes</p>
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => { setGpMonth(''); setGroupPaySelected(new Set()) }}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${!gpMonth ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
+                  Todos
+                </button>
+                {availableMonths.map(m => (
+                  <button key={m} onClick={() => { setGpMonth(m); setGroupPaySelected(new Set()) }}
+                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium capitalize ${gpMonth === m ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/10'}`}>
+                    {monthLabel(m)}
+                  </button>
                 ))}
-              </select>
-            )}
-            {groupPayRetentionPct > 0 && (
-              <p className="text-xs text-yellow-400 mt-2">⚠️ Este cliente tiene retención de Hacienda del {groupPayRetentionPct}%</p>
+              </div>
+            </div>
+          )}
+
+          {/* Client selector */}
+          <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
+            <p className="text-sm font-semibold text-gray-300 px-4 pt-4 pb-2">👤 Cliente / Empresa</p>
+            {gpClients.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-6 px-4">No hay facturas enviadas pendientes</p>
+            ) : (
+              <div className="divide-y divide-white/5">
+                {gpClients.map(c => {
+                  const isSelected = selectedKey === c.key
+                  // Month-filtered count for this client
+                  const mCount = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).length
+                  const mTotal = unpaidInvoices.filter(i => (i.client_id ? `id:${i.client_id}` : `name:${i.client_name}`) === c.key).reduce((s,i) => s+i.total, 0)
+                  if (gpMonth && mCount === 0) return null
+                  return (
+                    <button key={c.key} onClick={() => {
+                      if (isSelected) { setGroupPayClientId(undefined); setGroupPayClientName(''); setGroupPayRetentionPct(0); setGroupPaySelected(new Set()) }
+                      else { setGroupPayClientId(c.id); setGroupPayClientName(c.name); setGroupPayRetentionPct(c.retentionPct); setGroupPaySelected(new Set()) }
+                    }}
+                      className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${isSelected ? 'bg-yellow-900/30 border-l-2 border-yellow-500' : 'hover:bg-white/5'}`}>
+                      <div>
+                        <p className="text-sm font-medium text-gray-200">{c.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {gpMonth ? mCount : c.count} factura{(gpMonth ? mCount : c.count) !== 1 ? 's' : ''} pendiente{(gpMonth ? mCount : c.count) !== 1 ? 's' : ''}
+                          {c.retentionPct > 0 && <span className="ml-2 text-yellow-500">⚠️ ret. {c.retentionPct}%</span>}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-green-400">{fmt(gpMonth ? mTotal : c.total)}</p>
+                        {isSelected && <p className="text-xs text-yellow-400">seleccionado ✓</p>}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
             )}
           </div>
 
-          {/* Step 2: select invoices */}
-          {(groupPayClientId || groupPayClientName) && (
+          {/* Invoice list */}
+          {selectedKey && (
             <div className="bg-[#111a2e] rounded-xl border border-white/5 overflow-hidden">
               <div className="flex justify-between items-center px-4 py-3 border-b border-white/5">
-                <p className="text-sm font-semibold text-gray-300">🧾 Facturas pendientes</p>
+                <div>
+                  <p className="text-sm font-semibold text-gray-300">🧾 Facturas de {groupPayClientName}</p>
+                  {gpMonth && <p className="text-xs text-blue-400">{monthLabel(gpMonth)}</p>}
+                </div>
                 <button onClick={() => {
                   if (groupPaySelected.size === clientUnpaid.length) setGroupPaySelected(new Set())
                   else setGroupPaySelected(new Set(clientUnpaid.map(i => i.id!)))
-                }} className="text-xs text-blue-400">
-                  {groupPaySelected.size === clientUnpaid.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                }} className="text-xs text-blue-400 font-medium">
+                  {groupPaySelected.size === clientUnpaid.length ? 'Deseleccionar todo' : 'Seleccionar todo'}
                 </button>
               </div>
               {clientUnpaid.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-6">No hay facturas pendientes</p>
+                <p className="text-sm text-gray-500 text-center py-6">
+                  {gpMonth ? `Sin facturas en ${monthLabel(gpMonth)}` : 'Sin facturas pendientes'}
+                </p>
               ) : clientUnpaid.map(inv => {
                 const summary = itemsSummary(inv)
+                const refDate = inv.service_date ?? inv.issue_date
                 return (
-                  <label key={inv.id} className="flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-0 cursor-pointer hover:bg-white/5">
+                  <label key={inv.id} className="flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-0 cursor-pointer hover:bg-white/5 active:bg-white/10">
                     <input type="checkbox" checked={groupPaySelected.has(inv.id!)}
                       onChange={e => setGroupPaySelected(prev => { const s = new Set(prev); e.target.checked ? s.add(inv.id!) : s.delete(inv.id!); return s })}
-                      className="w-4 h-4 rounded mt-0.5 flex-shrink-0" />
+                      className="w-4 h-4 rounded mt-0.5 flex-shrink-0 accent-green-500" />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-gray-200">#{inv.invoice_number}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-gray-200">#{inv.invoice_number}</span>
+                        {inv.location_name && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-teal-900/40 text-teal-400 border border-teal-800/30">{inv.location_name}</span>
+                        )}
                         <span className={`text-xs px-1.5 py-0.5 rounded ${statusColor(inv.status)}`}>{statusLabel(inv.status)}</span>
                       </div>
                       {summary && <p className="text-xs text-gray-400 mt-0.5 truncate">{summary}</p>}
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {fmtDate(inv.issue_date)}{inv.service_date ? ` · Svc: ${fmtDate(inv.service_date)}` : ''}
+                        {inv.service_date ? `Servicio: ${fmtDate(inv.service_date)}` : `Emitida: ${fmtDate(inv.issue_date)}`}
                       </p>
                     </div>
                     <p className="text-sm font-bold text-green-400 flex-shrink-0">{fmt(inv.total)}</p>
                   </label>
                 )
               })}
+              {clientUnpaid.length > 0 && (
+                <div className="px-4 py-2 bg-white/3 border-t border-white/5 flex justify-between text-xs text-gray-400">
+                  <span>{groupPaySelected.size} seleccionada{groupPaySelected.size !== 1 ? 's' : ''} de {clientUnpaid.length}</span>
+                  {groupPaySelected.size > 0 && <span className="text-green-400 font-medium">{fmt(totalFacturado)} seleccionado</span>}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Step 3: payment method + date + summary */}
+          {/* Payment + summary */}
           {selectedInvoices.length > 0 && (
             <>
               <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-3">
@@ -1080,32 +1147,33 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                 <div className="grid grid-cols-2 gap-2">
                   {PAYMENT_METHODS.map(m => (
                     <button key={m.key} onClick={() => setGroupPayMethod(m.key)}
-                      className={`py-2 rounded-lg text-xs font-medium border ${groupPayMethod === m.key ? 'bg-green-600 text-white border-green-500' : 'bg-green-900/20 text-green-400 border-green-800/30'}`}>
+                      className={`py-2.5 rounded-lg text-xs font-medium border ${groupPayMethod === m.key ? 'bg-green-600 text-white border-green-500' : 'bg-green-900/20 text-green-400 border-green-800/30'}`}>
                       {m.label}
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-3 pt-1">
-                  <label className="text-xs text-gray-400 whitespace-nowrap">📅 Fecha del cheque / pago</label>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-gray-400 whitespace-nowrap">📅 Fecha del cheque</label>
                   <input type="date" value={groupPayDate} onChange={e => setGroupPayDate(e.target.value)}
                     className="flex-1 bg-[#0b1220] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-green-500" />
                 </div>
               </div>
 
-              <div className="bg-[#111a2e] rounded-xl p-4 border border-white/5 space-y-2">
-                <p className="text-sm font-semibold text-gray-300 mb-2">📊 Resumen de pago</p>
-                {/* Selected invoice list */}
-                <div className="space-y-1 mb-3">
+              <div className="bg-[#111a2e] rounded-xl p-4 border border-green-900/30 space-y-2">
+                <p className="text-sm font-semibold text-gray-300 mb-2">📊 Resumen</p>
+                <div className="space-y-1 pb-2 border-b border-white/10">
                   {selectedInvoices.map(inv => (
-                    <div key={inv.id} className="flex justify-between text-xs text-gray-400">
-                      <span>#{inv.invoice_number} {itemsSummary(inv) ? `· ${itemsSummary(inv).slice(0, 30)}` : ''}</span>
-                      <span className="text-gray-300 font-medium flex-shrink-0 ml-2">{fmt(inv.total)}</span>
+                    <div key={inv.id} className="flex justify-between text-xs">
+                      <span className="text-gray-400 truncate">
+                        #{inv.invoice_number}{inv.location_name ? ` · ${inv.location_name}` : ''}
+                      </span>
+                      <span className="text-gray-300 font-medium ml-2 flex-shrink-0">{fmt(inv.total)}</span>
                     </div>
                   ))}
                 </div>
-                <div className="border-t border-white/10 pt-2 space-y-1.5">
+                <div className="space-y-1.5 pt-1">
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">{selectedInvoices.length} factura{selectedInvoices.length > 1 ? 's' : ''}</span>
+                    <span className="text-gray-400">Subtotal ({selectedInvoices.length} facturas)</span>
                     <span className="text-gray-200 font-medium">{fmt(totalFacturado)}</span>
                   </div>
                   {totalRetencion > 0 && (
@@ -1114,13 +1182,13 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
                       <span className="text-yellow-400 font-medium">−{fmt(totalRetencion)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-base font-bold pt-1 border-t border-white/10">
+                  <div className="flex justify-between text-lg font-bold pt-1 border-t border-white/10">
                     <span className="text-green-400">Neto a recibir</span>
                     <span className="text-green-400">{fmt(totalNeto)}</span>
                   </div>
                   {groupPayDate && (
-                    <p className="text-xs text-gray-500 pt-1">
-                      📅 Fecha de pago: {fmtDate(new Date(groupPayDate + 'T12:00:00').getTime())}
+                    <p className="text-xs text-gray-500">
+                      📅 {fmtDate(new Date(groupPayDate + 'T12:00:00').getTime())}
                       {' · '}{PAYMENT_METHODS.find(m => m.key === groupPayMethod)?.label}
                     </p>
                   )}
@@ -1128,8 +1196,8 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
               </div>
 
               <button onClick={executeGroupPay} disabled={groupPayBusy || !groupPayDate}
-                className="w-full py-4 rounded-xl text-base font-bold bg-green-600 text-white disabled:opacity-50">
-                {groupPayBusy ? 'Procesando...' : `✅ Confirmar pago — ${fmt(totalNeto)}`}
+                className="w-full py-4 rounded-xl text-base font-bold bg-green-600 hover:bg-green-500 text-white disabled:opacity-50 transition-colors">
+                {groupPayBusy ? '⏳ Procesando...' : `✅ Confirmar pago — ${fmt(totalNeto)}`}
               </button>
             </>
           )}
@@ -1171,6 +1239,53 @@ export default function InvoicesPage({ onNavigate }: InvoicesPageProps) {
           </button>
         ))}
       </div>
+
+      {/* Cleanup tool */}
+      {(() => {
+        const suspects = invoices.filter(i => i.status === 'draft' && (i.total === 0 || i.items.length === 0 || i.items.every(it => !it.description.trim())))
+        if (suspects.length === 0) return null
+        return (
+          <div className="mx-4 mt-3 bg-orange-900/20 border border-orange-700/30 rounded-xl overflow-hidden">
+            <button onClick={() => { setShowCleanup(s => !s); setCleanupSelected(new Set()) }}
+              className="w-full flex items-center justify-between px-4 py-3 text-left">
+              <span className="text-xs text-orange-400 font-medium">🧹 {suspects.length} borrador{suspects.length > 1 ? 'es' : ''} vacío{suspects.length > 1 ? 's' : ''} detectado{suspects.length > 1 ? 's' : ''}</span>
+              <span className="text-xs text-orange-400">{showCleanup ? '▲ Ocultar' : '▼ Ver'}</span>
+            </button>
+            {showCleanup && (
+              <div className="border-t border-orange-700/20 px-4 pb-3 space-y-2">
+                <p className="text-xs text-gray-500 pt-2">Facturas borrador sin items válidos o con total $0 — posibles duplicadas de prueba:</p>
+                {suspects.map(inv => (
+                  <label key={inv.id} className="flex items-center gap-3 py-1.5 cursor-pointer">
+                    <input type="checkbox" checked={cleanupSelected.has(inv.id!)}
+                      onChange={e => setCleanupSelected(prev => { const s = new Set(prev); e.target.checked ? s.add(inv.id!) : s.delete(inv.id!); return s })}
+                      className="w-4 h-4 rounded accent-red-500" />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs text-gray-300">#{inv.invoice_number} · {inv.client_name}</span>
+                      <span className="text-xs text-gray-500 ml-2">{fmtDate(inv.created_at)} · {fmt(inv.total)}</span>
+                    </div>
+                  </label>
+                ))}
+                <div className="flex gap-2 pt-1">
+                  <button onClick={() => setCleanupSelected(new Set(suspects.map(i => i.id!)))} className="text-xs text-gray-400 underline">Seleccionar todas</button>
+                  {cleanupSelected.size > 0 && (
+                    <button disabled={cleanupBusy} onClick={async () => {
+                      setCleanupBusy(true)
+                      try {
+                        for (const id of cleanupSelected) { await db.invoices.delete(id) }
+                        setCleanupSelected(new Set())
+                        setShowCleanup(false)
+                        loadAll()
+                      } finally { setCleanupBusy(false) }
+                    }} className="ml-auto text-xs px-3 py-1.5 bg-red-700 text-white rounded-lg disabled:opacity-50">
+                      {cleanupBusy ? 'Eliminando...' : `🗑️ Eliminar ${cleanupSelected.size} seleccionada${cleanupSelected.size > 1 ? 's' : ''}`}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       <div className="p-4 max-w-2xl mx-auto">
         {loading ? (
