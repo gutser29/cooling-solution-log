@@ -84,13 +84,14 @@ export async function syncAlertsToServer(): Promise<void> {
     const tomorrowEnd = new Date(todayStart); tomorrowEnd.setDate(tomorrowEnd.getDate() + 1); tomorrowEnd.setHours(23, 59, 59, 999)
 
     const today = new Date().toISOString().split('T')[0]
-    const [equipment, contracts, invoices, appointments, inventoryItems, todayBitacora] = await Promise.all([
+    const [equipment, contracts, invoices, appointments, inventoryItems, todayBitacora, creditCards] = await Promise.all([
       db.equipment.toArray(),
       db.contracts.toArray(),
       db.invoices.toArray(),
       db.appointments.toArray(),
       db.inventory_items.filter(i => i.active).toArray(),
       db.table('bitacora').where('date').equals(today).count(),
+      db.credit_cards.filter(c => c.active).toArray(),
     ])
 
     const payload = {
@@ -109,6 +110,29 @@ export async function syncAlertsToServer(): Promise<void> {
       lowStockItems: inventoryItems
         .filter(i => i.quantity <= i.min_quantity)
         .map(i => ({ id: i.id, name: i.name, quantity: i.quantity, minQuantity: i.min_quantity, unit: i.unit })),
+      creditCards: creditCards.map(c => {
+        const todayDay = new Date().getDate()
+        const todayMonth = new Date().getMonth()
+        const todayYear = new Date().getFullYear()
+        // Next closing date
+        const closingDate = new Date(todayYear, todayMonth, c.closing_day)
+        if (closingDate.getTime() < new Date().setHours(0,0,0,0)) closingDate.setMonth(closingDate.getMonth() + 1)
+        // Next payment = payment_due_day of month after closing
+        const paymentDate = new Date(closingDate.getFullYear(), closingDate.getMonth() + 1, c.payment_due_day)
+        const msDay = 86400000
+        const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0)
+        return {
+          id: c.id,
+          name: c.name,
+          last4: c.last4,
+          closing_day: c.closing_day,
+          payment_due_day: c.payment_due_day,
+          current_balance: c.current_balance,
+          minimum_payment: c.minimum_payment,
+          daysToClosing: Math.round((closingDate.getTime() - todayMidnight.getTime()) / msDay),
+          daysToPayment: Math.round((paymentDate.getTime() - todayMidnight.getTime()) / msDay),
+        }
+      }),
       lastBitacoraDate: todayBitacora > 0 ? today : null,
       syncedAt: now,
     }

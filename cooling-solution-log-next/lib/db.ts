@@ -169,6 +169,19 @@ export interface EmployeePayment {
   created_at: number
 }
 
+export interface CreditCard {
+  id?: number
+  name: string            // "Chase Ink"
+  last4: string           // "5536"
+  closing_day: number     // day of month (1-31)
+  payment_due_day: number // day of month (1-31) of the month AFTER closing
+  current_balance: number
+  minimum_payment: number
+  credit_limit: number
+  active: boolean
+  updated_at?: number
+}
+
 export class CoolingDB extends Dexie {
   events!: Dexie.Table<EventRecord, number>
   clients!: Dexie.Table<Client, number>
@@ -201,6 +214,7 @@ export class CoolingDB extends Dexie {
   inventory_items!: Dexie.Table<InventoryItem, number>
   inventory_movements!: Dexie.Table<InventoryMovement, number>
   invoice_batches!: Dexie.Table<InvoiceBatch, number>
+  credit_cards!: Dexie.Table<CreditCard, number>
   constructor() {
     super('CoolingSolutionDB')
     
@@ -717,6 +731,24 @@ export class CoolingDB extends Dexie {
     // Version 27 — maintenance_logs: add log_type index for repair/maintenance split
     this.version(27).stores({
       maintenance_logs: '++id,equipment_id,client_name,client_id,log_type,maintenance_type,date,created_at'
+    })
+
+    // Version 28 — credit_cards table with initial seed data
+    this.version(28).stores({
+      credit_cards: '++id,active'
+    }).upgrade(async tx => {
+      const now = Date.now()
+      const initial: Omit<CreditCard, 'id'>[] = [
+        { name: 'PayPal Mastercard',           last4: '7711', closing_day: 10, payment_due_day: 2,  current_balance: 0, minimum_payment: 0, credit_limit: 0, active: true, updated_at: now },
+        { name: "Sam's Club Mastercard",        last4: '7073', closing_day: 16, payment_due_day: 8,  current_balance: 0, minimum_payment: 0, credit_limit: 0, active: true, updated_at: now },
+        { name: 'Chase Ink',                    last4: '5536', closing_day: 17, payment_due_day: 11, current_balance: 0, minimum_payment: 0, credit_limit: 0, active: true, updated_at: now },
+        { name: 'Capital One Savor',            last4: '2905', closing_day: 19, payment_due_day: 13, current_balance: 0, minimum_payment: 0, credit_limit: 0, active: true, updated_at: now },
+        { name: 'Discover Chrome',              last4: '8885', closing_day: 17, payment_due_day: 14, current_balance: 0, minimum_payment: 0, credit_limit: 0, active: true, updated_at: now },
+        { name: 'Capital One Quicksilver',      last4: '2214', closing_day: 27, payment_due_day: 21, current_balance: 0, minimum_payment: 0, credit_limit: 0, active: true, updated_at: now },
+      ]
+      for (const card of initial) {
+        await tx.table('credit_cards').add(card)
+      }
     })
   }
 }

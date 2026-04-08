@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { db, BankAccount, BankTransaction } from '@/lib/db'
+import { db, BankAccount, BankTransaction, CreditCard } from '@/lib/db'
 import { generateBankReconciliationPDF } from '@/lib/pdfGenerator'
 import { parseCSV, CsvTransaction, CsvParseResult } from '@/lib/csvBankParser'
 
@@ -9,7 +9,7 @@ interface BankStatementsPageProps {
   onNavigate: (page: string) => void
 }
 
-type Tab = 'accounts' | 'transactions'
+type Tab = 'accounts' | 'transactions' | 'cards'
 
 const ACCOUNT_LABELS: Record<string, string> = {
   oriental_checking: 'Oriental Bank',
@@ -37,6 +37,12 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
   const [accounts, setAccounts] = useState<BankAccount[]>([])
   const [statements, setStatements] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Credit cards tab
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([])
+  const [editingCard, setEditingCard] = useState<CreditCard | null>(null)
+  const [cardForm, setCardForm] = useState<Partial<CreditCard>>({})
+  const [cardSaving, setCardSaving] = useState(false)
 
   // Transaction filters
   const [filterAccount, setFilterAccount] = useState('all')
@@ -82,17 +88,19 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
 
   const loadData = useCallback(async () => {
     try {
-      const [txs, evts, accts, stmts] = await Promise.all([
+      const [txs, evts, accts, stmts, cards] = await Promise.all([
         db.bank_transactions.toArray(),
         db.events.toArray(),
         db.bank_accounts.toArray(),
         db.bank_statements.toArray(),
+        db.credit_cards.toArray(),
       ])
       txs.sort((a: any, b: any) => b.date - a.date)
       setTransactions(txs)
       setEvents(evts)
       setAccounts(accts)
       setStatements(stmts)
+      setCreditCards(cards.filter(c => c.active).sort((a, b) => a.closing_day - b.closing_day))
     } catch (e) {
       console.error('Error loading bank data:', e)
     } finally {
@@ -258,6 +266,58 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
     if (!tx) return
     await db.bank_transactions.update(tx.id!, { match_status: 'unmatched' })
     advanceOrganize()
+  }
+
+  // ── Credit card helpers ────────────────────────────────────
+
+  const getNextClosingDate = (closingDay: number): Date => {
+    const today = new Date()
+    const result = new Date(today.getFullYear(), today.getMonth(), closingDay)
+    if (result.getTime() < today.setHours(0,0,0,0)) {
+      result.setMonth(result.getMonth() + 1)
+    }
+    return result
+  }
+
+  const getNextPaymentDate = (closingDay: number, paymentDay: number): Date => {
+    const nextClosing = getNextClosingDate(closingDay)
+    return new Date(nextClosing.getFullYear(), nextClosing.getMonth() + 1, paymentDay)
+  }
+
+  const daysUntil = (date: Date): number => {
+    const today = new Date(); today.setHours(0,0,0,0)
+    const d = new Date(date); d.setHours(0,0,0,0)
+    return Math.round((d.getTime() - today.getTime()) / 86400000)
+  }
+
+  const cardStatus = (card: CreditCard): 'green' | 'yellow' | 'red' => {
+    const days = daysUntil(getNextPaymentDate(card.closing_day, card.payment_due_day))
+    if (days <= 0) return 'red'
+    if (days <= 7) return 'yellow'
+    return 'green'
+  }
+
+  const openEditCard = (card: CreditCard) => {
+    setEditingCard(card)
+    setCardForm({
+      current_balance: card.current_balance,
+      minimum_payment: card.minimum_payment,
+      credit_limit: card.credit_limit,
+      closing_day: card.closing_day,
+      payment_due_day: card.payment_due_day,
+    })
+  }
+
+  const saveCard = async () => {
+    if (!editingCard?.id) return
+    setCardSaving(true)
+    try {
+      await db.credit_cards.update(editingCard.id, { ...cardForm, updated_at: Date.now() })
+      setEditingCard(null)
+      await loadData()
+    } finally {
+      setCardSaving(false)
+    }
   }
 
   const clearAccount = async (accountName: string) => {
@@ -488,17 +548,122 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
       <div className="flex border-b border-white/10">
         <button
           onClick={() => setTab('transactions')}
-          className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === 'transactions' ? 'text-teal-400 border-b-2 border-teal-400' : 'text-gray-400'}`}
+          className={`flex-1 py-3 text-xs font-medium transition-colors ${tab === 'transactions' ? 'text-teal-400 border-b-2 border-teal-400' : 'text-gray-400'}`}
         >
-          📋 Transacciones ({transactions.length})
+          📋 Transacciones
+        </button>
+        <button
+          onClick={() => setTab('cards')}
+          className={`flex-1 py-3 text-xs font-medium transition-colors relative ${tab === 'cards' ? 'text-teal-400 border-b-2 border-teal-400' : 'text-gray-400'}`}
+        >
+          💳 Tarjetas
+          {creditCards.some(c => cardStatus(c) === 'red') && (
+            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />
+          )}
+          {!creditCards.some(c => cardStatus(c) === 'red') && creditCards.some(c => cardStatus(c) === 'yellow') && (
+            <span className="absolute top-2 right-2 w-2 h-2 bg-yellow-500 rounded-full" />
+          )}
         </button>
         <button
           onClick={() => setTab('accounts')}
-          className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === 'accounts' ? 'text-teal-400 border-b-2 border-teal-400' : 'text-gray-400'}`}
+          className={`flex-1 py-3 text-xs font-medium transition-colors ${tab === 'accounts' ? 'text-teal-400 border-b-2 border-teal-400' : 'text-gray-400'}`}
         >
-          🏦 Cuentas ({accounts.length})
+          🏦 Cuentas
         </button>
       </div>
+
+      {/* ===== CARDS TAB ===== */}
+      {tab === 'cards' && (
+        <div className="p-4 space-y-3 pb-20">
+          <p className="text-xs text-gray-500">Semáforo basado en días hasta el próximo pago</p>
+          {creditCards.length === 0 ? (
+            <div className="text-center py-10 text-gray-500">
+              <p className="text-3xl mb-2">💳</p>
+              <p>No hay tarjetas configuradas</p>
+            </div>
+          ) : (
+            creditCards.map(card => {
+              const nextClosing  = getNextClosingDate(card.closing_day)
+              const nextPayment  = getNextPaymentDate(card.closing_day, card.payment_due_day)
+              const daysToClose  = daysUntil(nextClosing)
+              const daysToPay    = daysUntil(nextPayment)
+              const status       = cardStatus(card)
+              const statusColor  = status === 'red' ? 'border-red-500/50 bg-red-900/10' : status === 'yellow' ? 'border-yellow-500/50 bg-yellow-900/10' : 'border-green-800/30 bg-[#111a2e]'
+              const dotColor     = status === 'red' ? 'bg-red-500' : status === 'yellow' ? 'bg-yellow-500' : 'bg-green-500'
+              const fmtDay = (d: Date) => d.toLocaleDateString('es-PR', { month: 'short', day: 'numeric' })
+              const utilPct = card.credit_limit > 0 ? Math.round(card.current_balance / card.credit_limit * 100) : 0
+
+              return (
+                <div key={card.id} className={`rounded-xl p-4 border ${statusColor}`}>
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-3 h-3 rounded-full flex-shrink-0 ${dotColor}`} />
+                      <div>
+                        <p className="text-sm font-bold text-gray-200">{card.name}</p>
+                        <p className="text-xs text-gray-500">···{card.last4}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => openEditCard(card)}
+                      className="text-xs text-gray-500 hover:text-gray-200 bg-white/5 hover:bg-white/10 rounded-lg px-2 py-1 transition-colors"
+                    >
+                      ✏️ Editar
+                    </button>
+                  </div>
+
+                  {/* Balance */}
+                  <div className="flex justify-between items-end mb-2">
+                    <div>
+                      <p className="text-xs text-gray-500">Balance actual</p>
+                      <p className="text-xl font-bold text-white">${card.current_balance.toFixed(2)}</p>
+                    </div>
+                    {card.minimum_payment > 0 && (
+                      <div className="text-right">
+                        <p className="text-xs text-gray-500">Pago mínimo</p>
+                        <p className="text-sm font-bold text-amber-400">${card.minimum_payment.toFixed(2)}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Utilization bar */}
+                  {card.credit_limit > 0 && (
+                    <div className="mb-3">
+                      <div className="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Utilización {utilPct}%</span>
+                        <span>Límite ${card.credit_limit.toLocaleString()}</span>
+                      </div>
+                      <div className="w-full bg-white/10 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full ${utilPct >= 80 ? 'bg-red-500' : utilPct >= 50 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                          style={{ width: `${Math.min(utilPct, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dates */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className={`rounded-lg p-2 ${daysToClose <= 3 ? 'bg-orange-900/30 border border-orange-700/30' : 'bg-white/5'}`}>
+                      <p className="text-gray-500">📊 Próximo cierre</p>
+                      <p className="font-medium text-gray-200">{fmtDay(nextClosing)}</p>
+                      <p className={daysToClose <= 3 ? 'text-orange-400' : 'text-gray-500'}>
+                        {daysToClose === 0 ? '¡HOY!' : daysToClose === 1 ? 'Mañana' : `en ${daysToClose} días`}
+                      </p>
+                    </div>
+                    <div className={`rounded-lg p-2 ${daysToPay <= 7 ? (daysToPay <= 0 ? 'bg-red-900/30 border border-red-700/30' : 'bg-yellow-900/30 border border-yellow-700/30') : 'bg-white/5'}`}>
+                      <p className="text-gray-500">💳 Próximo pago</p>
+                      <p className="font-medium text-gray-200">{fmtDay(nextPayment)}</p>
+                      <p className={daysToPay <= 0 ? 'text-red-400 font-bold' : daysToPay <= 7 ? 'text-yellow-400' : 'text-gray-500'}>
+                        {daysToPay < 0 ? `Vencido hace ${Math.abs(daysToPay)}d` : daysToPay === 0 ? '¡HOY!' : daysToPay === 1 ? 'Mañana' : `en ${daysToPay} días`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
 
       {/* ===== ACCOUNTS TAB ===== */}
       {tab === 'accounts' && (
@@ -1062,6 +1227,47 @@ export default function BankStatementsPage({ onNavigate }: BankStatementsPagePro
                 </button>
               </div>
             )}
+          </div>
+        </>
+      )}
+
+      {/* ===== CARD EDIT MODAL ===== */}
+      {editingCard && (
+        <>
+          <div className="fixed inset-0 bg-black/80 z-40" onClick={() => !cardSaving && setEditingCard(null)} />
+          <div className="fixed inset-x-3 top-1/4 bg-[#111a2e] rounded-2xl z-50 border border-white/10 overflow-hidden">
+            <div className="p-4 border-b border-white/10 flex justify-between items-center">
+              <div>
+                <h2 className="text-base font-bold">{editingCard.name}</h2>
+                <p className="text-xs text-gray-400">···{editingCard.last4}</p>
+              </div>
+              {!cardSaving && <button onClick={() => setEditingCard(null)} className="text-gray-400 text-2xl">✕</button>}
+            </div>
+            <div className="p-4 space-y-3">
+              {[
+                { label: 'Balance actual ($)', field: 'current_balance', type: 'number' },
+                { label: 'Pago mínimo ($)', field: 'minimum_payment', type: 'number' },
+                { label: 'Límite de crédito ($)', field: 'credit_limit', type: 'number' },
+                { label: 'Día de cierre', field: 'closing_day', type: 'number' },
+                { label: 'Día de pago (mes siguiente)', field: 'payment_due_day', type: 'number' },
+              ].map(({ label, field, type }) => (
+                <div key={field}>
+                  <label className="text-xs text-gray-400 mb-1 block">{label}</label>
+                  <input
+                    type={type}
+                    value={(cardForm as any)[field] ?? ''}
+                    onChange={e => setCardForm(f => ({ ...f, [field]: parseFloat(e.target.value) || 0 }))}
+                    className="w-full bg-[#0b1220] border border-white/10 rounded-xl px-3 py-2 text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-white/10 flex gap-3">
+              <button onClick={() => setEditingCard(null)} disabled={cardSaving} className="flex-1 bg-[#0b1220] border border-white/10 rounded-xl py-3 text-sm">Cancelar</button>
+              <button onClick={saveCard} disabled={cardSaving} className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 rounded-xl py-3 text-sm font-bold">
+                {cardSaving ? 'Guardando...' : '✓ Guardar'}
+              </button>
+            </div>
           </div>
         </>
       )}

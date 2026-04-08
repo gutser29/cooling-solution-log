@@ -69,6 +69,7 @@ async function handleNotify() {
       invoices: { id: number; clientName: string; invoiceNumber: string; total: number; dueDate?: number }[]
       appointments: { id: number; title: string; clientName: string; date: number }[]
       lowStockItems?: { id: number; name: string; quantity: number; minQuantity: number; unit: string }[]
+      creditCards?: { id: number; name: string; last4: string; closing_day: number; payment_due_day: number; current_balance: number; minimum_payment: number; daysToClosing: number; daysToPayment: number }[]
     } = typeof alertsRaw === 'string' ? JSON.parse(alertsRaw) : alertsRaw
 
     // Already-notified categories today
@@ -141,6 +142,42 @@ async function handleNotify() {
           url: '/',
         })
         await redis.sadd(notifiedKey, 'appointments')
+      }
+    }
+
+    // ── Credit card — closing in 3 days ──────────────────────────────────────
+    for (const card of (alerts.creditCards || [])) {
+      const closingKey = `card_closing_${card.id}`
+      if (!notifiedSet.has(closingKey) && card.daysToClosing === 3) {
+        notifications.push({
+          title: '📊 Cierre de ciclo próximo',
+          body: `${card.name} (···${card.last4}) cierra en 3 días — balance: $${card.current_balance.toFixed(0)}`,
+          url: '/',
+        })
+        await redis.sadd(notifiedKey, closingKey)
+      }
+      const closingTodayKey = `card_closing_today_${card.id}`
+      if (!notifiedSet.has(closingTodayKey) && card.daysToClosing === 0) {
+        notifications.push({
+          title: '📊 Hoy cierra el ciclo',
+          body: `${card.name} (···${card.last4}) — balance final: $${card.current_balance.toFixed(0)}`,
+          url: '/',
+        })
+        await redis.sadd(notifiedKey, closingTodayKey)
+      }
+    }
+
+    // ── Credit card — payment due in 5 days or less ───────────────────────────
+    for (const card of (alerts.creditCards || [])) {
+      const payKey = `card_pay_${card.id}`
+      if (!notifiedSet.has(payKey) && card.daysToPayment >= 0 && card.daysToPayment <= 5) {
+        const urgency = card.daysToPayment === 0 ? '¡HOY!' : `en ${card.daysToPayment} día${card.daysToPayment === 1 ? '' : 's'}`
+        notifications.push({
+          title: '💳 Pago de tarjeta próximo',
+          body: `${card.name} (···${card.last4}) vence ${urgency}${card.minimum_payment > 0 ? ` — mínimo $${card.minimum_payment.toFixed(0)}` : ''}`,
+          url: '/',
+        })
+        await redis.sadd(notifiedKey, payKey)
       }
     }
 
