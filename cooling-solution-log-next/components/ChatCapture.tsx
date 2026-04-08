@@ -114,6 +114,18 @@ function extractJSON(text: string, command: string): any {
   return null
 }
 
+// ============ DUPLICATE EVENT CHECK ============
+async function isDuplicateEvent(amount: number, category: string, timestamp: number): Promise<boolean> {
+  const { db } = await import('@/lib/db')
+  const oneHour = 3600000
+  const all = await db.events.toArray()
+  return all.some(e =>
+    Math.abs(e.amount - amount) < 0.01 &&
+    (e.category || '').toLowerCase().trim() === (category || '').toLowerCase().trim() &&
+    Math.abs(e.timestamp - timestamp) <= oneHour
+  )
+}
+
 // ============ EXTRACT ALL OCCURRENCES OF A COMMAND ============
 function extractAllJSON(text: string, command: string): any[] {
   const results: any[] = []
@@ -1148,8 +1160,17 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       // ====== HANDLE STRUCTURED RESPONSE TYPES (from route.ts interceptors) ======
       if (data.type === 'SAVE_EVENT' && data.payload) {
         try {
+          const ts = data.payload.timestamp || Date.now()
+          const isDupe = await isDuplicateEvent(data.payload.amount, data.payload.category, ts)
+          if (isDupe) {
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: `⚠️ Este ${data.payload.type === 'income' ? 'ingreso' : 'gasto'} de $${data.payload.amount} (${data.payload.category}) ya fue registrado anteriormente — no se guardó de nuevo.`
+            }])
+            return
+          }
           await db.events.add({
-            timestamp: data.payload.timestamp || Date.now(),
+            timestamp: ts,
             type: data.payload.type,
             status: 'completed',
             subtype: data.payload.subtype,
@@ -1165,9 +1186,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           })
           const hadPhotos = receiptPhotosRef.current.length > 0
           receiptPhotosRef.current = []
-          setMessages(prev => [...prev, { 
-            role: 'assistant', 
-            content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}${hadPhotos ? ' 📷 foto adjunta' : ''}` 
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: `✅ ${data.payload.type === 'income' ? 'Ingreso' : 'Gasto'} registrado: $${data.payload.amount} ${data.payload.category ? `(${data.payload.category})` : ''}${hadPhotos ? ' 📷 foto adjunta' : ''}`
           }])
           syncToDrive()
           return
@@ -1431,12 +1452,19 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const sharedSplitId = (allEvents.length > 1 && hasPhotos)
           ? `split_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
           : undefined
+        const skippedDupes: string[] = []
         for (let i = 0; i < allEvents.length; i++) {
           const evData = allEvents[i]
           try {
-           const eventPhotos = hasPhotos ? [...receiptPhotosRef.current] : []
+            const ts = evData.timestamp || Date.now()
+            const isDupe = await isDuplicateEvent(evData.amount, evData.category, ts)
+            if (isDupe) {
+              skippedDupes.push(`$${evData.amount} ${evData.category || ''}`)
+              continue
+            }
+            const eventPhotos = hasPhotos ? [...receiptPhotosRef.current] : []
             await db.events.add({
-              timestamp: evData.timestamp || Date.now(),
+              timestamp: ts,
               type: evData.type,
               status: 'completed',
               subtype: evData.subtype,
@@ -1456,6 +1484,9 @@ const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
           } catch (e) {
             console.error('SAVE_EVENT error:', e)
           }
+        }
+        if (skippedDupes.length > 0) {
+          savedItems.push(`⚠️ Ya registrado (omitido): ${skippedDupes.join(', ')}`)
         }
         if (allEvents.length > 0) {
           receiptPhotosRef.current = []

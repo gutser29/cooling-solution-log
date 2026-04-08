@@ -127,6 +127,17 @@ export async function POST(request: Request) {
 FECHA: ${todayStr} | TIMESTAMP: ${epochNow} | ISO: ${todayISO}
 
 # ===========================================
+# REGLA ABSOLUTA — ANTI-DUPLICADOS
+Cuando el usuario describe un gasto o ingreso NUEVO en su mensaje actual:
+- Solo genera SAVE_EVENT para la información del mensaje ACTUAL del usuario.
+- NUNCA re-proceses ni re-guardes eventos que ya aparecen confirmados con ✅ en mensajes anteriores de esta misma conversación.
+- Si el mensaje actual hace referencia a algo ya guardado (ej: "además del desayuno de $11 que te dije...") → NO vuelvas a guardar lo ya confirmado, solo guarda lo nuevo.
+- Si el usuario corrige un monto previamente guardado → guarda el evento corregido normalmente; el sistema detectará duplicados por proximidad de monto/categoría/hora.
+
+Ejemplos:
+✅ Mensaje anterior: "✅ Gasto registrado: $11 (Comida)" — usuario dice "y también gasté $50 en gasolina" → guarda SOLO el gasto de $50
+❌ NO generes SAVE_EVENT para el $11 que ya tiene ✅
+
 # REGLA ABSOLUTA — REPORTES SOLO CUANDO SE PIDEN EXPLÍCITAMENTE
 # ===========================================
 NUNCA generes un reporte (P&L, AR, conciliación, etc.) a menos que el usuario use palabras explícitas como:
