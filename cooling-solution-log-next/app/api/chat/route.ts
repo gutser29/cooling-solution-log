@@ -117,14 +117,23 @@ export async function POST(request: Request) {
 
     // ====== SYSTEM PROMPT ======
     const now = new Date()
-    const todayStr = now.toLocaleDateString('es-PR', {
+    // Puerto Rico is UTC-4 (AST) year-round — no DST
+    const astOffset = -4 * 60
+    const astNow = new Date(now.getTime() + (astOffset - now.getTimezoneOffset()) * 60000)
+    const todayStr = astNow.toLocaleDateString('es-PR', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
     })
-    const todayISO = now.toISOString().split('T')[0]
+    const astHour = astNow.getHours()
+    const astMin = String(astNow.getMinutes()).padStart(2, '0')
+    const astAmPm = astHour >= 12 ? 'pm' : 'am'
+    const astHour12 = astHour % 12 || 12
+    const astTimeStr = `${astHour12}:${astMin}${astAmPm} AST`
+    const todayISO = astNow.toISOString().split('T')[0]
     const epochNow = Date.now()
 
     const systemPrompt = `Eres el asistente de Cooling Solution, negocio HVAC en Puerto Rico.
-FECHA: ${todayStr} | TIMESTAMP: ${epochNow} | ISO: ${todayISO}
+FECHA Y HORA ACTUAL: ${todayStr.charAt(0).toUpperCase() + todayStr.slice(1)}, ${astTimeStr}
+TIMESTAMP: ${epochNow} | ISO: ${todayISO}
 
 # ===========================================
 # REGLA ABSOLUTA — ANTI-DUPLICADOS
@@ -132,11 +141,17 @@ Cuando el usuario describe un gasto o ingreso NUEVO en su mensaje actual:
 - Solo genera SAVE_EVENT para la información del mensaje ACTUAL del usuario.
 - NUNCA re-proceses ni re-guardes eventos que ya aparecen confirmados con ✅ en mensajes anteriores de esta misma conversación.
 - Si el mensaje actual hace referencia a algo ya guardado (ej: "además del desayuno de $11 que te dije...") → NO vuelvas a guardar lo ya confirmado, solo guarda lo nuevo.
-- Si el usuario corrige un monto previamente guardado → guarda el evento corregido normalmente; el sistema detectará duplicados por proximidad de monto/categoría/hora.
+- Si el usuario corrige un monto previamente guardado → guarda el evento corregido normalmente; el sistema detectará duplicados.
+
+## COMPRAS DEL MISMO VENDOR — REGLA DE 2 HORAS:
+- Si el usuario compra en el mismo lugar y el mismo monto pero en momentos DIFERENTES (más de 2 horas de diferencia) → son compras DISTINTAS y DEBEN guardarse ambas.
+- Cuando el usuario dice "compré X ahora" o "acabo de comprar X", el timestamp es ${epochNow} (la hora actual del mensaje: ${astTimeStr}).
+- NO asumas que es duplicado solo porque el vendor y monto coinciden con algo anterior si la hora es diferente.
 
 Ejemplos:
 ✅ Mensaje anterior: "✅ Gasto registrado: $11 (Comida)" — usuario dice "y también gasté $50 en gasolina" → guarda SOLO el gasto de $50
 ❌ NO generes SAVE_EVENT para el $11 que ya tiene ✅
+✅ Usuario compró gasolina en Shell por $45 a las 7am, y ahora (${astTimeStr}) dice que compró gasolina en Shell por $45 → son compras distintas, guarda ambas
 
 # REGLA ABSOLUTA — REPORTES SOLO CUANDO SE PIDEN EXPLÍCITAMENTE
 # ===========================================

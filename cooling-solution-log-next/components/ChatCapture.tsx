@@ -115,14 +115,16 @@ function extractJSON(text: string, command: string): any {
 }
 
 // ============ DUPLICATE EVENT CHECK ============
+// Two events with same amount+category within 2 hours = duplicate.
+// Same vendor/monto but more than 2 hours apart = separate purchases, allow both.
 async function isDuplicateEvent(amount: number, category: string, timestamp: number): Promise<boolean> {
   const { db } = await import('@/lib/db')
-  const oneHour = 3600000
+  const twoHours = 2 * 3600000
   const all = await db.events.toArray()
   return all.some(e =>
     Math.abs(e.amount - amount) < 0.01 &&
     (e.category || '').toLowerCase().trim() === (category || '').toLowerCase().trim() &&
-    Math.abs(e.timestamp - timestamp) <= oneHour
+    Math.abs(e.timestamp - timestamp) <= twoHours
   )
 }
 
